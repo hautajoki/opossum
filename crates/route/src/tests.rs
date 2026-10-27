@@ -6,7 +6,7 @@ use crate::*;
 fn standard(fallback: bool) -> Routes {
     let mut pairs = vec![
         ("server", "ServerScriptService/server"),
-        ("client", "StarterPlayer/StarterPlayerScripts/client"),
+        ("client", "ReplicatedStorage/client"),
         ("shared", "ReplicatedStorage/shared"),
     ];
     if fallback {
@@ -54,7 +54,7 @@ fn outermost_route_wins() {
     );
     assert_eq!(at(&r, "a/server/b@server.ts"), "ServerScriptService/server/a/b");
     // `*` only catches what nothing routes; it never conflicts with a route below it.
-    assert_eq!(at(&r, "a/client/b.ts"), "StarterPlayer/StarterPlayerScripts/client/a/b");
+    assert_eq!(at(&r, "a/client/b.ts"), "ReplicatedStorage/client/a/b");
     assert_eq!(at(&standard(false), "a/b.ts"), "route.unrouted");
 }
 
@@ -206,24 +206,27 @@ fn require_spelling() {
         Ok("@game/ReplicatedStorage/shared/f/a")
     );
     assert_eq!(req("f/server/h.ts", "f/client/e.ts"), Err(Code::Boundary));
+    // the client route lives in ReplicatedStorage but its key makes it client code, out of shared code's reach
+    assert_eq!(req("f/shared/a.ts", "f/client/e.ts"), Err(Code::Boundary));
     assert_eq!(req("f/shared/a.ts", "f/server/h.ts"), Err(Code::Boundary));
     assert_eq!(boundary(Realm::Client, Realm::Server), Some(Code::Boundary));
     assert_eq!(boundary(Realm::Server, Realm::Shared), None);
 
-    let (m, line) = s.where_instance("Players.Bob.PlayerScripts.client.f.e:12").unwrap();
+    let (m, line) = s.where_instance("ReplicatedStorage.client.f.e:12").unwrap();
     assert_eq!((m.file.as_path(), line), (Path::new("/src/f/client/e.ts"), Some(12)));
 
     // ReplicatedFirst code stays where it is, so other client code reaches it by @game; Starter copies never.
     let r = Routes::new([
-        ("client", "StarterPlayer/StarterPlayerScripts/client"),
+        ("ui", "StarterPlayer/StarterPlayerScripts/ui"),
         ("boot", "ReplicatedFirst/boot"),
     ])
     .unwrap();
-    let s = scan_of(&r, &["client/a.ts", "boot/b.ts"]);
+    let s = scan_of(&r, &["ui/a.ts", "boot/b.ts", "ui/main.client.ts"]);
+    assert_eq!(codes(&s), [("tree.starterScript", "ui/main.client.ts".into())]);
     let req = |from: &str, to: &str| require(&r, s.find(Path::new(from)).unwrap(), s.find(Path::new(to)).unwrap());
     assert_eq!(
-        req("client/a.ts", "boot/b.ts").as_deref(),
+        req("ui/a.ts", "boot/b.ts").as_deref(),
         Ok("@game/ReplicatedFirst/boot/b")
     );
-    assert_eq!(req("boot/b.ts", "client/a.ts"), Err(Code::Boundary));
+    assert_eq!(req("boot/b.ts", "ui/a.ts"), Err(Code::Boundary));
 }

@@ -176,17 +176,27 @@ fn check(modules: &[Module], root: &Path, diags: &mut Vec<Diag>) {
         }
     }
 
-    // Templates are cloned into place by their module, so only loose scripts can be dead.
+    // Templates are cloned into place by their module, so only loose scripts can be dead or doubled.
     for m in modules.iter().filter(|m| m.class != Class::ModuleScript && !m.template) {
-        if runs_at(m.class, &m.instance) {
-            continue;
+        if m.instance[0].starts_with("Starter") {
+            diags.push(Diag {
+                code: Code::StarterScript,
+                path: m.file.clone(),
+                other: None,
+                message: format!(
+                    "a {:?} at {} runs there and again from every player's copy; route it to ReplicatedStorage",
+                    m.class,
+                    m.full_name()
+                ),
+            });
+        } else if !runs_at(m.class, &m.instance) {
+            diags.push(Diag {
+                code: Code::DeadScript,
+                path: m.file.clone(),
+                other: None,
+                message: format!("a {:?} at {} never runs there", m.class, m.full_name()),
+            });
         }
-        diags.push(Diag {
-            code: Code::DeadScript,
-            path: m.file.clone(),
-            other: None,
-            message: format!("a {:?} at {} never runs there", m.class, m.full_name()),
-        });
     }
 
     let mut seen: HashMap<(&[String], String), (&str, usize)> = HashMap::new();

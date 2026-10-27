@@ -50,6 +50,7 @@ pub enum Code {
     Boundary,
     InstanceClash,
     DeadScript,
+    StarterScript,
     PortableName,
 }
 
@@ -61,6 +62,7 @@ impl Code {
             Code::Boundary => "route.boundary",
             Code::InstanceClash => "tree.instanceClash",
             Code::DeadScript => "tree.deadScript",
+            Code::StarterScript => "tree.starterScript",
             Code::PortableName => "scan.portableName",
         }
     }
@@ -120,6 +122,17 @@ impl Module {
     }
 }
 
+/// A route's realm: a key named after a realm (`client = "ReplicatedStorage/client"`) is that realm, any other
+/// key takes its target service's.
+fn route_realm(key: &str, service: &str) -> Realm {
+    match key {
+        k if key_matches("server", k) => Realm::Server,
+        k if key_matches("client", k) => Realm::Client,
+        k if key_matches("shared", k) => Realm::Shared,
+        _ => realm_of(service),
+    }
+}
+
 /// The realm code in a service runs in. Services not listed are visible to both sides.
 pub fn realm_of(service: &str) -> Realm {
     match service {
@@ -157,7 +170,7 @@ impl Routes {
             if key == "*" {
                 routes.fallback = Some(routes.list.len());
             }
-            let realm = realm_of(&target[0]);
+            let realm = route_realm(key, &target[0]);
             routes.list.push(Route {
                 key: key.to_owned(),
                 target,
