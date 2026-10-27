@@ -207,4 +207,18 @@ fn require_spelling() {
 
     let (m, line) = s.where_instance("Players.Bob.PlayerScripts.client.f.e:12").unwrap();
     assert_eq!((m.file.as_path(), line), (Path::new("/src/f/client/e.ts"), Some(12)));
+
+    // ReplicatedFirst code stays where it is, so other client code reaches it by @game; Starter copies never.
+    let r = Routes::new([
+        ("client", "StarterPlayer/StarterPlayerScripts/client"),
+        ("boot", "ReplicatedFirst/boot"),
+    ])
+    .unwrap();
+    let s = scan_of(&r, &["client/a.ts", "boot/b.ts"]);
+    let req = |from: &str, to: &str| require(&r, s.find(Path::new(from)).unwrap(), s.find(Path::new(to)).unwrap());
+    assert_eq!(
+        req("client/a.ts", "boot/b.ts").as_deref(),
+        Ok("@game/ReplicatedFirst/boot/b")
+    );
+    assert_eq!(req("boot/b.ts", "client/a.ts"), Err(Code::Boundary));
 }

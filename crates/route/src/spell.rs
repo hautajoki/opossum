@@ -9,7 +9,7 @@ pub fn boundary(importer: Realm, target: Realm) -> Option<Code> {
 
 /// The require string that reaches `target` from `importer`. Within one route target it is relative (`./x`,
 /// `../x`, `@self/x` into an init module's own children); across targets it is `@game/Service/...`, except into a
-/// client target, whose code runs from a copy in PlayerScripts and so is reachable only relatively from the same
+/// Starter container, whose code runs from a per-player copy and so is reachable only relatively from the same
 /// target. `Err(Code::Boundary)` when the import is not allowed.
 pub fn require(routes: &Routes, importer: &Module, target: &Module) -> Result<String, Code> {
     if let Some(code) = boundary(importer.realm, target.realm) {
@@ -18,7 +18,7 @@ pub fn require(routes: &Routes, importer: &Module, target: &Module) -> Result<St
     if routes.get(importer.route).target == routes.get(target.route).target {
         return Ok(relative(&importer.instance, &target.instance));
     }
-    if target.realm == Realm::Client {
+    if target.instance[0].starts_with("Starter") {
         return Err(Code::Boundary);
     }
     Ok(format!("@game/{}", target.instance.join("/")))
