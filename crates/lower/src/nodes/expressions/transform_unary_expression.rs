@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformUnaryExpression.ts`
 
-use rbxts_luau::{AssignmentOperator, Expr, UnaryOperator, create, globals};
+use luau::{AssignmentOperator, Expr, UnaryOperator, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -30,11 +30,6 @@ pub fn transform_postfix_unary_expression(
     let unary = node.as_postfix_unary_expression();
     validate_not_any_type(state, unary.operand);
 
-    // rbxts-rs: an update of `receiver.key` a plugin claims (DESIGN §11.5)
-    if let Some(claimed) = crate::plugins::dispatch::claim_assignment(state, prereqs, node) {
-        return claimed;
-    }
-
     let writable = transform_writable_expression(state, prereqs, unary.operand, true);
     let orig_value = temp_id("original");
     let operator = update_operator(unary.operator);
@@ -52,10 +47,6 @@ pub fn transform_prefix_unary_expression(state: &mut TransformState<'_>, prereqs
 
     match unary.operator {
         Kind::PlusPlusToken | Kind::MinusMinusToken => {
-            // rbxts-rs: an update of `receiver.key` a plugin claims (DESIGN §11.5)
-            if let Some(claimed) = crate::plugins::dispatch::claim_assignment(state, prereqs, node) {
-                return claimed;
-            }
             let writable = transform_writable_expression(state, prereqs, unary.operand, true);
             prereqs.push(create::assignment(writable.clone(), update_operator(unary.operator), create::number(1.0)));
             writable

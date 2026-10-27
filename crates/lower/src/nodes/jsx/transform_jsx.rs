@@ -1,6 +1,6 @@
 //! `nodes/jsx/transformJsx.ts`
 
-use rbxts_luau::{Expr, Stmt, create};
+use luau::{Expr, Stmt, create};
 use tsrs_ast::Node;
 use tsrs_core::P;
 

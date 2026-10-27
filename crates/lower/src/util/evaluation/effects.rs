@@ -1,11 +1,11 @@
 //! `util/evaluation/effects.ts`: what running emitted Luau may do, and whether two evaluations can be reordered.
 //!
-//! The effect sets are [`rbxts_luau::Effects`]; the compiler-owned builtins' contracts (`markBuiltinReference` on
-//! `luau.globals`) are marked by `rbxts_luau::globals` itself.
+//! The effect sets are [`luau::Effects`]; the compiler-owned builtins' contracts (`markBuiltinReference` on
+//! `luau.globals`) are marked by `luau::globals` itself.
 
 use std::collections::HashSet;
 
-use rbxts_luau::{AnyIdentifier, Binding, Effects, Expr, InterpolatedStringPart, Stmt, UnaryOperator};
+use luau::{AnyIdentifier, Binding, Effects, Expr, InterpolatedStringPart, Stmt, UnaryOperator};
 
 use super::facts::{
     get_binding_of_id, get_builtin_call_effects, get_call_effects, is_constant_reference, is_primitive_value,
@@ -139,21 +139,21 @@ pub fn get_intrinsic_effects(node: LuauNode<'_>) -> Effects {
         LuauNode::StringPart => Effects::none(),
         LuauNode::MapField(m) => match &m.index {
             Expr::String(_) => Effects::none(),
-            Expr::Number(n) if rbxts_luau::js_string_to_number(&n.value).is_finite() => Effects::none(),
+            Expr::Number(n) if luau::js_string_to_number(&n.value).is_finite() => Effects::none(),
             _ => Effects::may_throw(),
         },
         LuauNode::Expr(e) => match e {
             Expr::Identifier(_) | Expr::TemporaryIdentifier(_) => {
                 reads_of(binding_of_expr(e).expect("an identifier has a binding"))
             }
-            Expr::Nil | Expr::True | Expr::False | Expr::Number(_) | Expr::String(_) | Expr::LateString(_) => {
+            Expr::Nil | Expr::True | Expr::False | Expr::Number(_) | Expr::String(_) => {
                 Effects::none()
             }
             Expr::None | Expr::VarArgs => Effects::none(),
             Expr::Call(n) => get_builtin_call_effects(&n.expression)
                 .or_else(|| get_call_effects(&n.expression))
                 .map_or_else(Effects::unknown, |e| (*e).clone()),
-            Expr::MethodCall(_) => Effects::unknown(),
+            Expr::MethodCall(_) | Expr::Require(_) => Effects::unknown(),
             Expr::Array(_) | Expr::Map(_) | Expr::MixedTable(_) => Effects::allocation(),
             Expr::Set(_) => Effects { throws: true, ..Effects::allocation() },
             Expr::PropertyAccess(_) | Expr::ComputedIndex(_) => {
@@ -178,7 +178,7 @@ pub fn get_intrinsic_effects(node: LuauNode<'_>) -> Effects {
                 }
             }
             Expr::Binary(n) => {
-                use rbxts_luau::BinaryOperator::{Eq, Ne};
+                use luau::BinaryOperator::{Eq, Ne};
                 if matches!(n.operator, Eq | Ne) && !is_primitive_value(&n.left) && !is_primitive_value(&n.right) {
                     Effects::unknown()
                 } else {

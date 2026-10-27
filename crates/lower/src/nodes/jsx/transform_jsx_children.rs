@@ -2,7 +2,7 @@
 
 use std::fmt::Write;
 
-use rbxts_luau::{Expr, Quote, create};
+use luau::{Expr, Quote, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

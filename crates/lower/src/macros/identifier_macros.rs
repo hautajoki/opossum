@@ -1,14 +1,14 @@
 //! `macros/identifierMacros.ts`
 
-use rbxts_luau::Expr;
+use luau::Expr;
 use tsrs_ast::Node;
 use tsrs_core::P;
 
 use crate::classes::transform_state::TransformState;
 use crate::macros::types::IdentifierMacro;
 
-fn promise(state: &mut TransformState<'_>, node: P<Node>) -> Expr {
-    state.ts(node, "Promise")
+fn promise(state: &mut TransformState<'_>, _: P<Node>) -> Expr {
+    state.ts("Promise")
 }
 
 /// `IDENTIFIER_MACROS`

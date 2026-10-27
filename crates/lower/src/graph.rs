@@ -1,22 +1,20 @@
-//! Which files a build transforms (DESIGN §14 "Invalidation", census §6.3).
+//! Which files a rebuild lowers again.
 //!
 //! Every program file gets a [`FileFacts`]: its text version, the files it references, the modules it augments and
 //! whether it affects the global scope. Against the facts of the last committed build:
-//! - **roblox-ts's rule:** the seeds are the files that are new, whose version changed, or whose set of referenced
+//! - **references:** the seeds are the files that are new, whose version changed, or whose set of referenced
 //!   files changed (a deleted file's importers included), and the closure is everything that reaches a seed through
 //!   the reversed references, transitively (`getChangedFilePaths`, with no signature pruning). References are every
 //!   resolved import (type-only imports, `export … from` and `import()` types included), triple-slash references,
 //!   type reference directives and the file's module augmentations;
 //! - **TypeScript's global rule:** a seed, deleted file or file the closure reaches that affects the global scope
-//!   (a script file, a `declare global`, a global `.d.ts`) or declares an ambient module invalidates every file
-//!   (roblox-ts misses this, census S1). Reached files count because a global declaration whose types come from a
+//!   (a script file, a `declare global`, a global `.d.ts`) or declares an ambient module invalidates every file.
+//!   Reached files count because a global declaration whose types come from a
 //!   changed module changes every file's view of the globals (TypeScript's `handleDtsMayChangeOfGlobalScope`);
 //! - **case-only renames:** a file whose path key is unchanged but whose spelling changed is a seed (its output's
 //!   name changes);
-//! - **augmentation edges:** a file in the closure that augments module X brings in every file that reaches X (census
-//!   S2), so an edit that only changes an augmentation's types re-transforms X's importers.
-//!
-//! `assumeChangesOnlyAffectDirectDependencies` is refused at setup (census S3).
+//! - **augmentation edges:** a file in the closure that augments module X brings in every file that reaches X, so an
+//!   edit that only changes an augmentation's types re-lowers X's importers.
 
 use std::collections::VecDeque;
 use std::hash::Hasher;
@@ -38,7 +36,7 @@ impl Version {
         Version::of_bytes(text.as_bytes())
     }
 
-    /// The version of a file's bytes (a plugin state file need not be UTF-8).
+    /// The version of a file's bytes.
     pub fn of_bytes(bytes: &[u8]) -> Version {
         // FNV-1a, 64-bit
         let mut fnv: u64 = 0xcbf2_9ce4_8422_2325;
@@ -49,23 +47,6 @@ impl Version {
         let mut fx = FxHasher::default();
         fx.write(bytes);
         Version(fnv, fx.finish(), bytes.len() as u64)
-    }
-
-    /// Hex text, for the incremental state file.
-    pub fn to_hex(self) -> String {
-        format!("{:016x}{:016x}{:x}", self.0, self.1, self.2)
-    }
-
-    /// Parses [`Version::to_hex`].
-    pub fn from_hex(text: &str) -> Option<Version> {
-        if text.len() < 33 || !text.is_ascii() {
-            return None;
-        }
-        Some(Version(
-            u64::from_str_radix(&text[..16], 16).ok()?,
-            u64::from_str_radix(&text[16..32], 16).ok()?,
-            u64::from_str_radix(&text[32..], 16).ok()?,
-        ))
     }
 }
 
@@ -105,19 +86,6 @@ fn affects_global_scope(file: P<SourceFile>) -> bool {
     file.statements().nodes().iter().any(|&stmt| !tsrs_ast::is_module_with_string_literal_name(stmt))
 }
 
-/// The program file a module resolution names: for a source of a referenced project (TypeScript project references),
-/// the declaration it emits, which the program holds in its place (TypeScript's output redirect), else the resolved
-/// file itself. `redirects`: the program has project references (else nothing is looked up).
-pub(crate) fn program_file_of<'a>(program: &Program, redirects: bool, resolved: &'a str) -> std::borrow::Cow<'a, str> {
-    if redirects {
-        let redirect = program.get_parse_file_redirect(resolved);
-        if !redirect.is_empty() {
-            return std::borrow::Cow::Owned(redirect);
-        }
-    }
-    std::borrow::Cow::Borrowed(resolved)
-}
-
 /// A path as a key of the facts map: the program's canonical `Path` spelling.
 pub fn path_key(program: &Program, file_name: &str) -> String {
     tspath::to_path(file_name, program.get_current_directory(), program.use_case_sensitive_file_names()).to_string()
@@ -133,8 +101,7 @@ pub fn program_facts(
     let type_references = program.get_resolved_type_reference_directives();
     let case_sensitive = program.use_case_sensitive_file_names();
     let cwd = program.get_current_directory();
-    let redirects = !program.get_resolved_project_references().is_empty();
-    let key = |name: &str| tspath::to_path(&program_file_of(program, redirects, name), cwd, case_sensitive).to_string();
+    let key = |name: &str| tspath::to_path(name, cwd, case_sensitive).to_string();
     let mut facts = Vec::with_capacity(program.source_files().len());
     for &file in program.source_files() {
         let version = *versions.entry(file).or_insert_with(|| Version::of(file.text()));
@@ -399,12 +366,5 @@ mod tests {
             (inv.deleted.as_slice(), inv.added.as_slice()),
             (&["usehub".to_owned()][..], &["UseHub".to_owned()][..])
         );
-    }
-
-    #[test]
-    fn versions_round_trip() {
-        let v = Version::of("local x = 1");
-        assert_eq!(Version::from_hex(&v.to_hex()), Some(v));
-        assert_ne!(Version::of("a"), Version::of("b"));
     }
 }

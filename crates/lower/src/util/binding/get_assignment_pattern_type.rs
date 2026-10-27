@@ -3,7 +3,7 @@
 //! TypeScript's assignment-pattern query cannot traverse a rest element's parent, so that part of the source path is
 //! resolved here, keeping tuple positions through nested rest elements.
 
-use rbxts_luau::js_number_to_string;
+use luau::js_number_to_string;
 use tsrs_ast::{Kind, Node};
 use tsrs_checker::{ElementFlags, LiteralValue, Type, TypeFlags};
 use tsrs_core::P;
@@ -27,7 +27,7 @@ fn get_iterable_element_type(state: &mut TransformState<'_>, t: P<Type>, node: P
         return state.checker.get_number_index_type(t).expect("an array type has a number index");
     }
 
-    let iterable_symbol = state.macro_manager.get_symbol_or_throw(symbol_names::ITERABLE);
+    let iterable_symbol = state.macro_manager.symbol(symbol_names::ITERABLE).expect("compiler-types declare Iterable");
     let iterable = state.checker.get_declared_type_of_symbol_exported(iterable_symbol);
     let iterator_name = state.checker.get_properties_of_type_exported(iterable)[0].name();
     let iterator = *state
@@ -44,8 +44,8 @@ fn get_iterable_element_type(state: &mut TransformState<'_>, t: P<Type>, node: P
     let next_signature = state.checker.get_call_signatures(next)[0];
     let result = state.checker.get_return_type_of_signature_exported(next_signature);
     let mut values = Vec::new();
-    // `getTrueType()` without `fresh` is the regular `true`, the type of `done: true`
-    let true_type = state.checker.regular_true_type;
+    // the regular `true` is the type of `done: true`
+    let true_type = crate::util::types::regular_boolean_literal(state.checker, true);
     for part in constituents(result) {
         if state.checker.get_type_of_property_of_type_exported(part, "done") != Some(true_type) {
             let value =
@@ -53,7 +53,7 @@ fn get_iterable_element_type(state: &mut TransformState<'_>, t: P<Type>, node: P
             values.push(value);
         }
     }
-    state.checker.get_union_type(&values)
+    state.checker.get_union_type_exported(&values)
 }
 
 /// The array literal around a `SpreadElement` pattern parent, and the spread's index in it.
@@ -109,21 +109,21 @@ fn get_rest_element_type(state: &mut TransformState<'_>, pattern: P<Node>, index
             values.push(get_iterable_element_type(state, part, pattern));
         }
     }
-    state.checker.get_union_type(&values)
+    state.checker.get_union_type_exported(&values)
 }
 
 /// `Number(key.value)` of a string or number literal type.
 fn literal_number(t: P<Type>) -> Option<f64> {
-    match t.as_literal_type().value.get() {
+    match t.as_literal_type().value() {
         Some(LiteralValue::Number(n)) => Some(n.0),
-        Some(LiteralValue::String(s)) => Some(rbxts_luau::js_string_to_number(s)),
+        Some(LiteralValue::String(s)) => Some(luau::js_string_to_number(s)),
         _ => None,
     }
 }
 
 /// `String(key.value)` of a string or number literal type.
 fn literal_string(t: P<Type>) -> String {
-    match t.as_literal_type().value.get() {
+    match t.as_literal_type().value() {
         Some(LiteralValue::Number(n)) => js_number_to_string(n.0),
         Some(LiteralValue::String(s)) => s.to_owned(),
         _ => unreachable!("a string or number literal type"),
@@ -136,7 +136,7 @@ fn get_property_type(state: &mut TransformState<'_>, pattern: P<Node>, name: P<N
     let key_type = match name.kind() {
         Kind::ComputedPropertyName => state.get_type(name.as_computed_property_name().expression),
         Kind::NumericLiteral => {
-            state.checker.get_number_literal_type(Number(rbxts_luau::js_string_to_number(name.text())))
+            state.checker.get_number_literal_type(Number(luau::js_string_to_number(name.text())))
         }
         _ => state.checker.get_string_literal_type(name.text()),
     };
@@ -165,12 +165,12 @@ fn get_property_type(state: &mut TransformState<'_>, pattern: P<Node>, name: P<N
                 } else {
                     state.checker.get_string_type()
                 };
-                state.checker.get_index_type_of_type_exported(t, index_kind).expect("an index signature")
+                state.checker.get_index_info_of_type_exported(t, index_kind).expect("an index signature").value_type()
             }
         };
         values.push(value);
     }
-    state.checker.get_union_type(&values)
+    state.checker.get_union_type_exported(&values)
 }
 
 /// `hasRestAssignmentAncestor`
@@ -216,7 +216,7 @@ pub fn get_assignment_pattern_type(state: &mut TransformState<'_>, pattern: P<No
     if element.kind() == Kind::BinaryExpression {
         let non_nullable = state.checker.get_non_nullable_type(source);
         let default = state.get_type(element.as_binary_expression().right());
-        state.checker.get_union_type(&[non_nullable, default])
+        state.checker.get_union_type_exported(&[non_nullable, default])
     } else {
         source
     }
@@ -224,5 +224,5 @@ pub fn get_assignment_pattern_type(state: &mut TransformState<'_>, pattern: P<No
 
 /// `checker.getTypeOfAssignmentPattern`
 pub fn type_of_assignment_pattern(state: &mut TransformState<'_>, pattern: P<Node>) -> P<Type> {
-    state.checker.get_type_of_assignment_pattern(pattern).unwrap_or_else(|| state.checker.get_error_type())
+    state.checker.get_type_of_assignment_pattern(pattern).unwrap_or_else(|| state.checker.get_any_type())
 }

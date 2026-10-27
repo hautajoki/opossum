@@ -1,6 +1,6 @@
 //! `nodes/binding/transformBindingName.ts`
 
-use rbxts_luau::{AnyIdentifier, Expr, Stmt};
+use luau::{AnyIdentifier, Expr, Stmt};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

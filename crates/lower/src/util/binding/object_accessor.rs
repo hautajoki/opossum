@@ -1,6 +1,6 @@
 //! `util/binding/objectAccessor.ts`
 
-use rbxts_luau::{Expr, create};
+use luau::{Expr, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_checker::Type;
 use tsrs_core::P;

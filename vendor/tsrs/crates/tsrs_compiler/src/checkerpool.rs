@@ -483,10 +483,10 @@ pub struct PoolState {
     // Leaked like the program that owns the pool, so a handle can hold a checker's lock without borrowing the pool.
     checkers: &'static [CheckerSlot],
     // Program file index of each file.
-    file_indices: FxHashMap<P<SourceFile>, usize>,
+    pub file_indices: FxHashMap<P<SourceFile>, usize>,
     // The checker that runs each program file: the static assignment until stealing moves a file to the checker that
     // checks it, so later passes over the file (declaration diagnostics, emit) use the checker that has its state.
-    owners: Vec<std::sync::atomic::AtomicU32>,
+    pub owners: Vec<std::sync::atomic::AtomicU32>,
     // The static assignment `owners` started from, for a program that reuses this one (`inherited_associations`).
     pub associations: Vec<usize>,
     // Estimated work per program file (checked_file_weights), what stealing balances.

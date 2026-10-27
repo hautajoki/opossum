@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformJsxElement.ts`
 
-use rbxts_luau::Expr;
+use luau::Expr;
 use tsrs_ast::Node;
 use tsrs_core::P;
 

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use rbxts_luau::{Effects, Expr};
+use luau::{Effects, Expr};
 use tsrs_ast::{Kind, ModifierFlags, Node};
 use tsrs_core::P;
 

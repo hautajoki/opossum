@@ -3,7 +3,7 @@
 
 use rustc_hash::FxHashMap;
 
-use rbxts_luau::{Effects, Expr, Stmt};
+use luau::{Effects, Expr, Stmt};
 
 use super::effects::{can_discard, can_repeat, effects_commute, get_effects, get_effects_of_statements, join_effects};
 use super::events::{EvaluationReference, get_evaluation_events};

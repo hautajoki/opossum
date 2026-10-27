@@ -1,6 +1,6 @@
 //! `nodes/statements/transformReturnStatement.ts`
 
-use rbxts_luau::{Expr, ReturnStatement, Stmt, create, globals};
+use luau::{Expr, ReturnStatement, Stmt, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -25,7 +25,7 @@ fn is_tuple_returning_call(state: &mut TransformState<'_>, ts_expression: P<Node
 fn is_tuple_macro(state: &mut TransformState<'_>, expression: P<Node>) -> bool {
     let callee_type = state.get_type(expression.expression().expect("a call has a callee"));
     let symbol = get_first_defined_symbol(state, callee_type);
-    symbol.is_some() && symbol == Some(state.macro_manager.get_symbol_or_throw(symbol_names::TUPLE))
+    symbol.is_some_and(|s| state.macro_manager.is(s, symbol_names::TUPLE))
 }
 
 /// `transformReturnStatementInner`: `return expression`, with `LuaTuple` values spread.
@@ -53,7 +53,7 @@ pub fn transform_return_statement_inner(state: &mut TransformState<'_>, return_e
 
     if is_return_blocked_by_try_statement(return_exp) {
         state.mark_try_uses(TryUse::Return);
-        let try_return = state.ts(return_exp, "TRY_RETURN");
+        let try_return = state.ts("TRY_RETURN");
         result.push(Stmt::Return(ReturnStatement { expressions: vec![try_return, create::array(expressions)] }));
     } else {
         result.push(Stmt::Return(ReturnStatement { expressions }));
@@ -68,7 +68,7 @@ pub fn transform_return_statement(state: &mut TransformState<'_>, node: P<Node>)
         None => {
             if is_return_blocked_by_try_statement(node) {
                 state.mark_try_uses(TryUse::Return);
-                let try_return = state.ts(node, "TRY_RETURN");
+                let try_return = state.ts("TRY_RETURN");
                 return vec![Stmt::Return(ReturnStatement {
                     expressions: vec![try_return, create::array(Vec::new())],
                 })];

@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformExpression.ts`: expression dispatch by syntax kind.
 
-use rbxts_luau::Expr;
+use luau::Expr;
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -50,10 +50,6 @@ pub fn kind_name(kind: Kind) -> String {
 
 /// `transformExpression`
 pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Expr {
-    // rbxts-rs: the plugins' by-kind fallback (DESIGN §11.2)
-    if let Some(claimed) = crate::plugins::dispatch::claim_expression(state, prereqs, node) {
-        return claimed;
-    }
     let mut expression = match node.kind() {
         // banned expressions
         Kind::BigIntLiteral => {
@@ -104,7 +100,7 @@ pub fn transform_expression(state: &mut TransformState<'_>, prereqs: &mut Prereq
         Kind::JsxSelfClosingElement => transform_jsx_self_closing_element(state, prereqs, node),
         Kind::NewExpression => transform_new_expression(state, prereqs, node),
         Kind::NoSubstitutionTemplateLiteral => transform_no_substitution_template_literal(node),
-        Kind::NumericLiteral => transform_numeric_literal(state, node),
+        Kind::NumericLiteral => transform_numeric_literal(node),
         Kind::ObjectLiteralExpression => transform_object_literal_expression(state, prereqs, node),
         Kind::OmittedExpression => transform_omitted_expression(),
         Kind::ParenthesizedExpression => transform_parenthesized_expression(state, prereqs, node),

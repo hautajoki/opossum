@@ -1,7 +1,7 @@
 //! A borrowed view of any Luau node, for the evaluation walks that roblox-ts writes over `luau.Node` with
 //! `forEachChild`: every child node in field order (lists in list order), declared identifiers included.
 
-use rbxts_luau::{AnyIdentifier, ElseBody, Expr, IfStatement, InterpolatedStringPart, MapField, Stmt, TableField};
+use luau::{AnyIdentifier, ElseBody, Expr, IfStatement, InterpolatedStringPart, MapField, Stmt, TableField};
 
 /// Any Luau node the evaluation code visits.
 #[derive(Clone, Copy)]
@@ -59,7 +59,7 @@ pub fn for_each_child<'a>(node: LuauNode<'a>, f: &mut dyn FnMut(LuauNode<'a>)) {
             | Expr::True
             | Expr::Number(_)
             | Expr::String(_)
-            | Expr::LateString(_)
+            | Expr::Require(_)
             | Expr::VarArgs => {}
             Expr::ComputedIndex(n) => {
                 f(LuauNode::Expr(&n.expression));

@@ -1,6 +1,6 @@
 //! `macros/callMacros.ts`
 
-use rbxts_luau::{BinaryOperator, Expr, create, globals};
+use luau::{BinaryOperator, Expr, create, globals};
 use tsrs_ast::Node;
 use tsrs_core::P;
 
@@ -9,7 +9,6 @@ use crate::classes::transform_state::TransformState;
 use crate::macros::types::CallMacro;
 use crate::shared::diagnostics::errors;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
-use crate::util::create_import_expression::get_import_parts;
 use crate::util::create_truthiness_checks::create_truthiness_checks;
 
 const PRIMITIVE_LUAU_TYPES: &[&str] =
@@ -66,12 +65,10 @@ fn tuple(state: &mut TransformState<'_>, _: &mut Prereqs, node: P<Node>, _: Expr
     Expr::None
 }
 
+/// `$getModuleTree` names a module by its instance path, which opossum's routing does not hand out yet.
 fn get_module_tree(state: &mut TransformState<'_>, _: &mut Prereqs, node: P<Node>, _: Expr, _: Vec<Expr>) -> Expr {
-    let source_file = tsrs_ast::get_source_file_of_node(node).expect("a call is in a source file");
-    let mut parts = get_import_parts(state, source_file, node.arguments()[0]);
-    // converts the flat array into { root, { "rest", "of", "path" } }
-    let root = parts.remove(0);
-    create::array(vec![root, create::array(parts)])
+    state.add_diagnostic(errors::unsupported_macro(node, "$getModuleTree"));
+    Expr::None
 }
 
 /// `CALL_MACROS`

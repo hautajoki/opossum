@@ -1,7 +1,7 @@
 //! `nodes/statements/transformForOfStatement.ts`: `for (x of iterable)` as a generic `for` loop, with one builder per
 //! kind of iterable, and `for (i of $range(a, b))` as a numeric `for` loop.
 
-use rbxts_luau::{AnyIdentifier, AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, create, globals};
+use luau::{AnyIdentifier, AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_checker::{ElementFlags, SignatureKind, Type, TypeFlags};
 use tsrs_core::P;
@@ -328,7 +328,7 @@ fn tuple_element_label(declaration: Option<P<Node>>) -> Option<&'static str> {
         return None;
     }
     let text = name.text();
-    rbxts_luau::is_valid_identifier(text).then_some(text)
+    luau::is_valid_identifier(text).then_some(text)
 }
 
 /// `buildIterableFunctionLuaTupleLoop`: `IterableFunction<LuaTuple<T>>`. A fixed-length tuple is bound element by
@@ -368,7 +368,7 @@ fn build_iterable_function_lua_tuple_loop(
     let fixed_tuple =
         if is_variable_declaration_list(initializer) && tsrs_checker::is_tuple_type_exported(tuple_arg_type) {
             let tuple_type = tuple_arg_type.target().expect("a tuple type reference has a target").as_tuple_type();
-            (!tuple_type.combined_flags.get().intersects(ElementFlags::Variable)).then_some(tuple_type)
+            (!tuple_type.element_flags().iter().any(|f| f.intersects(ElementFlags::Variable))).then_some(tuple_type)
         } else {
             None
         };
@@ -508,7 +508,7 @@ fn find_range_macro(state: &mut TransformState<'_>, node: P<Node>) -> Option<P<N
     if expression.kind() == Kind::CallExpression {
         let callee_type = state.get_type(expression.as_call_expression().expression);
         let symbol = get_first_defined_symbol(state, callee_type);
-        if symbol.is_some() && symbol == Some(state.macro_manager.get_symbol_or_throw(symbol_names::RANGE)) {
+        if symbol.is_some_and(|s| state.macro_manager.is(s, symbol_names::RANGE)) {
             return Some(expression);
         }
     }

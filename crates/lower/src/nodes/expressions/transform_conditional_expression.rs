@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformConditionalExpression.ts`
 
-use rbxts_luau::{AssignmentOperator, ElseBody, Expr, create};
+use luau::{AssignmentOperator, ElseBody, Expr, create};
 use tsrs_ast::Node;
 use tsrs_core::P;
 

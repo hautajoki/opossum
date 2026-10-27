@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformJsxSelfClosingElement.ts`
 
-use rbxts_luau::Expr;
+use luau::Expr;
 use tsrs_ast::Node;
 use tsrs_core::P;
 

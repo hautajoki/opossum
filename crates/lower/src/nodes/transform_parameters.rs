@@ -1,6 +1,6 @@
 //! `nodes/transformParameters.ts`
 
-use rbxts_luau::{AnyIdentifier, Expr, Stmt, create, globals};
+use luau::{AnyIdentifier, Expr, Stmt, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

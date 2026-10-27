@@ -3,7 +3,7 @@
 
 use std::cell::RefCell;
 
-use rbxts_luau::{AnyIdentifier, Expr, Stmt, TempIds, TemporaryIdentifier, create};
+use luau::{AnyIdentifier, Expr, Stmt, TempIds, TemporaryIdentifier, create};
 
 use crate::util::value_to_id_str::value_to_id_str;
 
@@ -26,6 +26,11 @@ pub fn next_temp_id() -> u32 {
 /// `luau.tempId(name)`
 pub fn temp_id(name: impl Into<String>) -> TemporaryIdentifier {
     TEMP_IDS.with(|ids| ids.borrow_mut().temp_id(name))
+}
+
+/// A temporary for a binding the name solver must rename (`type` → `type_`).
+pub fn renamed_id(name: impl Into<String>) -> TemporaryIdentifier {
+    TEMP_IDS.with(|ids| ids.borrow_mut().renamed(name))
 }
 
 /// `luau.tempId(name)` as an expression.

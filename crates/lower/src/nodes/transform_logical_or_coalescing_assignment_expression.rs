@@ -1,6 +1,6 @@
 //! `nodes/transformLogicalOrCoalescingAssignmentExpression.ts`: `??=`, `&&=` and `||=`.
 
-use rbxts_luau::{AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, UnaryOperator, create};
+use luau::{AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, UnaryOperator, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

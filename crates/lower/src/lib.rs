@@ -1,41 +1,24 @@
-//! The TypeScript → Luau transform: a port of roblox-ts master's `src/TSTransformer` (DESIGN §9b), plus the build
-//! pipeline of `compileFiles` ([`compile`]).
+//! TypeScript to Luau over the tsrs checker: load a project ([`program`]), check it, and lower each file to a Luau
+//! tree ([`lower_files`]) whose requires name routed instance paths ([`locate`]). The node lowering keeps roblox-ts's
+//! layout (one module per construct under [`nodes`], helpers under [`util`], the macro tables under [`macros`]).
 //!
-//! The module layout follows roblox-ts's folders, one Rust module per TypeScript file, and ported functions keep
-//! their TypeScript names in snake_case, so the two can be read side by side. Deliberate differences are marked
-//! `// rbxts-rs:`.
-//!
-//! - [`classes`]: [`TransformState`] (one file), [`MultiTransformState`] (the build), [`Prereqs`], the
-//!   [`MacroManager`], the diagnostics of a file.
-//! - [`nodes`]: `transform_expression` / `transform_statement` dispatch and the node transforms.
-//! - [`macros`]: the macro tables (names only in T1; each transform is `None` until ported).
-//! - [`util`]: helpers, including the evaluation-order analysis (`util::evaluation`).
-//! - [`shared`]: roblox-ts's diagnostics table and constants.
-//! - [`build`]: clean, incremental and watch builds ([`build::BuildSession`], DESIGN §14).
-//! - [`plugins`]: the compiler side of the plugin seam (`rbxts_plugin`'s backends, dispatch, build lifecycle).
-//! - [`project`]: roblox-ts's project build steps around the transform (the include copy).
-//!
-//! A file with errors is not written; the build carries on and reports every file.
-//!
-//! [`TransformState`]: classes::transform_state::TransformState
-//! [`MultiTransformState`]: classes::multi_transform_state::MultiTransformState
-//! [`Prereqs`]: classes::prereqs::Prereqs
-//! [`MacroManager`]: classes::macro_manager::MacroManager
-#![warn(missing_docs)]
+//! A file is lowered on the checker that checked it, one thread per checker ([`groups`]). Lowered trees are plain
+//! owned data, rendered by the `luau` crate.
 
-pub mod build;
 pub mod classes;
-pub mod compile;
+pub mod graph;
+pub mod groups;
+pub mod locate;
 pub mod macros;
 pub mod nodes;
-pub mod plugins;
-pub mod project;
+pub mod overlay;
+pub mod parallel;
+pub mod program;
 pub mod shared;
+pub mod source_cache;
 pub mod util;
 
-pub use build::{BuildSession, BuildSummary};
-pub use compile::{
-    CompileOptions, CompileReport, DEFAULT_CHECKERS, FileOutcome, MAX_CHECKERS, ProjectOutcome, Timings, compile_project,
-    compile_project_with, default_checkers, env_checkers,
-};
-pub use plugins::{PluginOptions, PluginTimings};
+pub use groups::{Lowered, lower_files};
+pub use locate::{Location, Locator, Realm};
+pub use program::{LoadOptions, Project, STACK_SIZE, compiler_options, load};
+pub use source_cache::SourceFileCache;

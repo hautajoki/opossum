@@ -10,7 +10,7 @@
 //! end
 //! ```
 
-use rbxts_luau::{AnyIdentifier, AssignmentOperator, BinaryOperator, Expr, Stmt, create, globals};
+use luau::{AnyIdentifier, AssignmentOperator, BinaryOperator, Expr, Stmt, create, globals};
 use tsrs_ast::{Kind, ModifierFlags, Node, SymbolFlags};
 use tsrs_core::P;
 
@@ -159,12 +159,8 @@ fn identifier_or_string_name(member: P<Node>) -> Option<(P<Node>, &'static str)>
 }
 
 /// Static properties and static blocks, in source order.
-///
-/// rbxts-rs: this is where the plugin `class` hook (DESIGN §11.2) adds its statements, right after these and before
-/// the decorators are applied; keep the static emission in this one function.
 fn transform_static_declarations(
     state: &mut TransformState<'_>,
-    node: P<Node>,
     static_declarations: &[P<Node>],
     internal_name: &AnyIdentifier,
 ) -> Vec<Stmt> {
@@ -172,12 +168,7 @@ fn transform_static_declarations(
     for &declaration in static_declarations {
         if declaration.kind() == Kind::ClassStaticBlockDeclaration {
             let body = declaration.as_class_static_block_declaration().body;
-            // rbxts-rs: the block is a statement a TS transformer sees (TypeScript's `isStatement`), lowered here rather
-            // than through `transformStatement`: offered to the plugins' statement hooks first (DESIGN §11.5)
-            match crate::plugins::dispatch::claim_statement(state, body) {
-                Some(claimed) => statements.extend(claimed),
-                None => statements.extend(transform_block(state, body)),
-            }
+            statements.extend(transform_block(state, body));
         } else {
             let mut property_prereqs = Prereqs::new();
             let property = transform_property_declaration(state, &mut property_prereqs, declaration, internal_name);
@@ -185,7 +176,6 @@ fn transform_static_declarations(
             statements.extend(property);
         }
     }
-    statements.extend(crate::plugins::dispatch::class_statements(state, node, internal_name));
     statements
 }
 
@@ -240,7 +230,7 @@ pub fn transform_class_like_declaration(state: &mut TransformState<'_>, node: P<
     for &member in node.members() {
         if matches!(member.kind(), Kind::PropertyDeclaration | Kind::MethodDeclaration)
             && let Some((name, text)) = identifier_or_string_name(member)
-            && rbxts_luau::is_reserved_class_field(text)
+            && luau::is_reserved_class_field(text)
         {
             state.add_diagnostic(errors::no_reserved_class_fields(name));
         }
@@ -279,13 +269,13 @@ pub fn transform_class_like_declaration(state: &mut TransformState<'_>, node: P<
     let class_type = state
         .checker
         .get_type_of_symbol_at_location(class_symbol, Some(node))
-        .unwrap_or_else(|| state.checker.get_error_type());
+        .unwrap_or_else(|| state.checker.get_any_type());
     let instance_type = state.checker.get_declared_type_of_symbol_exported(class_symbol);
 
     let mut ptr = Pointer { name: "name".to_owned(), value: internal_name.clone().into() };
     for method in methods {
         if let Some((name, text)) = identifier_or_string_name(method) {
-            if rbxts_luau::is_metamethod(text) {
+            if luau::is_metamethod(text) {
                 state.add_diagnostic(errors::no_class_metamethods(name));
             }
 
@@ -315,7 +305,7 @@ pub fn transform_class_like_declaration(state: &mut TransformState<'_>, node: P<
         ));
     }
 
-    statements_inner.extend(transform_static_declarations(state, node, &static_declarations, &internal_name));
+    statements_inner.extend(transform_static_declarations(state, &static_declarations, &internal_name));
 
     // if using internal name, assign to return var
     if should_use_internal_name {

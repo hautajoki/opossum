@@ -1,6 +1,6 @@
 //! `nodes/statements/transformImportEqualsDeclaration.ts`
 
-use rbxts_luau::{Expr, Stmt, create};
+use luau::{Stmt, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -10,13 +10,11 @@ use crate::nodes::statements::transform_variable_statement::transform_variable;
 use crate::nodes::transform_entity_name::transform_entity_name;
 use crate::util::create_import_expression::create_import_expression;
 use crate::util::symbols::is_symbol_of_value;
-use crate::util::traversal::source_file_of;
 
 /// `import x = require("y")` and `import x = A.B`.
 pub fn transform_import_equals_declaration(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
     let declaration = node.as_import_equals_declaration();
-    // rbxts-rs: or elided for a plugin
-    if declaration.is_type_only || crate::plugins::dispatch::import_override(state, node) == Some(false) {
+    if declaration.is_type_only {
         return Vec::new();
     }
 
@@ -34,7 +32,7 @@ pub fn transform_import_equals_declaration(state: &mut TransformState<'_>, node:
 
         let specifier = module_reference.expression().expect("an external module reference has an expression");
         assert!(specifier.kind() == Kind::StringLiteral, "a require specifier is a string literal");
-        let import_exp = create_import_expression(state, source_file_of(node), specifier);
+        let import_exp = create_import_expression(state, specifier);
         if is_value {
             let mut import_prereqs = Prereqs::new();
             transform_variable(state, &mut import_prereqs, declaration.name, Some(import_exp.clone()));
@@ -42,7 +40,7 @@ pub fn transform_import_equals_declaration(state: &mut TransformState<'_>, node:
         }
 
         // ensure we emit something
-        if verbatim && statements.is_empty() && matches!(import_exp, Expr::Call(_)) {
+        if verbatim && statements.is_empty() && import_exp.is_call() {
             statements.push(create::call_statement(import_exp));
         }
 

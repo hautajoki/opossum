@@ -1,6 +1,6 @@
 //! `util/offset.ts`
 
-use rbxts_luau::{BinaryOperator, Expr, create};
+use luau::{BinaryOperator, Expr, create};
 
 use crate::util::get_literal_number_value::get_literal_number_value;
 

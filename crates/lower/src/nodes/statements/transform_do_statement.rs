@@ -1,6 +1,6 @@
 //! `nodes/statements/transformDoStatement.ts`
 
-use rbxts_luau::{Stmt, UnaryOperator, create};
+use luau::{Stmt, UnaryOperator, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

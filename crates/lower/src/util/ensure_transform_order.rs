@@ -1,7 +1,7 @@
 //! `util/ensureTransformOrder.ts`: transform expressions left to right, capturing a value in a temporary when a
 //! later expression's prerequisites could change it.
 
-use rbxts_luau::{Effects, Expr, Stmt};
+use luau::{Effects, Expr, Stmt};
 use tsrs_ast::Node;
 use tsrs_core::P;
 

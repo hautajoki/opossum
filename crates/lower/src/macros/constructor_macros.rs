@@ -1,6 +1,6 @@
 //! `macros/constructorMacros.ts`
 
-use rbxts_luau::{AssignmentOperator, Expr, create, globals};
+use luau::{AssignmentOperator, Expr, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

@@ -1,6 +1,6 @@
 //! `nodes/statements/transformExpressionStatement.ts`
 
-use rbxts_luau::{AssignmentOperator, Stmt, create};
+use luau::{AssignmentOperator, Stmt, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -30,35 +30,9 @@ fn unary_parts(node: P<Node>) -> Option<(P<Node>, Kind)> {
     }
 }
 
-/// The expression is one of the forms [`transform_expression_statement_inner`] lowers itself, as a statement: a
-/// logical assignment, an assignment that is not a destructuring, `++` or `--`.
-pub(crate) fn is_statement_lowered(expression: P<Node>) -> bool {
-    match expression.kind() {
-        Kind::BinaryExpression => {
-            let binary = expression.as_binary_expression();
-            tsrs_ast::is_logical_or_coalescing_assignment_expression(expression)
-                || (tsrs_ast::is_assignment_operator(binary.operator_token.kind())
-                    && binary.left.kind() != Kind::ArrayLiteralExpression
-                    && binary.left.kind() != Kind::ObjectLiteralExpression)
-        }
-        _ => unary_parts(expression)
-            .is_some_and(|(_, operator)| matches!(operator, Kind::PlusPlusToken | Kind::MinusMinusToken)),
-    }
-}
-
 /// `transformExpressionStatementInner`: an expression whose value is discarded.
 pub fn transform_expression_statement_inner(state: &mut TransformState<'_>, expression: P<Node>) -> Vec<Stmt> {
     let mut prereqs = Prereqs::new();
-
-    // rbxts-rs: the forms lowered as statements here skip `transform_expression`, so plugins are asked here
-    if state.plugins.is_some()
-        && is_statement_lowered(expression)
-        && let Some(claimed) = crate::plugins::dispatch::claim_statement_expression(state, &mut prereqs, expression)
-    {
-        let mut statements = prereqs.statements;
-        statements.extend(wrap_expression_statement(claimed));
-        return statements;
-    }
 
     if expression.kind() == Kind::BinaryExpression {
         let binary = expression.as_binary_expression();

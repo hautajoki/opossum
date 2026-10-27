@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformThisExpression.ts`
 
-use rbxts_luau::{Expr, globals};
+use luau::{Expr, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -11,7 +11,7 @@ use crate::shared::diagnostics::errors;
 /// `this`: `self`, or the class itself inside static members.
 pub fn transform_this_expression(state: &mut TransformState<'_>, node: P<Node>) -> Expr {
     let symbol = state.checker.get_symbol_at_location_exported(node);
-    if symbol == Some(state.macro_manager.get_symbol_or_throw(symbol_names::GLOBAL_THIS)) {
+    if symbol.is_some_and(|s| state.macro_manager.is(s, symbol_names::GLOBAL_THIS)) {
         state.add_diagnostic(errors::no_global_this(node));
     }
 

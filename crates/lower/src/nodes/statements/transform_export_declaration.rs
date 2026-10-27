@@ -1,6 +1,6 @@
 //! `nodes/statements/transformExportDeclaration.ts`
 
-use rbxts_luau::{AssignmentOperator, BinaryOperator, Expr, Stmt, create};
+use luau::{AssignmentOperator, BinaryOperator, Expr, Stmt, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -10,7 +10,6 @@ use crate::nodes::transform_property_name::transform_property_name;
 use crate::util::clean_module_name::clean_module_name;
 use crate::util::create_import_expression::create_import_expression;
 use crate::util::symbols::is_symbol_of_value;
-use crate::util::traversal::source_file_of;
 
 fn is_export_specifier_value(state: &mut TransformState<'_>, element: P<Node>) -> bool {
     if element.as_export_specifier().is_type_only {
@@ -58,12 +57,12 @@ fn transform_export_from(state: &mut TransformState<'_>, node: P<Node>) -> Vec<S
     // detect if we need to push to a new var or not
     let uses = count_import_exp_uses(state, export_clause);
     let import_exp: Expr = if uses == 1 {
-        create_import_expression(state, source_file_of(node), module_specifier)
+        create_import_expression(state, module_specifier)
     } else if uses > 1 {
         let specifier_text = module_specifier.text();
         let module_name = specifier_text.rsplit('/').next().unwrap_or(specifier_text);
         let id = temp_id(clean_module_name(module_name));
-        let value = create_import_expression(state, source_file_of(node), module_specifier);
+        let value = create_import_expression(state, module_specifier);
         statements.push(create::local(id.clone(), Some(value)));
         Expr::TemporaryIdentifier(id)
     } else {
@@ -96,7 +95,7 @@ fn transform_export_from(state: &mut TransformState<'_>, node: P<Node>) -> Vec<S
         Some(clause) => {
             // export * as foo from "./module";
             let mut name_prereqs = Prereqs::new();
-            let name = transform_property_name(state, &mut name_prereqs, clause.as_namespace_export().name);
+            let name = transform_property_name(state, &mut name_prereqs, clause.as_namespace_export().name());
             statements.extend(name_prereqs.statements);
             statements.push(create::assignment(
                 create::computed_index(module_id, name),

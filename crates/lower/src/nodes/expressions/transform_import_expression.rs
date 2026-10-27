@@ -1,13 +1,12 @@
 //! `nodes/expressions/transformImportExpression.ts`
 
-use rbxts_luau::{Expr, create};
+use luau::{Expr, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
 use crate::classes::transform_state::TransformState;
 use crate::shared::diagnostics::errors;
 use crate::util::create_import_expression::create_import_expression;
-use crate::util::traversal::source_file_of;
 
 /// `import("x")`: `TS.Promise.new(function(resolve) resolve(TS.import(script, …)) end)`.
 pub fn transform_import_expression(state: &mut TransformState<'_>, node: P<Node>) -> Expr {
@@ -17,10 +16,10 @@ pub fn transform_import_expression(state: &mut TransformState<'_>, node: P<Node>
         return Expr::None;
     };
 
-    let import_expression = create_import_expression(state, source_file_of(node), module_specifier);
+    let import_expression = create_import_expression(state, module_specifier);
     let resolve_id = create::any_id("resolve");
 
-    let promise = state.ts(node, "Promise");
+    let promise = state.ts("Promise");
     create::call(
         create::property(promise, "new"),
         vec![create::function(

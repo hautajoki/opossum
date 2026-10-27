@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformBinaryExpression.ts`
 
-use rbxts_luau::{AnyIdentifier, Assignment, AssignmentOperator, BinaryOperator, Expr, Stmt, create};
+use luau::{AnyIdentifier, Assignment, AssignmentOperator, BinaryOperator, Expr, Stmt, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -259,13 +259,6 @@ pub fn transform_binary_expression(state: &mut TransformState<'_>, prereqs: &mut
         return transform_logical(state, prereqs, node);
     }
 
-    // rbxts-rs: an assignment to `receiver.key` a plugin claims (DESIGN §11.5)
-    if tsrs_ast::is_assignment_operator(operator_kind)
-        && let Some(claimed) = crate::plugins::dispatch::claim_assignment(state, prereqs, node)
-    {
-        return claimed;
-    }
-
     if tsrs_ast::is_logical_or_coalescing_assignment_expression(node) {
         return transform_logical_or_coalescing_assignment_expression(state, prereqs, node);
     }
@@ -346,7 +339,7 @@ pub fn transform_binary_expression(state: &mut TransformState<'_>, prereqs: &mut
             left_node,
             right_node,
             true,
-            operator != Some(rbxts_luau::AssignmentOperator::Assign),
+            operator != Some(luau::AssignmentOperator::Assign),
         );
         return match operator {
             Some(operator) => {
@@ -386,7 +379,7 @@ pub fn transform_binary_expression(state: &mut TransformState<'_>, prereqs: &mut
         if is_possibly_type(state, right_type, &[&is_roblox_type]) {
             state.add_diagnostic(errors::no_roblox_symbol_instanceof(right_node));
         }
-        let callee = state.ts(node, "instanceof");
+        let callee = state.ts("instanceof");
         return create::call(callee, vec![left, right]);
     }
 

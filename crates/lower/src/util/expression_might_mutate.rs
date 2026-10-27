@@ -1,6 +1,6 @@
 //! `util/expressionMightMutate.ts`
 
-use rbxts_luau::Expr;
+use luau::Expr;
 use tsrs_ast::{Kind, Node, SymbolFlags};
 use tsrs_core::P;
 

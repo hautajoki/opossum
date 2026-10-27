@@ -1,11 +1,12 @@
 //! `nodes/transformStatementList.ts`
 
-use rbxts_luau::{AnyIdentifier, AssignmentOperator, Stmt, create};
+use luau::{AnyIdentifier, AssignmentOperator, Expr, Stmt, create};
 use rustc_hash::FxHashMap;
-use tsrs_ast::{Kind, Node};
+use tsrs_ast::{Kind, Node, Symbol};
 use tsrs_core::P;
 
 use crate::classes::transform_state::TransformState;
+use crate::nodes::expressions::transform_identifier::renamed_binding;
 use crate::nodes::statements::transform_statement::transform_statement;
 use crate::util::create_hoist_declaration::create_hoist_declaration;
 use crate::util::traversal::{get_start, source_file_of};
@@ -14,8 +15,8 @@ use crate::util::traversal::{get_start, source_file_of};
 pub struct ExportInfo<'m> {
     /// The namespace's container.
     pub id: AnyIdentifier,
-    /// Per statement, the names it exports.
-    pub mapping: &'m FxHashMap<P<Node>, Vec<String>>,
+    /// Per statement, the symbols it exports.
+    pub mapping: &'m FxHashMap<P<Node>, Vec<P<Symbol>>>,
 }
 
 /// The full start of a node's last token, when that token is not part of `last_statement`
@@ -53,16 +54,9 @@ fn last_token_pos(node: P<Node>, last_statement: Option<P<Node>>) -> Option<u32>
     }
 }
 
-/// rbxts-rs: the body of an `if`, a loop or a `case` clause (`statement`: a block, or a single statement), as roblox-ts
-/// lowers it: `transformStatementList(state, statement, getStatements(statement))`. A block body is a statement that a
-/// TS transformer sees (TypeScript's `isStatement`) but roblox-ts lowers as its statement list, so it is offered to
-/// the plugins' statement hooks first (DESIGN §11.5); a claim is the body.
+/// The body of an `if`, a loop or a `case` clause (`statement`: a block, or a single statement), lowered as its
+/// statement list.
 pub fn transform_body(state: &mut TransformState<'_>, statement: P<Node>) -> Vec<Stmt> {
-    if statement.kind() == Kind::Block
-        && let Some(claimed) = crate::plugins::dispatch::claim_statement(state, statement)
-    {
-        return claimed;
-    }
     transform_statement_list(state, Some(statement), &crate::util::symbols::get_statements(statement))
 }
 
@@ -85,27 +79,11 @@ pub fn transform_statement_list_with_exports(
 ) -> Vec<Stmt> {
     let mut result = Vec::new();
     let remove_comments = state.compiler_options.remove_comments.is_true();
-    // rbxts-rs: a function body's locals, for plugins (`locals().function`)
-    let function_body = crate::plugins::dispatch::function_body_of(state, parent);
-
     for &statement in statements {
-        let plugin_mark = crate::plugins::dispatch::root_statement_start(state, parent);
-        let before = result.len();
-        let mut transformed_statements = transform_statement(state, statement);
-        let mut leading_comments = if remove_comments { Vec::new() } else { state.get_leading_comments(statement) };
-        // rbxts-rs: plugin statements for before the statement (root insertions, `insert_before_statement`, a leading
-        // plugin comment), and the file's header comment above them
-        crate::plugins::dispatch::before_statement(
-            state,
-            plugin_mark.is_some(),
-            statement,
-            &mut result,
-            &mut leading_comments,
-            &mut transformed_statements,
-        );
-
-        // the statement's leading comments
-        result.extend(leading_comments);
+        let transformed_statements = transform_statement(state, statement);
+        if !remove_comments {
+            result.extend(state.get_leading_comments(statement));
+        }
 
         // hoisting is the use of a variable before it was declared
         if let Some(hoist_declaration) = create_hoist_declaration(state, statement) {
@@ -113,14 +91,7 @@ pub fn transform_statement_list_with_exports(
         }
 
         let is_final = transformed_statements.last().is_some_and(Stmt::is_final);
-        let start = result.len();
         result.extend(transformed_statements);
-        if let Some(mark) = plugin_mark {
-            crate::plugins::dispatch::root_statement_end(state, mark, statement, &result, start);
-        }
-        if let Some(body) = function_body {
-            crate::plugins::dispatch::count_function_locals(state, body, &result[before..]);
-        }
         if is_final {
             break;
         }
@@ -129,11 +100,15 @@ pub fn transform_statement_list_with_exports(
         if let Some(export_info) = export_info
             && let Some(names) = export_info.mapping.get(&statement)
         {
-            for name in names {
+            for &symbol in names {
+                let value = match renamed_binding(state, symbol, symbol.name()) {
+                    Some(id) => Expr::TemporaryIdentifier(id),
+                    None => create::id(symbol.name()),
+                };
                 result.push(create::assignment(
-                    create::property(export_info.id.clone().into(), name.clone()),
+                    create::property(export_info.id.clone().into(), symbol.name()),
                     AssignmentOperator::Assign,
-                    create::id(name.clone()),
+                    value,
                 ));
             }
         }

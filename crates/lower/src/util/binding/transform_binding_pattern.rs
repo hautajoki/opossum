@@ -1,6 +1,6 @@
 //! `util/binding/transformBindingPattern.ts`
 
-use rbxts_luau::Expr;
+use luau::Expr;
 use rustc_hash::FxHashMap;
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;

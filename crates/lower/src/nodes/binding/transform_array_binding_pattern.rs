@@ -1,6 +1,6 @@
 //! `nodes/binding/transformArrayBindingPattern.ts`
 
-use rbxts_luau::Expr;
+use luau::Expr;
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

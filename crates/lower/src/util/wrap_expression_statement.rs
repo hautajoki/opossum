@@ -1,6 +1,6 @@
 //! `util/wrapExpressionStatement.ts`
 
-use rbxts_luau::{Expr, Stmt, create};
+use luau::{Expr, Stmt, create};
 
 use crate::classes::prereqs::temp_id;
 

@@ -38,13 +38,12 @@ pub fn get_original_symbol_of_node(checker: &mut Checker, node: P<Node>) -> Opti
     Some(checker.skip_alias(symbol))
 }
 
-/// `validateIdentifier`
+/// `validateIdentifier`: a name Luau cannot spell (`$x`, non-ASCII). Keywords and reserved globals are renamed
+/// instead (`transform_identifier::renamed_binding`).
 pub fn validate_identifier(state: &mut TransformState<'_>, node: P<Node>) {
     let text = node.text();
-    if !rbxts_luau::is_valid_identifier(text) {
+    if !luau::is_valid_identifier(text) && !luau::LUAU_RESERVED_KEYWORDS.contains(&text) {
         state.add_diagnostic(errors::no_invalid_identifier(node));
-    } else if rbxts_luau::is_reserved_identifier(text) {
-        state.add_diagnostic(errors::no_reserved_identifier(node));
     }
 }
 

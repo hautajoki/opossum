@@ -1,7 +1,7 @@
 //! `nodes/class/transformClassConstructor.ts`: `function Class:constructor(…)`, with parameter properties and
 //! instance property initializers.
 
-use rbxts_luau::{AnyIdentifier, AssignmentOperator, Expr, Stmt, create, globals};
+use luau::{AnyIdentifier, AssignmentOperator, Expr, Stmt, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

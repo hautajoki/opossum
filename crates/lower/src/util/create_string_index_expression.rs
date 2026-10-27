@@ -1,6 +1,6 @@
 //! `util/createStringIndexExpression.ts`: `str[i]` as a guarded `string.sub`.
 
-use rbxts_luau::{BinaryOperator, Expr, UnaryOperator, create, globals};
+use luau::{BinaryOperator, Expr, UnaryOperator, create, globals};
 use tsrs_checker::Type;
 use tsrs_core::P;
 
@@ -21,7 +21,7 @@ pub fn create_string_index_expression(
 ) -> Expr {
     let string_literal_index = string_literal_value(index_type);
     let literal_index = match string_literal_index {
-        Some(s) => Some(rbxts_luau::js_string_to_number(s)),
+        Some(s) => Some(luau::js_string_to_number(s)),
         None => get_literal_number_value(&index_operand.expression),
     };
     // decided before the expansion, which cannot borrow the state

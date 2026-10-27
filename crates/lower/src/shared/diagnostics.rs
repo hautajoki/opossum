@@ -1,17 +1,16 @@
 //! roblox-ts's errors and warnings (`Shared/diagnostics.ts`), as tsrs diagnostics.
 //!
 //! Each `DiagnosticFactory` becomes a function from the node to a `P<Diagnostic>`, with the same text. The message is
-//! a `tsrs_diagnostics::new_ad_hoc_message` (code -1), made once per factory; context-dependent ones make one per
+//! a `tsrs_ast::new_ad_hoc_message` (code -1), made once per factory; context-dependent ones make one per
 //! call. The location is the node's `getStart()` to its end, as `createDiagnosticWithLocation` reports it.
 //!
-//! rbxts-rs: `kleur` colours in suggestions and issue links are left out (plain text); the code is tsrs's ad hoc `-1`
-//! instead of roblox-ts's `" roblox-ts"`.
+//! opossum's own diagnostics carry a dotted code at the start of their message (`route.boundary: …`).
 
 use std::sync::OnceLock;
 
-use tsrs_ast::{Diagnostic, Node, SourceFile, new_diagnostic};
+use tsrs_ast::{Diagnostic, Node, SourceFile, new_ad_hoc_message, new_diagnostic};
 use tsrs_core::{P, TextRange};
-use tsrs_diagnostics::{Category, Message, new_ad_hoc_message};
+use tsrs_diagnostics::{Category, Message};
 
 const REPO_URL: &str = "https://github.com/roblox-ts/roblox-ts";
 
@@ -82,7 +81,6 @@ pub mod errors {
             "Luau identifiers must start with a letter and only contain letters, numbers, and underscores.",
             "Reserved Luau keywords cannot be used as identifiers.",
         ];
-        no_reserved_identifier = ["Cannot use identifier reserved for compiler internal usage."];
         no_reserved_class_fields = ["Cannot use class field reserved for compiler internal usage."];
         no_class_metamethods = ["Metamethods cannot be used in class definitions!"];
         no_length_index_in_tuples = ["Cannot index member `length` in a tuple!", suggestion("Use .size() instead.")];
@@ -154,11 +152,6 @@ pub mod errors {
             "Cannot index a method without calling it!",
             suggestion("Use the form `() => a.b()` instead of `a.b`."),
         ];
-        no_comment_directives = [
-            "Usage of `@ts-ignore`, `@ts-expect-error`, and `@ts-nocheck` are not supported!",
-            "roblox-ts needs type and symbol info to compile correctly.",
-            suggestion("Consider using type assertions or `declare` statements."),
-        ];
 
         // macro methods
         no_optional_macro_call = [
@@ -184,17 +177,7 @@ pub mod errors {
 
         // import/export
         no_module_specifier_file = ["Could not find file for import. Did you forget to `npm install`?"];
-        no_invalid_scope = ["You can only use npm scopes that are listed in your typeRoots."];
-        no_unscoped_module = [
-            "Cannot import a module without a scope!",
-            "roblox-ts does not support importing regular npm packages.",
-        ];
         no_non_module_import = ["Cannot import a non-ModuleScript!"];
-        no_isolated_import = ["Attempted to import a file inside of an isolated container from outside!"];
-        no_server_import = [
-            "Cannot import a server file from a shared or client location!",
-            suggestion("Move the file you want to import to a shared location."),
-        ];
 
         // jsx
         no_preceding_jsx_spread_element = ["JSX spread expression must come last in children!"];
@@ -211,68 +194,30 @@ pub mod errors {
         ];
     );
 
-    /// `failedSymlinkResolve`
-    pub fn failed_symlink_resolve(
-        node: P<Node>,
-        node_modules_path: &str,
-        module_filename: &str,
-        virtual_path: Option<&str>,
-        relative_path: &str,
-    ) -> P<Diagnostic> {
-        let mut lines = vec![
-            "Cannot resolve package entry point inside the project node_modules!".to_owned(),
-            "Check the package main field and any package symlinks.".to_owned(),
-            format!("Packages are expected to be installed under {node_modules_path}"),
-            format!("Package declarations resolved to {module_filename}"),
-        ];
-        if let Some(virtual_path) = virtual_path {
-            lines.push(format!("roblox-ts thinks it should be imported through this symlink: {virtual_path}"));
-        }
-        lines.push(format!("The path from node_modules to the package would be {relative_path}"));
-        at_node(node, new_ad_hoc_message(&lines.join("\n")), Category::Error)
+    /// `route.boundary`: an import the importer's realm cannot reach at run time.
+    pub fn route_boundary(node: P<Node>, from: &str, to: &str) -> P<Diagnostic> {
+        let text = format!("route.boundary: {from} code cannot require a {to} module");
+        at_node(node, new_ad_hoc_message(&text), Category::Error)
     }
 
-    /// `noRojoData`
-    pub fn no_rojo_data(node: P<Node>, path: &str, is_package: bool) -> P<Diagnostic> {
-        let mut lines =
-            vec![format!("Could not find Rojo data. There is no $path in your Rojo config that covers {path}")];
-        if is_package {
-            lines.push(suggestion("Did you forget to add a custom npm scope to your default.project.json?"));
-        }
-        at_node(node, new_ad_hoc_message(&lines.join("\n")), Category::Error)
+    /// `route.unrouted`: the imported (or importing) file has no instance path.
+    pub fn unrouted(node: P<Node>, file: &str) -> P<Diagnostic> {
+        let text = format!("route.unrouted: {file} has no instance path, so it cannot be required");
+        at_node(node, new_ad_hoc_message(&text), Category::Error)
     }
 
-    /// `noPackageImportWithoutScope`
-    pub fn no_package_import_without_scope(node: P<Node>, path: &str, rbx_path: &[String]) -> P<Diagnostic> {
-        let lines = [
-            "Imported package Roblox path is missing an npm scope!".to_owned(),
-            format!("Package path: {path}"),
-            format!("Roblox path: {}", rbx_path.join(".")),
-            suggestion(
-                "You might need to update your \"node_modules\" in default.project.json to match:\n\"node_modules\": {\n\t\"$className\": \"Folder\",\n\t\"@rbxts\": {\n\t\t\"$path\": \"node_modules/@rbxts\"\n\t}\n}",
-            ),
-        ];
-        at_node(node, new_ad_hoc_message(&lines.join("\n")), Category::Error)
+    /// `macro.unsupported`: a compile-time macro opossum does not lower yet.
+    pub fn unsupported_macro(node: P<Node>, name: &str) -> P<Diagnostic> {
+        at_node(node, new_ad_hoc_message(&format!("macro.unsupported: `{name}` is not supported yet")), Category::Error)
     }
-}
 
-/// `warnings`
-pub mod warnings {
-    use super::*;
-
-    factories!(Warning:
-        runtime_lib_used_in_replicated_first = [
-            "This statement would generate a call to the runtime library. The runtime library should not be used from ReplicatedFirst.",
-        ];
-    );
-
-    /// `truthyChange`
-    pub fn truthy_change(checks: &str, node: P<Node>) -> P<Diagnostic> {
-        at_node(node, new_ad_hoc_message(&format!("Value will be checked against {checks}")), Category::Warning)
+    /// `macro.missing`: a method of a macro-only class with no lowering.
+    pub fn missing_macro(node: P<Node>, name: &str) -> P<Diagnostic> {
+        at_node(node, new_ad_hoc_message(&format!("macro.missing: `{name}` has no lowering")), Category::Error)
     }
 }
 
 /// rbxts-rs: a compiler bug caught while transforming a file (a failed assertion or a panic).
 pub fn internal_error(node: P<Node>, message: &str) -> P<Diagnostic> {
-    at_node(node, new_ad_hoc_message(&format!("rbxts-rs internal error: {message}")), Category::Error)
+    at_node(node, new_ad_hoc_message(&format!("opossum internal error: {message}")), Category::Error)
 }

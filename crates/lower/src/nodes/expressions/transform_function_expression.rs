@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use rbxts_luau::{Expr, create};
+use luau::{Expr, create};
 use tsrs_ast::{Kind, ModifierFlags, Node};
 use tsrs_core::P;
 
@@ -38,14 +38,14 @@ pub fn transform_function_expression(state: &mut TransformState<'_>, node: P<Nod
         if is_async {
             state.add_diagnostic(errors::no_async_generator_functions(node));
         }
-        statements = wrap_statements_as_generator(state, node, statements);
+        statements = wrap_statements_as_generator(state, statements);
     }
 
     let effects = (!is_async && !is_generator).then(|| get_function_effects(&parameters, &statements));
     let mut expression = create::function(parameters, has_dot_dot_dot, statements);
 
     if is_async {
-        let callee = state.ts(node, "async");
+        let callee = state.ts("async");
         expression = create::call(callee, vec![expression]);
     } else if let Some(effects) = effects {
         set_call_effects(&mut expression, Arc::new(effects));

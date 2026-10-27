@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformCallExpression.ts`
 
-use rbxts_luau::{Expr, create, globals};
+use luau::{Expr, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_checker::Type;
 use tsrs_core::P;
@@ -11,7 +11,6 @@ use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::expressions::transform_import_expression::transform_import_expression;
 use crate::nodes::transform_macro_call::{MacroKind, transform_macro_call};
 use crate::nodes::transform_optional_chain::transform_optional_chain;
-use crate::plugins::backend::{keyed_access, property_key_of};
 use crate::util::add_one_if_array_type::add_one_if_array_type;
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
 use crate::util::ensure_transform_order::ensure_transform_order;
@@ -23,7 +22,6 @@ use crate::util::is_method::{is_method, is_method_from_type};
 use crate::util::types::{get_first_defined_symbol, is_possibly_type, is_possibly_undefined, is_roblox_type};
 use crate::util::validate_not_any::validate_not_any_type;
 use crate::util::wrap_return_if_lua_tuple::wrap_return_if_lua_tuple;
-use rbxts_plugin::{AccessPosition, text_literal};
 
 /// Some C functions like `tonumber()` error when an argument is a call that returns nothing. Possibly-undefined call
 /// arguments of Roblox functions are wrapped in `()` to coerce the values to `nil`.
@@ -109,7 +107,7 @@ pub(crate) fn create_ordered_property_call(
     mut base: Expr,
     key: PropertyKey,
     args: Vec<Expr>,
-    prereq_statements: Vec<rbxts_luau::Stmt>,
+    prereq_statements: Vec<luau::Stmt>,
     method: bool,
 ) -> Expr {
     let property = |state: &mut TransformState<'_>, base: &Expr| {
@@ -134,7 +132,7 @@ pub(crate) fn create_ordered_property_call(
     let capture_callee = !effects_commute(&lookup_effects, &prereq_effects);
     if method
         && let Some(name) = name.as_deref()
-        && rbxts_luau::is_valid_identifier(name)
+        && luau::is_valid_identifier(name)
         && (stable_method || (!capture_callee && matches!(key, PropertyKey::Name(_))))
     {
         // a stable method lookup can stay inline even when its receiver needs a snapshot
@@ -183,11 +181,7 @@ pub fn transform_property_call_expression_inner(
 
     if tsrs_ast::is_super_property(expression) {
         let callee_name = expression.as_property_access_expression().name.text();
-        // rbxts-rs: a plugin's `property_key` (DESIGN §11.5)
-        let callee_exp = match crate::plugins::dispatch::rewritten_key(state, expression, AccessPosition::Callee) {
-            Some(key) => keyed_access(base_expression, &key),
-            None => create::property(convert_to_indexable_expression(base_expression), callee_name),
-        };
+        let callee_exp = create::property(convert_to_indexable_expression(base_expression), callee_name);
         let args = ensure_transform_order(state, prereqs, node.arguments());
         let args = if is_method(state, expression) {
             let mut with_self = vec![globals::self_()];
@@ -219,11 +213,7 @@ pub fn transform_property_call_expression_inner(
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);
 
     let method = is_method(state, expression);
-    // rbxts-rs: a plugin's `property_key` (DESIGN §11.5)
-    let key = match crate::plugins::dispatch::rewritten_key(state, expression, AccessPosition::Callee) {
-        Some(key) => property_key_of(&key),
-        None => PropertyKey::Name(name.to_owned()),
-    };
+    let key = PropertyKey::Name(name.to_owned());
     let mut exp = create_ordered_property_call(
         state,
         prereqs,
@@ -261,19 +251,8 @@ pub fn transform_element_call_expression_inner(
     validate_not_any_type(state, callee);
 
     if tsrs_ast::is_super_property(expression) {
-        // rbxts-rs: a plugin's `property_key` (DESIGN §11.5)
-        let callee_exp = match crate::plugins::dispatch::rewritten_key(state, expression, AccessPosition::Callee) {
-            Some(key) => {
-                // a computed argument is still evaluated (`super` has no effects to order it after)
-                let statements = crate::plugins::dispatch::replaced_key_statements(state, expression);
-                prereqs.push_list(statements);
-                keyed_access(base_expression, &key)
-            }
-            None => {
-                let index = transform_expression(state, prereqs, access.argument_expression);
-                create::computed_index(convert_to_indexable_expression(base_expression), index)
-            }
-        };
+        let index = transform_expression(state, prereqs, access.argument_expression);
+        let callee_exp = create::computed_index(convert_to_indexable_expression(base_expression), index);
         let args = ensure_transform_order(state, prereqs, node.arguments());
         let args = if is_method(state, expression) {
             let mut with_self = vec![globals::self_()];
@@ -300,20 +279,11 @@ pub fn transform_element_call_expression_inner(
         );
     }
 
-    // rbxts-rs: a plugin's `property_key` (DESIGN §11.5)
-    let rewritten = crate::plugins::dispatch::rewritten_key(state, expression, AccessPosition::Callee);
     let mut key_prereqs = Prereqs::new();
-    let argument_exp = match &rewritten {
-        Some(key) => {
-            // a computed argument is still evaluated, after the receiver
-            key_prereqs.push_list(crate::plugins::dispatch::replaced_key_statements(state, expression));
-            text_literal(key)
-        }
-        None => transform_expression(state, &mut key_prereqs, argument_expression),
-    };
+    let argument_exp = transform_expression(state, &mut key_prereqs, argument_expression);
     let later = join_effects(
         get_effects_of_statements(&key_prereqs.statements),
-        &(if is_late_read(&base_expression) { get_effects(&argument_exp) } else { rbxts_luau::Effects::none() }),
+        &(if is_late_read(&base_expression) { get_effects(&argument_exp) } else { luau::Effects::none() }),
     );
     if !effects_commute(&get_effects(&base_expression), &later) {
         base_expression = prereqs.push_to_var(base_expression, "exp");
@@ -322,14 +292,9 @@ pub fn transform_element_call_expression_inner(
     let mut args_prereqs = Prereqs::new();
     let mut args = ensure_transform_order(state, &mut args_prereqs, node_arguments);
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);
-    let key = match rewritten {
-        Some(key) => property_key_of(&key),
-        None => {
-            let receiver_type = state.get_type(access.expression);
-            let receiver_type = state.checker.get_non_optional_type(receiver_type);
-            PropertyKey::Index(add_one_if_array_type(state, receiver_type, argument_exp))
-        }
-    };
+    let receiver_type = state.get_type(access.expression);
+    let receiver_type = state.checker.get_non_optional_type(receiver_type);
+    let key = PropertyKey::Index(add_one_if_array_type(state, receiver_type, argument_exp));
     let method = is_method(state, expression);
     let exp = create_ordered_property_call(
         state,

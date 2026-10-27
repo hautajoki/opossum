@@ -1,6 +1,6 @@
 //! `macros/types.ts`: the macro signatures.
 
-use rbxts_luau::Expr;
+use luau::Expr;
 use tsrs_ast::Node;
 use tsrs_core::P;
 
@@ -20,7 +20,7 @@ pub type CallMacro = fn(&mut TransformState<'_>, &mut Prereqs, P<Node>, Expr, Ve
 /// `PropertyCallMacro`: the node is a call whose expression is a property or element access.
 pub type PropertyCallMacro = fn(&mut TransformState<'_>, &mut Prereqs, P<Node>, Expr, Vec<Expr>) -> Expr;
 
-/// A macro table entry: its name (`Array.push`, `typeIs`; plugins see it) and its transform.
+/// A macro table entry: its name (`Array.push`, `typeIs`; property call macros label their statements with it) and its transform.
 #[derive(Clone, Copy)]
 pub struct Macro<F> {
     /// The name: the function (`typeIs`), class (`ArrayConstructor`) or `Class.method` (`Array.push`).

@@ -1,17 +1,15 @@
 //! `nodes/transformSourceFile.ts`: a whole file, with its exports, header and runtime library import.
 
-use rbxts_luau::{AssignmentOperator, Expr, Stmt, create, globals};
-use rbxts_project::RbxType;
+use luau::{AssignmentOperator, Expr, Stmt, create, globals};
 use rustc_hash::FxHashSet;
 use tsrs_ast::{Kind, Node, SourceFile, Symbol};
 use tsrs_core::P;
 
 use crate::classes::prereqs::as_any_identifier;
 use crate::classes::transform_state::TransformState;
-use crate::nodes::expressions::transform_identifier::transform_identifier_defined;
+use crate::nodes::expressions::transform_identifier::{renamed_binding, transform_identifier_defined};
 use crate::nodes::transform_property_name::property_name_key;
 use crate::nodes::transform_statement_list::transform_statement_list;
-use crate::shared::constants::COMPILER_VERSION;
 use crate::util::symbols::{get_original_symbol_of_node, is_symbol_mutable, is_symbol_of_value};
 use crate::util::traversal::{get_ancestor, has_declare_modifier};
 
@@ -38,8 +36,12 @@ fn get_export_pair(state: &mut TransformState<'_>, export_symbol: P<Symbol>) -> 
         {
             name = declaration_name.text();
         }
-        // rbxts-rs: an export named by a string (`export { x as "a\b" }`) has its decoded value as its name
-        (crate::util::create_string_from_literal::create_string_from_value(export_symbol.name()), create::id(name))
+        let value = match renamed_binding(state, export_symbol, name) {
+            Some(id) => Expr::TemporaryIdentifier(id),
+            None => create::id(name),
+        };
+        // an export named by a string (`export { x as "a\b" }`) has its decoded value as its name
+        (crate::util::create_string_from_literal::create_string_from_value(export_symbol.name()), value)
     }
 }
 
@@ -72,7 +74,7 @@ fn get_ignored_export_symbols(state: &mut TransformState<'_>, source_file: P<Sou
                 // export * as id from "./module";
                 let id_symbol = state
                     .checker
-                    .get_symbol_at_location_exported(clause.as_namespace_export().name)
+                    .get_symbol_at_location_exported(clause.as_namespace_export().name())
                     .expect("a namespace export has a symbol");
                 ignored.insert(id_symbol);
             }
@@ -181,48 +183,27 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
 
     // the statements of the source file
     let file_node = node.as_node();
-    crate::plugins::dispatch::begin_file(state);
     let mut statements = transform_statement_list(state, Some(file_node), node.get().statements.nodes());
-    // rbxts-rs: plugin end_file, import elision decided on the whole file, plugin imports and header (DESIGN §11)
-    crate::plugins::dispatch::end_file(state, &mut statements);
+    handle_exports(state, node, symbol, &mut statements);
 
-    if handle_exports(state, node, symbol, &mut statements) {
-        // (`local exports = {}` went first)
-        crate::plugins::dispatch::note_front_insert(state, 0, 1);
-    }
-
-    // module scripts must `return nil` if they do not export any values
+    // a module returns nil when it exports no values
     let ends_with_return = last_non_comment_statement(&statements).is_some_and(|s| matches!(s, Stmt::Return(_)));
     if !ends_with_return {
-        let output_path = state.services.path_translator.get_output_path(node.get().file_name());
-        if state.services.rojo_resolver.get_rbx_type_from_file_path(&output_path) == RbxType::ModuleScript {
-            statements.push(create::return_stmt(Expr::Nil));
-        }
+        statements.push(create::return_stmt(Expr::Nil));
     }
 
-    let mut header_statements = Vec::new();
-
-    // build information
-    if !state.services.data.options.no_compiler_header {
-        header_statements.push(create::comment(format!(" Compiled with roblox-ts v{COMPILER_VERSION}")));
-    }
-
-    // the runtime library, if it is used
-    if state.uses_runtime_lib {
-        header_statements.push(state.create_runtime_lib_import(node));
+    let mut header_statements = vec![create::comment("!optimize 2")];
+    if state.uses_runtime_lib
+        && let Some(import) = state.create_runtime_lib_import()
+    {
+        header_statements.push(import);
     }
 
     // Luau directive comments like --!strict go before the header
     let directive_count =
         statements.iter().take_while(|s| matches!(s, Stmt::Comment(text) if text.starts_with('!'))).count();
     let directives: Vec<Stmt> = statements.drain(..directive_count).collect();
-
-    crate::plugins::dispatch::note_front_insert(state, directive_count, header_statements.len());
     statements.splice(0..0, header_statements);
     statements.splice(0..0, directives);
-
-    // rbxts-rs: Luau's local limit on the complete main chunk, when a plugin added locals (DESIGN §9)
-    crate::plugins::dispatch::check_main_chunk(state, &mut statements);
-
     statements
 }

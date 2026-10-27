@@ -1,6 +1,6 @@
 //! `nodes/statements/transformVariableStatement.ts`
 
-use rbxts_luau::{AnyIdentifier, AssignmentOperator, Expr, Stmt, create};
+use luau::{AnyIdentifier, AssignmentOperator, Expr, Stmt, create};
 use tsrs_ast::{Kind, Node, NodeFlags};
 use tsrs_core::P;
 

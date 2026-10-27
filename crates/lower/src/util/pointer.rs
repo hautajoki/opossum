@@ -1,7 +1,7 @@
 //! `util/pointer.ts`: a table under construction, built inline (`{ … }`) for as long as it can be, then moved into
 //! a temporary and filled by assignments.
 
-use rbxts_luau::{AssignmentOperator, Expr, MapField, create};
+use luau::{AssignmentOperator, Expr, MapField, create};
 
 use crate::classes::prereqs::Prereqs;
 

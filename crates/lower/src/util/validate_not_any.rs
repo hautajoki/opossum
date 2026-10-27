@@ -24,8 +24,8 @@ pub fn validate_not_any_type(state: &mut TransformState<'_>, mut node: P<Node>) 
             if is_definitely_type(state, t, &[&is_array_type]) {
                 // Array<T> -> T
                 let number_type = state.checker.get_number_type();
-                if let Some(index_type) = state.checker.get_index_type_of_type_exported(t, number_type) {
-                    checked_type = index_type;
+                if let Some(info) = state.checker.get_index_info_of_type_exported(t, number_type) {
+                    checked_type = info.value_type();
                 }
             }
             let result = is_definitely_type(state, checked_type, &[&is_any_type]);

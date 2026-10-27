@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformElementAccessExpression.ts`
 
-use rbxts_luau::{AssignmentOperator, Effects, Expr, create, globals};
+use luau::{AssignmentOperator, Effects, Expr, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -8,7 +8,6 @@ use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::transform_optional_chain::transform_optional_chain;
-use crate::plugins::backend::keyed_access;
 use crate::shared::diagnostics::errors;
 use crate::util::add_index_diagnostics::add_index_diagnostics;
 use crate::util::add_one_if_array_type::add_one_if_array_type;
@@ -25,7 +24,6 @@ use crate::util::offset::offset;
 use crate::util::traversal::skip_upwards;
 use crate::util::types::{is_definitely_type, is_lua_tuple_type, is_mixed_string_type, is_string_type};
 use crate::util::validate_not_any::validate_not_any_type;
-use rbxts_plugin::AccessPosition;
 
 /// `transformElementAccessExpressionInner`: `expression[argument]` once the receiver is transformed.
 pub fn transform_element_access_expression_inner(
@@ -92,20 +90,6 @@ pub fn transform_element_access_expression_inner(
     }
 
     let delete = skip_upwards(node).parent().is_some_and(|p| p.kind() == Kind::DeleteExpression);
-    // rbxts-rs: a plugin's `property_key` for a string literal key (DESIGN §11.5)
-    let position = if delete { AccessPosition::Delete } else { AccessPosition::Read };
-    if let Some(key) = crate::plugins::dispatch::rewritten_key(state, node, position) {
-        // a computed argument is still evaluated, after the receiver
-        let statements = crate::plugins::dispatch::discarded_key_statements(state, node, index);
-        let expression = crate::plugins::dispatch::place_key_statements(prereqs, expression, statements);
-        let target = keyed_access(expression, &key);
-        if delete {
-            prereqs.push(create::assignment(target, AssignmentOperator::Assign, Expr::Nil));
-            return Expr::None;
-        }
-        return target;
-    }
-
     if delete {
         let index = add_one_if_array_type(state, receiver_type, index);
         prereqs.push(create::assignment(

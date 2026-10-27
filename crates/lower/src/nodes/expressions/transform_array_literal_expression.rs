@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformArrayLiteralExpression.ts`
 
-use rbxts_luau::{AssignmentOperator, BinaryOperator, Expr, UnaryOperator, create};
+use luau::{AssignmentOperator, BinaryOperator, Expr, UnaryOperator, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

@@ -1,7 +1,7 @@
 //! `nodes/statements/transformSwitchStatement.ts`: a `repeat … until true` block of `if` statements, with a flag for
 //! fallthrough.
 
-use rbxts_luau::{
+use luau::{
     AssignmentOperator, BinaryOperator, ElseBody, Expr, IfStatement, Stmt, TemporaryIdentifier, UnaryOperator, create,
 };
 use tsrs_ast::{Kind, Node, SymbolFlags};

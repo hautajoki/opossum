@@ -2,7 +2,7 @@
 //! evaluation order (instance members, static members, then the class; parameters between a member's decorator
 //! expressions and its decorator calls).
 
-use rbxts_luau::{AnyIdentifier, AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, create};
+use luau::{AnyIdentifier, AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -84,12 +84,7 @@ fn transform_member_decorators(
     for (i, &decorator) in decorators.iter().enumerate() {
         let mut expression_prereqs = Prereqs::new();
         let decorator_expression = decorator.expression().expect("a decorator has an expression");
-        // rbxts-rs: a plugin may claim the decorator before its expression is compiled (DESIGN §11.5)
-        let mut expression = match crate::plugins::dispatch::claim_decorator(state, &mut expression_prereqs, decorator)
-        {
-            Some(claimed) => claimed,
-            None => transform_expression(state, &mut expression_prereqs, decorator_expression),
-        };
+        let mut expression = transform_expression(state, &mut expression_prereqs, decorator_expression);
 
         initializers.extend(expression_prereqs.statements);
 

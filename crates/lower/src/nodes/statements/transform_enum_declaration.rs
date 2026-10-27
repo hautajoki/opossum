@@ -1,6 +1,6 @@
 //! `nodes/statements/transformEnumDeclaration.ts`
 
-use rbxts_luau::{AssignmentOperator, Expr, Stmt, create, globals};
+use luau::{AssignmentOperator, Expr, Stmt, create, globals};
 use tsrs_ast::{Kind, ModifierFlags, Node};
 use tsrs_checker::LiteralValue;
 use tsrs_core::P;

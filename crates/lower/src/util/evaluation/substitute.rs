@@ -2,7 +2,7 @@
 
 use rustc_hash::FxHashMap;
 
-use rbxts_luau::{BinaryOperator, ElseBody, Expr, InterpolatedStringPart, Stmt, TableField};
+use luau::{BinaryOperator, ElseBody, Expr, InterpolatedStringPart, Stmt, TableField};
 
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
 use crate::util::offset::offset;
@@ -28,7 +28,7 @@ pub fn substitute_expr(node: &mut Expr, replacements: &FxHashMap<u32, Expr>) {
         | Expr::True
         | Expr::Number(_)
         | Expr::String(_)
-        | Expr::LateString(_)
+        | Expr::Require(_)
         | Expr::VarArgs => {}
         Expr::ComputedIndex(n) => {
             substitute_expr(&mut n.expression, replacements);
@@ -64,7 +64,7 @@ pub fn substitute_expr(node: &mut Expr, replacements: &FxHashMap<u32, Expr>) {
                 && let Expr::Number(right) = &n.right
             {
                 let sign = if n.operator == BinaryOperator::Sub { -1.0 } else { 1.0 };
-                let value = rbxts_luau::js_string_to_number(&right.value) * sign;
+                let value = luau::js_string_to_number(&right.value) * sign;
                 let left = take(&mut n.left);
                 *node = offset(left, value);
             }
@@ -114,7 +114,7 @@ pub fn substitute_stmts(statements: &mut [Stmt], replacements: &FxHashMap<u32, E
     }
 }
 
-fn substitute_if(n: &mut rbxts_luau::IfStatement, replacements: &FxHashMap<u32, Expr>) {
+fn substitute_if(n: &mut luau::IfStatement, replacements: &FxHashMap<u32, Expr>) {
     substitute_expr(&mut n.condition, replacements);
     substitute_stmts(&mut n.statements, replacements);
     match &mut n.else_body {

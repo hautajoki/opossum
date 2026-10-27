@@ -1,6 +1,6 @@
 //! `util/valueToIdStr.ts`
 
-use rbxts_luau::Expr;
+use luau::Expr;
 
 fn expression_to_str(expression: &Expr) -> Option<&str> {
     match expression {
@@ -19,7 +19,7 @@ fn expression_to_str(expression: &Expr) -> Option<&str> {
 /// A temporary's name derived from its value: `foo` for `Foo`, `a.foo`, `Foo.new()`; else empty.
 pub fn value_to_id_str(value: &Expr) -> String {
     match expression_to_str(value) {
-        Some(s) if rbxts_luau::is_valid_identifier(s) => {
+        Some(s) if luau::is_valid_identifier(s) => {
             // `str.charAt(0).toLowerCase() + str.slice(1)`
             let mut chars = s.chars();
             let first = chars.next().map(|c| c.to_lowercase().collect::<String>()).unwrap_or_default();

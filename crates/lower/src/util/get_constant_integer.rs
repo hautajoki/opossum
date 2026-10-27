@@ -69,7 +69,7 @@ impl ConstantIntegers<'_, '_> {
     fn get_constant_number(&mut self, expression: P<Node>) -> Option<f64> {
         match expression.kind() {
             Kind::NumericLiteral => {
-                return Some(rbxts_luau::js_string_to_number(&expression.text().replace('_', "")));
+                return Some(luau::js_string_to_number(&expression.text().replace('_', "")));
             }
             Kind::PrefixUnaryExpression => {
                 let unary = expression.as_prefix_unary_expression();

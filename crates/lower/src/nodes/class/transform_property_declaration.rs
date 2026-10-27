@@ -1,6 +1,6 @@
 //! `nodes/class/transformPropertyDeclaration.ts`
 
-use rbxts_luau::{AnyIdentifier, AssignmentOperator, Stmt, create};
+use luau::{AnyIdentifier, AssignmentOperator, Stmt, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

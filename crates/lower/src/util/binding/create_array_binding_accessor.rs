@@ -4,7 +4,7 @@
 //! iterator variants keep that state in fields. Reading needs no `TransformState`, so the loops area can drive an
 //! accessor between its own transforms.
 
-use rbxts_luau::{
+use luau::{
     AnyIdentifier, Assignment, AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, UnaryOperator, create,
     globals,
 };

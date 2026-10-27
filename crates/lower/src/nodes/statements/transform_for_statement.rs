@@ -1,7 +1,7 @@
 //! `nodes/statements/transformForStatement.ts`: `for (init; condition; incrementor)` as a numeric `for` loop when
 //! `--optimizedLoops` allows it, otherwise as a `while` loop.
 
-use rbxts_luau::{AssignmentOperator, ElseBody, Expr, IfStatement, Stmt, UnaryOperator, create};
+use luau::{AssignmentOperator, ElseBody, Expr, IfStatement, Stmt, UnaryOperator, create};
 use rustc_hash::FxHashSet;
 use tsrs_ast::{Kind, Node, NodeFlags, Symbol};
 use tsrs_core::P;
@@ -454,8 +454,7 @@ fn transform_for_statement_optimized(state: &mut TransformState<'_>, node: P<Nod
 
 /// `transformForStatement`
 pub fn transform_for_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
-    if state.services.data.options.optimized_loops
-        && let Some(optimized) = transform_for_statement_optimized(state, node)
+    if let Some(optimized) = transform_for_statement_optimized(state, node)
     {
         return optimized;
     }

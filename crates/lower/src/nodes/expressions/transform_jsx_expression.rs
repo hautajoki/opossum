@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformJsxExpression.ts`
 
-use rbxts_luau::{Expr, create, globals};
+use luau::{Expr, create, globals};
 use tsrs_ast::Node;
 use tsrs_core::P;
 

@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformNewExpression.ts`
 
-use rbxts_luau::{Expr, create};
+use luau::{Expr, create};
 use tsrs_ast::Node;
 use tsrs_core::P;
 
@@ -16,15 +16,11 @@ use crate::util::validate_not_any::validate_not_any_type;
 
 /// `transformNewExpression`: a constructor macro (`new Map()`), or `Class.new(args)`.
 pub fn transform_new_expression(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Expr {
-    // rbxts-rs: plugins are asked before constructor macros (DESIGN §11.5)
-    if let Some(claimed) = crate::plugins::dispatch::claim_new(state, prereqs, node) {
-        return claimed;
-    }
     let class_expression = node.expression().expect("a new expression has an expression");
     validate_not_any_type(state, class_expression);
 
     if let Some(symbol) = get_first_construct_symbol(state, class_expression)
-        && let Some(r#macro) = state.macro_manager.get_constructor_macro(symbol)
+        && let Some(r#macro) = state.macro_manager.get_constructor_macro(state.checker, symbol)
     {
         return (r#macro.transform)(state, prereqs, node);
     }

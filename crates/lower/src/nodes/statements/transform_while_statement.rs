@@ -1,6 +1,6 @@
 //! `nodes/statements/transformWhileStatement.ts`
 
-use rbxts_luau::{ElseBody, Stmt, UnaryOperator, create};
+use luau::{ElseBody, Stmt, UnaryOperator, create};
 use tsrs_ast::Node;
 use tsrs_core::P;
 

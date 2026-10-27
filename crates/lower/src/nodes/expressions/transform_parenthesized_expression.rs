@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformParenthesizedExpression.ts`
 
-use rbxts_luau::{Expr, create};
+use luau::{Expr, create};
 use tsrs_ast::Node;
 use tsrs_core::P;
 

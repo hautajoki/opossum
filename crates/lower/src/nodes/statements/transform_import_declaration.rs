@@ -1,6 +1,6 @@
 //! `nodes/statements/transformImportDeclaration.ts`
 
-use rbxts_luau::{Expr, Stmt, create};
+use luau::{Expr, Stmt, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -9,25 +9,22 @@ use crate::classes::transform_state::TransformState;
 use crate::nodes::statements::transform_variable_statement::transform_variable;
 use crate::nodes::transform_property_name::transform_property_name;
 use crate::util::clean_module_name::clean_module_name;
-use crate::util::create_import_expression::{create_import_expression, get_source_file_from_module_specifier};
+use crate::util::create_get_service::create_get_service;
+use crate::util::create_import_expression::{
+    create_import_expression, get_source_file_from_module_specifier, is_services_file,
+};
 use crate::util::symbols::{get_original_symbol_of_node, is_symbol_of_value};
-use crate::util::traversal::source_file_of;
 
 /// Whether an import binding is used as a value: referenced (import elision on the original program) and naming a
 /// value at run time.
-///
-/// rbxts-rs: at the end of a file with plugins, an alias a plugin asked to elide is unused, and one a plugin kept
-/// is used (`plugins::dispatch::import_override`).
 fn is_used_value_import(state: &mut TransformState<'_>, alias_declaration: P<Node>, name: P<Node>) -> bool {
     let symbol = get_original_symbol_of_node(state.checker, name);
-    let referenced = match crate::plugins::dispatch::import_override(state, alias_declaration) {
-        Some(kept) => kept,
-        None => state.resolver.is_referenced_alias_declaration(state.checker, alias_declaration),
-    };
+    let referenced = state.resolver.is_referenced_alias_declaration(state.checker, alias_declaration);
     referenced && symbol.is_none_or(is_symbol_of_value)
 }
 
-fn count_import_exp_uses(state: &mut TransformState<'_>, import_clause: P<Node>) -> usize {
+/// How many bindings read the module's value; `@rbxts/services`'s named imports do not (each is a `GetService`).
+fn count_import_exp_uses(state: &mut TransformState<'_>, import_clause: P<Node>, services: bool) -> usize {
     let clause = import_clause.as_import_clause();
     let mut uses = 0;
 
@@ -39,10 +36,8 @@ fn count_import_exp_uses(state: &mut TransformState<'_>, import_clause: P<Node>)
 
     if let Some(named_bindings) = clause.named_bindings {
         if named_bindings.kind() == Kind::NamespaceImport {
-            if crate::plugins::dispatch::import_override(state, named_bindings) != Some(false) {
-                uses += 1;
-            }
-        } else {
+            uses += 1;
+        } else if !services {
             for &element in named_bindings.elements() {
                 let name = element.name().expect("an import specifier has a name");
                 if is_used_value_import(state, element, name) {
@@ -55,7 +50,7 @@ fn count_import_exp_uses(state: &mut TransformState<'_>, import_clause: P<Node>)
     uses
 }
 
-/// `importExp`: the `TS.import` call, made on first use (roblox-ts's `Lazy`).
+/// `importExp`: the module's `require`, made on first use (roblox-ts's `Lazy`).
 struct LazyImport {
     module_specifier: P<Node>,
     value: Option<Expr>,
@@ -64,8 +59,7 @@ struct LazyImport {
 impl LazyImport {
     fn get(&mut self, state: &mut TransformState<'_>) -> Expr {
         if self.value.is_none() {
-            let source_file = source_file_of(self.module_specifier);
-            self.value = Some(create_import_expression(state, source_file, self.module_specifier));
+            self.value = Some(create_import_expression(state, self.module_specifier));
         }
         self.value.clone().expect("set above")
     }
@@ -89,7 +83,9 @@ pub fn transform_import_declaration(state: &mut TransformState<'_>, node: P<Node
     if let Some(import_clause) = import_clause {
         let clause = import_clause.as_import_clause();
         // detect if we need to push to a new var or not
-        let uses = count_import_exp_uses(state, import_clause);
+        let module_file = get_source_file_from_module_specifier(state, module_specifier);
+        let services = module_file.is_some_and(is_services_file);
+        let uses = count_import_exp_uses(state, import_clause, services);
         if uses > 1 {
             let specifier_text = module_specifier.text();
             let module_name = specifier_text.rsplit('/').next().unwrap_or(specifier_text);
@@ -105,7 +101,6 @@ pub fn transform_import_declaration(state: &mut TransformState<'_>, node: P<Node
         if let Some(import_clause_name) = clause.name
             && is_used_value_import(state, import_clause, import_clause_name)
         {
-            let module_file = get_source_file_from_module_specifier(state, module_specifier);
             let module_symbol = module_file.and_then(|f| state.checker.get_symbol_at_location_exported(f.as_node()));
             let has_default = module_symbol
                 .is_some_and(|symbol| state.get_module_exports(symbol).iter().any(|v| v.name() == "default"));
@@ -116,14 +111,10 @@ pub fn transform_import_declaration(state: &mut TransformState<'_>, node: P<Node
 
         if let Some(named_bindings) = clause.named_bindings {
             if named_bindings.kind() == Kind::NamespaceImport {
-                if crate::plugins::dispatch::import_override(state, named_bindings) == Some(false) {
-                    // rbxts-rs: elided for a plugin
-                } else {
-                    // namespace import logic
-                    let name = named_bindings.as_namespace_import().name;
-                    let value = import_exp.get(state);
-                    transform_variable(state, &mut binding_prereqs, name, Some(value));
-                }
+                // namespace import logic
+                let name = named_bindings.as_namespace_import().name();
+                let value = import_exp.get(state);
+                transform_variable(state, &mut binding_prereqs, name, Some(value));
             } else {
                 // named elements import logic
                 for &element in named_bindings.elements() {
@@ -131,6 +122,11 @@ pub fn transform_import_declaration(state: &mut TransformState<'_>, node: P<Node
                     // check that the import is referenced and has a value at run time
                     if is_used_value_import(state, element, name) {
                         let property_name = element.property_name().unwrap_or(name);
+                        if services {
+                            let service = create_get_service(property_name.text());
+                            transform_variable(state, &mut binding_prereqs, name, Some(service));
+                            continue;
+                        }
                         let value = import_exp.get(state);
                         let index = transform_property_name(state, &mut binding_prereqs, property_name);
                         transform_variable(
@@ -150,8 +146,9 @@ pub fn transform_import_declaration(state: &mut TransformState<'_>, node: P<Node
     // ensure we emit something
     if import_clause.is_none() || (state.compiler_options.verbatim_module_syntax.is_true() && statements.is_empty()) {
         let expression = import_exp.get(state);
-        assert!(matches!(expression, Expr::Call(_)), "an import expression is a call");
-        statements.push(create::call_statement(expression));
+        if expression.is_call() {
+            statements.push(create::call_statement(expression));
+        }
     }
 
     statements

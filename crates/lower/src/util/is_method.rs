@@ -32,9 +32,8 @@ fn can_change_receiver_convention(state: &mut TransformState<'_>, t: P<Type>) ->
 
     if t.flags().intersects(TypeFlags::Conditional) {
         let conditional = t.as_conditional_type();
-        let root = conditional.root.get().expect("a conditional type has a root");
-        let mut check_type = root.check_type.get().expect("a conditional root has a check type");
-        let mut extends_type = conditional.extends_type.get().expect("a conditional type has an extends type");
+        let mut check_type = conditional.check_type().expect("a conditional type has a check type");
+        let mut extends_type = conditional.extends_type().expect("a conditional type has an extends type");
         // singleton tuples suppress distribution without changing the void test
         if check_type.is_tuple_type() && extends_type.is_tuple_type() {
             let check_elements = get_type_arguments(state, check_type);
@@ -46,9 +45,8 @@ fn can_change_receiver_convention(state: &mut TransformState<'_>, t: P<Type>) ->
         }
 
         // a conditional that removes void can still have an unconstrained fallback type
-        let node = root.node.get().expect("a conditional root has a node").as_conditional_type_node();
-        let true_type = state.checker.get_type_from_type_node_exported(node.true_type);
-        let false_type = state.checker.get_type_from_type_node_exported(node.false_type);
+        let true_type = state.checker.get_true_type_of_conditional_type(t);
+        let false_type = state.checker.get_false_type_of_conditional_type(t);
         let void_type = state.checker.get_void_type();
         if true_type.flags().intersects(TypeFlags::Never)
             && false_type == check_type
@@ -110,7 +108,7 @@ fn is_method_inner(state: &mut TransformState<'_>, node: P<Node>, t: P<Type>) ->
             let this_type = state
                 .checker
                 .get_type_of_symbol_at_location(this_parameter, Some(node))
-                .unwrap_or_else(|| state.checker.get_error_type());
+                .unwrap_or_else(|| state.checker.get_any_type());
             if can_change_receiver_convention(state, this_type)
                 && state.multi_transform_state.is_reported_by_no_unstable_this_type.insert(node)
             {

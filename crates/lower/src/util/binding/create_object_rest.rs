@@ -1,6 +1,6 @@
 //! `util/binding/createObjectRest.ts`
 
-use rbxts_luau::{AnyIdentifier, AssignmentOperator, BinaryOperator, ElseBody, Expr, UnaryOperator, create};
+use luau::{AnyIdentifier, AssignmentOperator, BinaryOperator, ElseBody, Expr, UnaryOperator, create};
 use tsrs_ast::Node;
 use tsrs_checker::Type;
 use tsrs_core::P;

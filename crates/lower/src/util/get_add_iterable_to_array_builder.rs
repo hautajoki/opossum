@@ -1,7 +1,7 @@
 //! `util/getAddIterableToArrayBuilder.ts`: the statements that append every value of an iterable to an array being
 //! built (array spread, call-argument spread, and anything else that collects an iterable into an array).
 
-use rbxts_luau::{
+use luau::{
     AnyIdentifier, AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, UnaryOperator, create, globals,
 };
 use tsrs_ast::Node;

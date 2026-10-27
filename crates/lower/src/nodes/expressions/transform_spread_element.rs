@@ -1,7 +1,7 @@
 //! `nodes/expressions/transformSpreadElement.ts`: spread in call and `new` arguments (array literals handle their
 //! own spread elements).
 
-use rbxts_luau::{Expr, create, globals};
+use luau::{Expr, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

@@ -1,6 +1,6 @@
 //! `nodes/jsx/transformJsxAttributes.ts`
 
-use rbxts_luau::{AnyIdentifier, AssignmentOperator, ElseBody, Expr, Stmt, create, globals};
+use luau::{AnyIdentifier, AssignmentOperator, ElseBody, Expr, Stmt, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

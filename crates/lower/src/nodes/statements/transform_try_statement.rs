@@ -1,7 +1,7 @@
 //! `nodes/statements/transformTryStatement.ts`: `TS.try(try, catch, finally)`, and the flow control (return, break,
 //! continue) its functions report back.
 
-use rbxts_luau::{AnyIdentifier, BinaryOperator, ElseBody, Expr, IfStatement, ReturnStatement, Stmt, create, globals};
+use luau::{AnyIdentifier, BinaryOperator, ElseBody, Expr, IfStatement, ReturnStatement, Stmt, create, globals};
 use tsrs_ast::Node;
 use tsrs_core::P;
 
@@ -65,13 +65,12 @@ fn uses_any(try_uses: TryUses) -> bool {
 /// transformed.
 fn transform_into_try_call(
     state: &mut TransformState<'_>,
-    node: P<Node>,
     exit_type_id: &Expr,
     returns_id: &Expr,
     try_uses: TryUses,
     try_call_args: Vec<Expr>,
 ) -> Stmt {
-    let try_call = create::call(state.ts(node, "try"), try_call_args);
+    let try_call = create::call(state.ts("try"), try_call_args);
     if !uses_any(try_uses) {
         return create::call_statement(try_call);
     }
@@ -81,11 +80,10 @@ fn transform_into_try_call(
 
 fn create_flow_control_condition(
     state: &mut TransformState<'_>,
-    node: P<Node>,
     exit_type_id: &Expr,
     flow_control_constant: &str,
 ) -> Expr {
-    create::binary(exit_type_id.clone(), BinaryOperator::Eq, state.ts(node, flow_control_constant))
+    create::binary(exit_type_id.clone(), BinaryOperator::Eq, state.ts(flow_control_constant))
 }
 
 /// `FlowControlCase`
@@ -140,7 +138,7 @@ fn transform_flow_control(
     if try_uses.uses_return {
         if return_blocked {
             flow_control_cases.push(FlowControlCase {
-                condition: create_flow_control_condition(state, node, exit_type_id, "TRY_RETURN"),
+                condition: create_flow_control_condition(state, exit_type_id, "TRY_RETURN"),
                 statements: vec![Stmt::Return(ReturnStatement {
                     expressions: vec![exit_type_id.clone(), returns_id.clone()],
                 })],
@@ -150,7 +148,7 @@ fn transform_flow_control(
             }
         } else {
             flow_control_cases.push(FlowControlCase {
-                condition: create_flow_control_condition(state, node, exit_type_id, "TRY_RETURN"),
+                condition: create_flow_control_condition(state, exit_type_id, "TRY_RETURN"),
                 statements: vec![create::return_stmt(create::call(globals::unpack(), vec![returns_id.clone()]))],
             });
         }
@@ -165,13 +163,13 @@ fn transform_flow_control(
         } else {
             if try_uses.uses_break {
                 flow_control_cases.push(FlowControlCase {
-                    condition: create_flow_control_condition(state, node, exit_type_id, "TRY_BREAK"),
+                    condition: create_flow_control_condition(state, exit_type_id, "TRY_BREAK"),
                     statements: vec![create::break_stmt()],
                 });
             }
             if try_uses.uses_continue {
                 flow_control_cases.push(FlowControlCase {
-                    condition: create_flow_control_condition(state, node, exit_type_id, "TRY_CONTINUE"),
+                    condition: create_flow_control_condition(state, exit_type_id, "TRY_CONTINUE"),
                     // rbxts-rs: a try statement inside a switch continues the loop, not the switch (`create_continue`)
                     statements: create_continue(state, node),
                 });
@@ -193,7 +191,7 @@ pub fn transform_try_statement(state: &mut TransformState<'_>, node: P<Node>) ->
     state.push_try_uses_stack();
     let try_call_args = transform_try_call_args(state, node);
     let try_uses = state.pop_try_uses_stack().expect("the try uses were pushed");
-    statements.push(transform_into_try_call(state, node, &exit_type_id, &returns_id, try_uses, try_call_args));
+    statements.push(transform_into_try_call(state, &exit_type_id, &returns_id, try_uses, try_call_args));
 
     statements.extend(transform_flow_control(state, node, &exit_type_id, &returns_id, try_uses));
 

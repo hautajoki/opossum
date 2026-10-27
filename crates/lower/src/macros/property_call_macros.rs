@@ -4,7 +4,7 @@
 //! and wraps every macro in `wrapComments` when the module loads. Table entries here are plain functions, one per
 //! operator or string function, and [`wrap_comments`] is applied where the macro is called, with the entry's name.
 
-use rbxts_luau::{AnyIdentifier, AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, UnaryOperator, create, globals};
+use luau::{AnyIdentifier, AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, UnaryOperator, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -38,7 +38,7 @@ fn if_then(condition: Expr, statements: Vec<Stmt>) -> Stmt {
     create::if_stmt(condition, statements, ElseBody::Block(Vec::new()))
 }
 
-fn ids(ids: &[&rbxts_luau::TemporaryIdentifier]) -> Vec<AnyIdentifier> {
+fn ids(ids: &[&luau::TemporaryIdentifier]) -> Vec<AnyIdentifier> {
     ids.iter().map(|&id| id.clone().into()).collect()
 }
 
@@ -166,9 +166,9 @@ fn array_join(
     // `table.concat` failed on the values. The receiver is not nil where the macro runs.
     let receiver_type = state.get_type(receiver);
     let receiver_type = state.checker.get_non_nullable_type(receiver_type);
-    // rbxts-rs: TypeScript 7's getIndexTypeOfType takes the key type instead of `IndexKind.Number`
     let number_type = state.checker.get_number_type();
-    let index_type = state.checker.get_index_type_of_type_exported(receiver_type, number_type);
+    let index_type =
+        state.checker.get_index_info_of_type_exported(receiver_type, number_type).map(|info| info.value_type());
 
     // table.concat only works on string and number types, so call tostring() otherwise
     if let Some(index_type) = index_type

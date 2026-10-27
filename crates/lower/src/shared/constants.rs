@@ -1,7 +1,5 @@
 //! `Shared/constants.ts` (the transformer's part).
 
-/// `COMPILER_VERSION`: the roblox-ts version this port follows, written in the output header.
-pub const COMPILER_VERSION: &str = "3.0.0";
 
 /// `NODE_MODULES`
 pub const NODE_MODULES: &str = "node_modules";

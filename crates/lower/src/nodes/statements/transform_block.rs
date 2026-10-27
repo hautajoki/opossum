@@ -1,6 +1,6 @@
 //! `nodes/statements/transformBlock.ts`
 
-use rbxts_luau::{Stmt, create};
+use luau::{Stmt, create};
 use tsrs_ast::Node;
 use tsrs_core::P;
 

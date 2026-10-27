@@ -111,15 +111,36 @@ pub fn create_string_from_literal(node: P<Node>) -> String {
     if out.contains('\0') { out.replace('\0', "\\x00") } else { out }
 }
 
-/// rbxts-rs: a Luau string literal whose value is exactly `value` (plain text, not source text). roblox-ts passes such
-/// values to `luau.string`, whose renderer treats them as source text between delimiters. Text that renders as
-/// itself keeps that spelling; other text is escaped ([`rbxts_plugin::text_literal`]): text with a NUL (malformed in
-/// every Luau string) or a carriage return (malformed between quotes; a long bracket reads CR LF as LF), text the
-/// renderer puts between quotes with a backslash (an escape there), and text it puts in a long bracket with a leading
-/// newline (`[[` drops a newline right after it). A long bracket reads a backslash as itself.
-pub fn create_string_from_value(value: &str) -> rbxts_luau::Expr {
+/// A Luau string literal whose value is exactly `value` (plain text, not source text): the renderer treats a string's
+/// value as source text between delimiters. Text that renders as itself keeps that spelling; other text is escaped
+/// ([`escape_text`]): text with a NUL (malformed in every Luau string) or a carriage return (malformed between quotes;
+/// a long bracket reads CR LF as LF), text the renderer puts between quotes with a backslash (an escape there), and
+/// text it puts in a long bracket with a leading newline (`[[` drops a newline right after it). A long bracket reads a
+/// backslash as itself.
+pub fn create_string_from_value(value: &str) -> luau::Expr {
     let long_bracket = value.contains('\n') || (value.contains('"') && value.contains('\''));
     let renders_as_itself = !value.contains(['\r', '\0'])
         && if long_bracket { !value.starts_with('\n') } else { !value.contains('\\') };
-    if renders_as_itself { rbxts_luau::create::string(value) } else { rbxts_plugin::text_literal(value) }
+    luau::create::string(if renders_as_itself { value.to_owned() } else { escape_text(value) })
+}
+
+/// Escapes plain text so that the renderer, whatever delimiter it picks, gives a literal whose value is `text`: the
+/// renderer picks `"…"`, then `'…'`, then a long bracket that does not interpret escapes, so newlines are escaped and
+/// `"` becomes `\x22` when the text has both quote kinds. Control characters become `\xHH`, which never runs into a
+/// following digit as a decimal escape would.
+fn escape_text(text: &str) -> String {
+    let escape_double = text.contains('"') && text.contains('\'');
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '"' if escape_double => out.push_str("\\x22"),
+            c if c.is_ascii_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }

@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformTemplateExpression.ts`
 
-use rbxts_luau::{Expr, InterpolatedStringPart, create};
+use luau::{Expr, InterpolatedStringPart, create};
 use tsrs_ast::Node;
 use tsrs_core::P;
 

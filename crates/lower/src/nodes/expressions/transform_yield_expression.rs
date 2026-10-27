@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformYieldExpression.ts`
 
-use rbxts_luau::{AssignmentOperator, ElseBody, Expr, create, globals};
+use luau::{AssignmentOperator, ElseBody, Expr, create, globals};
 use tsrs_ast::Node;
 use tsrs_core::P;
 

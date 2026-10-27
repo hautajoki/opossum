@@ -1,6 +1,6 @@
 //! `nodes/statements/transformExportAssignment.ts`
 
-use rbxts_luau::{Stmt, create};
+use luau::{Stmt, create};
 use tsrs_ast::Node;
 use tsrs_core::P;
 
@@ -53,7 +53,7 @@ pub fn transform_export_assignment(state: &mut TransformState<'_>, node: P<Node>
         let original = state.checker.skip_alias(symbol);
         let erased = !is_symbol_of_value(original)
             || (!state.compiler_options.verbatim_module_syntax.is_true()
-                && state.checker.get_type_only_alias_declaration_exported(symbol).is_some());
+                && state.checker.get_type_only_alias_declaration(symbol).is_some());
         if erased {
             return Vec::new();
         }

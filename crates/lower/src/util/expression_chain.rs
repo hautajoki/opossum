@@ -1,6 +1,6 @@
 //! `util/expressionChain.ts`
 
-use rbxts_luau::{BinaryOperator, Expr, create};
+use luau::{BinaryOperator, Expr, create};
 
 use crate::util::convert_to_indexable_expression::convert_to_indexable_expression;
 

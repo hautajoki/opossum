@@ -1,6 +1,6 @@
 //! `nodes/transformInitializer.ts`
 
-use rbxts_luau::{AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, create};
+use luau::{AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, create};
 use tsrs_ast::Node;
 use tsrs_core::P;
 

@@ -1,7 +1,7 @@
 //! `util/createBinaryFromOperator.ts`, `util/bitwise.ts`, `util/assignment.ts` and `util/getAssignableValue.ts`:
 //! TypeScript operators as Luau expressions and assignments.
 
-use rbxts_luau::{AssignmentOperator, BinaryOperator, Expr, Stmt, create, globals};
+use luau::{AssignmentOperator, BinaryOperator, Expr, Stmt, create, globals};
 use tsrs_ast::{Kind, Node};
 use tsrs_checker::Type;
 use tsrs_core::P;

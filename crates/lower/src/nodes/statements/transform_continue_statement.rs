@@ -1,6 +1,6 @@
 //! `nodes/statements/transformContinueStatement.ts`
 
-use rbxts_luau::{AssignmentOperator, Expr, Stmt, create};
+use luau::{AssignmentOperator, Expr, Stmt, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -29,7 +29,7 @@ pub fn create_continue(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stm
     match target {
         Some(r#try) if r#try.kind() == Kind::TryStatement => {
             state.mark_try_uses(TryUse::Continue);
-            vec![create::return_stmt(state.ts(node, "TRY_CONTINUE"))]
+            vec![create::return_stmt(state.ts("TRY_CONTINUE"))]
         }
         Some(switch) if switch.kind() == Kind::SwitchStatement => {
             let flag = state.switch_continue_flags.entry(switch).or_insert_with(|| temp_id("continue")).clone();
@@ -45,7 +45,7 @@ pub fn create_continue(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stm
 /// `transformContinueStatement`: `continue`, or `return TS.TRY_CONTINUE` inside a try statement's function
 /// (`create_continue`, which also covers roblox-ts's `isBreakBlockedByTryStatement` case).
 pub fn transform_continue_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
-    if let Some(label) = node.as_continue_statement().label {
+    if let Some(label) = node.as_continue_statement().label() {
         state.add_diagnostic(errors::no_labeled_statement(label));
         return Vec::new();
     }

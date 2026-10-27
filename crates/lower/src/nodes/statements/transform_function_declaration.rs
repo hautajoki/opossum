@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use rbxts_luau::{AssignmentOperator, Expr, Stmt, create};
+use luau::{AssignmentOperator, Expr, Stmt, create};
 use tsrs_ast::{ModifierFlags, Node};
 use tsrs_core::P;
 
@@ -57,11 +57,11 @@ pub fn transform_function_declaration(state: &mut TransformState<'_>, node: P<No
         if is_async {
             state.add_diagnostic(errors::no_async_generator_functions(node));
         }
-        statements = wrap_statements_as_generator(state, node, statements);
+        statements = wrap_statements_as_generator(state, statements);
     }
 
     if is_async {
-        let callee = state.ts(node, "async");
+        let callee = state.ts("async");
         let right = create::call(callee, vec![create::function(parameters, has_dot_dot_dot, statements)]);
         if localize {
             vec![create::local(as_any_identifier(name), Some(right))]

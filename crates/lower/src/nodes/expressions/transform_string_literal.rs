@@ -1,6 +1,6 @@
 //! `nodes/expressions/transformStringLiteral.ts`
 
-use rbxts_luau::{Expr, Quote, create};
+use luau::{Expr, Quote, create};
 use tsrs_ast::Node;
 use tsrs_core::P;
 

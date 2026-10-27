@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use rustc_hash::FxHashSet;
 
-use rbxts_luau::BindingKey;
+use luau::BindingKey;
 use tsrs_ast::{Kind, Node, SourceFile, Symbol};
 use tsrs_core::P;
 

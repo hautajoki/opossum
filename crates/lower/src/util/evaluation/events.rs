@@ -2,7 +2,7 @@
 
 use rustc_hash::FxHashMap;
 
-use rbxts_luau::{AssignmentOperator, BinaryOperator, Effects, ElseBody, Expr, Stmt};
+use luau::{AssignmentOperator, BinaryOperator, Effects, ElseBody, Expr, Stmt};
 
 use super::effects::{get_intrinsic_effects, is_late_read};
 use super::facts::is_constant_reference;

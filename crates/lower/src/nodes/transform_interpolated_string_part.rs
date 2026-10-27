@@ -1,6 +1,6 @@
 //! `nodes/transformInterpolatedStringPart.ts`
 
-use rbxts_luau::InterpolatedStringPart;
+use luau::InterpolatedStringPart;
 use tsrs_ast::Node;
 use tsrs_core::P;
 

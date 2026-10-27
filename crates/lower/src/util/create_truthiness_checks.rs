@@ -1,13 +1,12 @@
 //! `util/createTruthinessChecks.ts`: JavaScript truthiness in Luau, where `0`, `NaN` and `""` are truthy.
 
-use rbxts_luau::{BinaryOperator, Expr, create};
+use luau::{BinaryOperator, Expr, create};
 use tsrs_ast::Node;
 use tsrs_checker::Type;
 use tsrs_core::P;
 
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
-use crate::shared::diagnostics::warnings;
 use crate::util::expression_chain::binary_expression_chain;
 use crate::util::types::{is_empty_string_type, is_nan_type, is_number_literal_type, is_possibly_type};
 
@@ -49,22 +48,7 @@ pub fn create_truthiness_checks(
         checks.push(create::binary(exp.clone(), BinaryOperator::Ne, create::string("")));
     }
 
-    let any_check = is_assignable_to_zero || is_assignable_to_nan || is_assignable_to_empty_string;
     checks.push(exp);
-
-    if state.services.data.options.log_truthy_changes && any_check {
-        let mut check_strs = Vec::new();
-        if is_assignable_to_zero {
-            check_strs.push("0");
-        }
-        if is_assignable_to_zero || is_assignable_to_nan {
-            check_strs.push("NaN");
-        }
-        if is_assignable_to_empty_string {
-            check_strs.push("\"\"");
-        }
-        state.add_diagnostic(warnings::truthy_change(&check_strs.join(", "), node));
-    }
 
     binary_expression_chain(checks, BinaryOperator::And)
 }

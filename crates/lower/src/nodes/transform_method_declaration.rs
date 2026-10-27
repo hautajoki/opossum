@@ -1,7 +1,7 @@
 //! `nodes/transformMethodDeclaration.ts`: a method of an object literal or a class, added to the table `ptr` points
 //! at.
 
-use rbxts_luau::{Expr, Stmt, create};
+use luau::{Expr, Stmt, create};
 use tsrs_ast::{Kind, ModifierFlags, Node};
 use tsrs_core::P;
 
@@ -56,14 +56,14 @@ pub fn transform_method_declaration(
         if is_async {
             state.add_diagnostic(errors::no_async_generator_functions(node));
         }
-        statements = wrap_statements_as_generator(state, node, statements);
+        statements = wrap_statements_as_generator(state, statements);
     }
 
     // can we use `function class:name() end`?
     if !is_async
         && !matches!(ptr.value, Expr::Map(_))
         && let Expr::String(literal) = &name
-        && rbxts_luau::is_valid_identifier(&literal.value)
+        && luau::is_valid_identifier(&literal.value)
     {
         if is_method(state, node) {
             parameters.remove(0); // remove `self`
@@ -89,7 +89,7 @@ pub fn transform_method_declaration(
     let mut expression = create::function(parameters, has_dot_dot_dot, statements);
 
     if is_async {
-        let callee = state.ts(node, "async");
+        let callee = state.ts("async");
         expression = create::call(callee, vec![expression]);
     }
 

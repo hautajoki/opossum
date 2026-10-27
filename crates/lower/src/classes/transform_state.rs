@@ -4,8 +4,7 @@ use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
-use rbxts_luau::{AnyIdentifier, Expr, Stmt, TemporaryIdentifier, create, globals};
-use rbxts_project::{ProjectServices, ProjectType, RelativeRbxPathPart, RojoResolver};
+use luau::{AnyIdentifier, Expr, Stmt, TemporaryIdentifier, create, globals};
 use tsrs_ast::{Diagnostic, Kind, Node, SourceFile, Symbol};
 use tsrs_checker::{Checker, EmitResolver, Type};
 use tsrs_compiler::Program;
@@ -14,12 +13,10 @@ use tsrs_core::{CompilerOptions, P};
 use crate::classes::diagnostic_service::DiagnosticService;
 use crate::classes::macro_manager::MacroManager;
 use crate::classes::multi_transform_state::MultiTransformState;
-use crate::shared::constants::PARENT_FIELD;
-use crate::shared::diagnostics::{errors, internal_error, warnings};
-use crate::util::create_get_service::create_get_service;
-use crate::util::expression_chain::property_access_expression_chain;
+use crate::locate::{Location, Locator};
+use crate::program::Project;
+use crate::shared::diagnostics::{errors, internal_error};
 use crate::util::get_block_comment_text::get_block_comment_text;
-use crate::util::symlink_cache::SymlinkedDirectories;
 use crate::util::traversal::{get_module_ancestor, skip_upwards};
 
 /// `TryUses`
@@ -48,13 +45,14 @@ pub enum TryUse {
 pub struct TransformState<'a> {
     /// The program.
     pub program: &'static Program,
-    /// rbxts-rs: the resolver for `$getModuleTree` specifiers no import resolves (`ts.resolveModuleName` with
-    /// `ts.sys`): the project's ([`rbxts_project::Project::module_resolver`]).
-    pub module_resolver: &'a rbxts_project::ModuleResolver,
+    /// The project directory.
+    pub root: &'a str,
     /// The checker this file is transformed on (its owner).
     pub checker: &'a mut Checker,
-    /// The project's setup (`data`, `pathTranslator`, the Rojo resolvers, …).
-    pub services: &'a ProjectServices,
+    /// Where every module lives once routed.
+    pub locator: &'a Locator,
+    /// Where this file lives; `None` when the locator does not route it (reported at its first import).
+    pub location: Option<&'a Location>,
     /// The program's compiler options.
     pub compiler_options: P<CompilerOptions>,
     /// The macros, by symbol.
@@ -86,38 +84,33 @@ pub struct TransformState<'a> {
     get_type_cache: FxHashMap<P<Node>, P<Type>>,
     /// `usesRuntimeLib`: the file needs the `TS` import.
     pub uses_runtime_lib: bool,
-    /// rbxts-rs: how many times `TS` was used, so that an import elided for a plugin at the end of the file can take
-    /// back its uses.
-    pub runtime_lib_uses: u32,
     module_id_by_symbol: FxHashMap<P<Symbol>, AnyIdentifier>,
     /// `symbolToIdMap`: symbols whose identifier is replaced by a temporary (a `for` loop variable copied per iteration).
     pub symbol_to_id_map: FxHashMap<P<Symbol>, TemporaryIdentifier>,
     class_element_to_object_key_map: FxHashMap<P<Node>, Expr>,
-    is_in_replicated_first: bool,
-    /// rbxts-rs: the plugins of this checker (DESIGN §11); `None` in a build without plugins.
-    pub plugins: Option<&'a crate::plugins::PluginHost>,
-    /// rbxts-rs: what this file records for its plugins.
-    pub plugin_file: crate::plugins::file_state::PluginFileState,
+    /// Project bindings named after a Luau keyword or reserved global, by declaration
+    /// (`transform_identifier::renamed_binding`).
+    pub renames: FxHashMap<P<Node>, TemporaryIdentifier>,
 }
 
 impl<'a> TransformState<'a> {
     /// The state for transforming `source_file` on `checker`.
     pub fn new(
-        project: &'a rbxts_project::Project,
+        project: &'a Project,
+        locator: &'a Locator,
         checker: &'a mut Checker,
-        services: &'a ProjectServices,
         macro_manager: &'a MacroManager,
         multi_transform_state: &'a mut MultiTransformState,
         source_file: P<SourceFile>,
     ) -> TransformState<'a> {
         let program = project.program;
         let resolver = checker.get_emit_resolver();
-        let is_in_replicated_first = services.file_info(source_file.get().file_name()).in_replicated_first;
         TransformState {
             program,
-            module_resolver: project.module_resolver(),
+            root: &project.root,
             checker,
-            services,
+            locator,
+            location: locator.get(source_file.get().file_name()),
             compiler_options: program.options(),
             macro_manager,
             multi_transform_state,
@@ -134,13 +127,10 @@ impl<'a> TransformState<'a> {
             switch_continue_flags: FxHashMap::default(),
             get_type_cache: FxHashMap::default(),
             uses_runtime_lib: false,
-            runtime_lib_uses: 0,
             module_id_by_symbol: FxHashMap::default(),
             symbol_to_id_map: FxHashMap::default(),
             class_element_to_object_key_map: FxHashMap::default(),
-            is_in_replicated_first,
-            plugins: None,
-            plugin_file: Default::default(),
+            renames: FxHashMap::default(),
         }
     }
 
@@ -155,14 +145,6 @@ impl<'a> TransformState<'a> {
     /// rbxts-rs: a compiler bug at `node`; the file is not written.
     pub fn internal_error(&mut self, node: P<Node>, message: &str) {
         self.diagnostics.add_diagnostic(internal_error(node, message));
-    }
-
-    /// rbxts-rs: a plugin's misuse of the seam (or a hook that failed) at `node`, an internal error the build
-    /// counts as the plugin's (`compile::first_error_cut`); the file is not written.
-    pub fn plugin_internal_error(&mut self, node: P<Node>, message: &str) {
-        let diagnostic = internal_error(node, message);
-        self.diagnostics.add_diagnostic(diagnostic);
-        self.plugin_file.plugin_failures.push(diagnostic);
     }
 
     // --- try statements ---
@@ -229,47 +211,25 @@ impl<'a> TransformState<'a> {
     // --- runtime library ---
 
     /// `TS`: `TS.<name>`, recording that the file uses the runtime library.
-    pub fn ts(&mut self, node: P<Node>, name: &str) -> Expr {
+    pub fn ts(&mut self, name: &str) -> Expr {
         self.uses_runtime_lib = true;
-        self.runtime_lib_uses += 1;
-        if self.services.project_type == ProjectType::Game && self.is_in_replicated_first {
-            self.add_diagnostic(warnings::runtime_lib_used_in_replicated_first(node));
-        }
         create::property(globals::ts(), name)
     }
 
-    /// `createRuntimeLibImport`: `local TS = …` for the file.
-    pub fn create_runtime_lib_import(&mut self, source_file: P<SourceFile>) -> Stmt {
-        let left = create::any_id("TS");
-        let Some(runtime_lib_rbx_path) = self.services.runtime_lib_rbx_path.clone() else {
-            // packages receive the runtime library through `_G[script] = TS`
-            return create::local(left, Some(create::computed_index(globals::_g(), globals::script())));
+    /// `local TS = require(<runtime library>)` for the file, or `None` after reporting a runtime library this file
+    /// cannot require.
+    pub fn create_runtime_lib_import(&mut self) -> Option<Stmt> {
+        let node = self.source_file.as_node();
+        let Some(runtime) = self.locator.runtime_lib.as_ref() else {
+            self.add_diagnostic(errors::unrouted(node, "RuntimeLib"));
+            return None;
         };
-        if self.services.project_type == ProjectType::Game {
-            // the service the runtime library is in, then a WaitForChild per instance below it
-            let service_name = runtime_lib_rbx_path.first().expect("the runtime library path names a service");
-            let mut expression = create_get_service(service_name);
-            for name in &runtime_lib_rbx_path[1..] {
-                expression = create::method_call(expression, "WaitForChild", vec![create::string(name.clone())]);
-            }
-            create::local(left, Some(create::call(globals::require(), vec![expression])))
-        } else {
-            let source_out_path = self.services.path_translator.get_output_path(source_file.get().file_name());
-            let Some(rbx_path) = self.services.rojo_resolver.get_rbx_path_from_file_path(&source_out_path) else {
-                let relative = rbxts_project::nodepath::relative(&self.services.data.project_path, &source_out_path);
-                self.add_diagnostic(errors::no_rojo_data(source_file.as_node(), &relative, false));
-                return create::local(left, Some(Expr::None));
-            };
-            let parts: Vec<String> = RojoResolver::relative(&rbx_path, &runtime_lib_rbx_path)
-                .into_iter()
-                .map(|part| match part {
-                    RelativeRbxPathPart::Parent => PARENT_FIELD.to_owned(),
-                    RelativeRbxPathPart::Child(name) => name,
-                })
-                .collect();
-            let chain = property_access_expression_chain(globals::script(), &parts);
-            create::local(left, Some(create::call(globals::require(), vec![chain])))
+        let from = self.location?;
+        if luau::spell(&from.module, &runtime.module).is_none() {
+            self.add_diagnostic(errors::route_boundary(node, from.realm.name(), runtime.realm.name()));
+            return None;
         }
+        Some(create::local(create::any_id("TS"), Some(create::require(runtime.module.clone()))))
     }
 
     // --- module exports ---
@@ -288,7 +248,7 @@ impl<'a> TransformState<'a> {
         all.sort_by(|a, b| checker.compare_symbols_exported(Some(*a), Some(*b)));
         let mut exports = Vec::with_capacity(all.len());
         for export_symbol in all {
-            let type_only_declaration = self.checker.get_type_only_alias_declaration_exported(export_symbol);
+            let type_only_declaration = self.checker.get_type_only_alias_declaration(export_symbol);
             // erased aliases must not redirect mutable locals to properties on the exports table
             if type_only_declaration.is_none_or(|d| verbatim && !is_type_only_export_declaration(d)) {
                 exports.push(export_symbol);
@@ -354,43 +314,6 @@ impl<'a> TransformState<'a> {
         let module_symbol = self.get_module_symbol_from_node(value_declaration);
         let alias = self.get_module_exports_alias_map(module_symbol).get(&id_symbol).cloned()?;
         Some(create::computed_index(self.get_module_id_from_symbol(module_symbol).into(), alias))
-    }
-
-    /// `guessVirtualPath`: the path a file has through a symlinked (or junctioned) directory the program resolved
-    /// through, from its real path. Module resolution gives packages under a linked `node_modules`, or linked packages
-    /// inside it, their real paths; imports need the `node_modules` ones.
-    ///
-    /// rbxts-rs: the map is TypeScript 5's, rebuilt from the program's resolutions ([`SymlinkedDirectories`]), not
-    /// tsrs's TypeScript 7 symlink cache.
-    pub fn guess_virtual_path(&mut self, fs_path: &str) -> Option<String> {
-        use rbxts_project::nodepath;
-        let program = self.program;
-        let reverse_symlink_map = match &self.multi_transform_state.symlinked_directories {
-            Some((for_program, map)) if std::ptr::eq(*for_program, program) => Rc::clone(map),
-            _ => {
-                let map = Rc::new(SymlinkedDirectories::new(program));
-                self.multi_transform_state.symlinked_directories = Some((program, Rc::clone(&map)));
-                map
-            }
-        };
-        let cwd = program.get_current_directory();
-        let case_sensitive = program.use_case_sensitive_file_names();
-
-        let original = fs_path;
-        let mut fs_path = fs_path.to_owned();
-        loop {
-            // reverseSymlinkMap always has trailing slashes, as it is constructed from `SymlinkedDirectory.real`
-            let parent = tsrs_core::tspath::ensure_trailing_directory_separator(nodepath::dirname(&fs_path));
-            if fs_path == parent {
-                break;
-            }
-            fs_path = parent;
-            let key = tsrs_core::tspath::to_path(&fs_path, cwd, case_sensitive);
-            if let Some(symlink) = reverse_symlink_map.first_symlink(&key) {
-                return Some(nodepath::join(&[symlink, &nodepath::relative(&fs_path, original)]));
-            }
-        }
-        None
     }
 
     /// `setClassElementObjectKey`

@@ -5,12 +5,11 @@
 //! through the checker as `TypeObject` does.
 
 use tsrs_ast::{Node, Symbol};
-use tsrs_checker::{LiteralValue, ObjectFlags, SignatureKind, Type, TypeFlags};
+use tsrs_checker::{Checker, LiteralValue, ObjectFlags, SignatureKind, Type, TypeFlags};
 use tsrs_core::P;
 
 use crate::classes::macro_manager::{NOMINAL_LUA_TUPLE_NAME, symbol_names};
 use crate::classes::transform_state::TransformState;
-use crate::shared::constants::RBXTS_SCOPE;
 
 /// A type predicate (`TypeCheck`).
 pub type TypeCheck<'c> = &'c dyn Fn(&mut TransformState<'_>, P<Type>) -> bool;
@@ -109,13 +108,18 @@ pub fn is_boolean_type(_: &mut TransformState<'_>, t: P<Type>) -> bool {
     t.flags().intersects(TypeFlags::Boolean | TypeFlags::BooleanLiteral)
 }
 
+/// The regular `true` or `false` literal type (`getTrueType()` without `fresh`): `boolean` is the union of the two.
+pub fn regular_boolean_literal(checker: &Checker, value: bool) -> P<Type> {
+    let name = if value { "true" } else { "false" };
+    let parts = checker.get_boolean_type().types();
+    *parts.iter().find(|t| t.as_intrinsic_type().intrinsic_name() == name).expect("boolean is false | true")
+}
+
 /// `isBooleanLiteralType(state, value)`
 pub fn is_boolean_literal_type(value: bool) -> impl Fn(&mut TransformState<'_>, P<Type>) -> bool {
     move |state, t| {
         if t.flags().intersects(TypeFlags::BooleanLiteral) {
-            // `getTrueType()` / `getFalseType()` without `fresh` are the regular literal types, which `boolean` is made of
-            let value_type = if value { state.checker.regular_true_type } else { state.checker.regular_false_type };
-            return t == value_type;
+            return t == regular_boolean_literal(state.checker, value);
         }
         is_boolean_type(state, t)
     }
@@ -130,7 +134,7 @@ fn number_literal_value(t: P<Type>) -> Option<f64> {
     if !t.flags().intersects(TypeFlags::NumberLiteral) {
         return None;
     }
-    match t.as_literal_type().value.get() {
+    match t.as_literal_type().value() {
         Some(LiteralValue::Number(n)) => Some(n.0),
         _ => None,
     }
@@ -141,7 +145,7 @@ pub fn string_literal_value(t: P<Type>) -> Option<&'static str> {
     if !t.flags().intersects(TypeFlags::StringLiteral) {
         return None;
     }
-    match t.as_literal_type().value.get() {
+    match t.as_literal_type().value() {
         Some(LiteralValue::String(s)) => Some(s),
         _ => None,
     }
@@ -181,7 +185,7 @@ pub fn is_array_type(state: &mut TransformState<'_>, t: P<Type>) -> bool {
     if t.flags().intersects(TypeFlags::Any) {
         return false;
     }
-    if t.is_tuple_type() || state.checker.is_array_like_type(t) {
+    if t.is_tuple_type() || state.checker.is_array_like_type_exported(t) {
         return true;
     }
     let symbol = t.symbol();
@@ -193,12 +197,12 @@ pub fn is_array_type(state: &mut TransformState<'_>, t: P<Type>) -> bool {
         symbol_names::TEMPLATE_STRINGS_ARRAY,
     ]
     .iter()
-    .any(|name| symbol == Some(mm.get_symbol_or_throw(name)))
+    .any(|name| symbol.is_some_and(|s| mm.is(s, name)))
 }
 
 fn symbol_is_one_of(state: &TransformState<'_>, t: P<Type>, names: &[&str]) -> bool {
     let symbol = t.symbol();
-    names.iter().any(|name| symbol == Some(state.macro_manager.get_symbol_or_throw(name)))
+    names.iter().any(|name| symbol.is_some_and(|s| state.macro_manager.is(s, name)))
 }
 
 /// `isSetType(state)`
@@ -228,7 +232,7 @@ pub fn is_iterable_function_type(state: &mut TransformState<'_>, t: P<Type>) -> 
 
 /// `isLuaTupleType(state)`
 pub fn is_lua_tuple_type(state: &mut TransformState<'_>, t: P<Type>) -> bool {
-    let nominal = state.macro_manager.get_symbol(NOMINAL_LUA_TUPLE_NAME);
+    let nominal = state.macro_manager.symbol(NOMINAL_LUA_TUPLE_NAME);
     let property = state.checker.get_property_of_type_exported(t, NOMINAL_LUA_TUPLE_NAME);
     // `type.getProperty(…) === getSymbolOrThrow(…)`: both undefined counts as equal in TypeScript, but the macro
     // manager's lookup throws then, so a missing nominal symbol never compares
@@ -265,7 +269,7 @@ pub fn is_empty_string_type(state: &mut TransformState<'_>, t: P<Type>) -> bool 
         return value.is_empty();
     }
     if t.flags().intersects(TypeFlags::TemplateLiteral) {
-        let texts = t.as_template_literal_type().texts.get();
+        let texts = t.as_template_literal_type().texts();
         return texts.is_empty() || texts.iter().all(|s| s.is_empty());
     }
     is_string_type(state, t)
@@ -278,20 +282,12 @@ pub fn is_roblox_type(state: &mut TransformState<'_>, t: P<Type>) -> bool {
 }
 
 /// Whether `declaration` is in `node_modules/@rbxts/types` (cached per file).
-///
-/// roblox-ts bug, mirrored: it tests the file's real path, so with `node_modules` (or `@rbxts/types`) linked from
-/// elsewhere no type counts as a Roblox type: possibly-undefined call arguments of Roblox functions are not wrapped in
-/// parentheses, and the Roblox-type `instanceof` diagnostic is not reported. The builtin checks of `util/evaluation`
-/// go through here too and never hold either: in roblox-ts's tests project, `string.char` and Roblox method calls
-/// (`game:FindFirstChild`) are then evaluated into temporaries and called with `.`. Fixtures link `@rbxts/types`, so
-/// they can't exercise these paths.
 pub fn is_in_rbxts_types(state: &mut TransformState<'_>, declaration: P<Node>) -> bool {
     let Some(file) = tsrs_ast::get_source_file_of_node(declaration) else { return false };
     if let Some(&cached) = state.multi_transform_state.is_rbxts_types_file_cache.get(&file) {
         return cached;
     }
-    let types_path = rbxts_project::nodepath::join(&[&state.services.data.node_modules_path, RBXTS_SCOPE, "types"]);
-    let result = rbxts_project::setup::is_path_descendant_of(file.get().file_name(), &types_path);
+    let result = file.get().file_name().contains("/node_modules/@rbxts/types/");
     state.multi_transform_state.is_rbxts_types_file_cache.insert(file, result);
     result
 }

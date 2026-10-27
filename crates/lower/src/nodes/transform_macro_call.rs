@@ -1,6 +1,6 @@
 //! `nodes/transformMacroCall.ts`: a call or property call that a macro expands, with its operands planned.
 
-use rbxts_luau::{Expr, create};
+use luau::{Expr, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
@@ -62,7 +62,7 @@ pub fn transform_macro_call(
         let spread_expression = argument.expression().expect("a spread has an expression");
         let t = state.get_type(spread_expression);
         assert!(t.is_tuple_type(), "a spread macro argument is a tuple");
-        let count = t.target_tuple_type().element_infos().len();
+        let count = t.target().expect("a tuple type reference has a target").as_tuple_type().element_infos().len();
         let ids: Vec<_> = (0..count).map(|i| temp_id(format!("spread{i}"))).collect();
         if ids.is_empty() {
             // an empty spread may still have effects

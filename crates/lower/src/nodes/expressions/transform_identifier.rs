@@ -1,10 +1,11 @@
 //! `nodes/expressions/transformIdentifier.ts`
 
-use rbxts_luau::{Expr, create};
+use luau::{Expr, TemporaryIdentifier, create};
 use tsrs_ast::{Kind, ModifierFlags, Node, Symbol};
 use tsrs_core::P;
 
 use crate::classes::macro_manager::symbol_names;
+use crate::classes::prereqs::renamed_id;
 use crate::classes::transform_state::TransformState;
 use crate::shared::diagnostics::errors;
 use crate::util::evaluation::bindings::get_binding_key;
@@ -24,11 +25,31 @@ pub fn identifier_symbol(state: &mut TransformState<'_>, node: P<Node>) -> Optio
     }
 }
 
+/// The temporary that stands for a project binding named after a Luau keyword or reserved global (`local`, `type`,
+/// `error`): one per declaration and file, which the name solver renames (`type_`). `None` for any other name, and
+/// for declarations outside the project's sources, which name real Luau globals.
+pub fn renamed_binding(state: &mut TransformState<'_>, symbol: P<Symbol>, name: &str) -> Option<TemporaryIdentifier> {
+    if !luau::LUAU_RESERVED_KEYWORDS.contains(&name) && !luau::is_reserved_identifier(name) {
+        return None;
+    }
+    let declaration = symbol.declarations().first().copied()?;
+    let file = tsrs_ast::get_source_file_of_node(declaration)?;
+    if file.is_declaration_file() || declaration.flags().intersects(tsrs_ast::NodeFlags::Ambient) {
+        return None;
+    }
+    let id = state.renames.entry(declaration).or_insert_with(|| renamed_id(name));
+    Some(id.clone())
+}
+
 /// `transformIdentifierDefined`: the identifier as a Luau name, with its binding facts.
 pub fn transform_identifier_defined(state: &mut TransformState<'_>, node: P<Node>) -> Expr {
     let symbol = identifier_symbol(state, node).expect("a defined identifier has a symbol");
 
-    if let Some(replacement_id) = state.symbol_to_id_map.get(&symbol).cloned() {
+    let replacement = match state.symbol_to_id_map.get(&symbol).cloned() {
+        Some(id) => Some(id),
+        None => renamed_binding(state, symbol, node.text()),
+    };
+    if let Some(replacement_id) = replacement {
         let mut identifier = Expr::TemporaryIdentifier(replacement_id);
         let key = get_binding_key(state, symbol, node);
         mark_binding(&mut identifier, symbol, key);
@@ -134,14 +155,12 @@ pub fn transform_identifier(state: &mut TransformState<'_>, node: P<Node>) -> Ex
     }
 
     let symbol = identifier_symbol(state, node).expect("an identifier has a symbol");
-    // rbxts-rs: a reference the compiler compiles keeps its import through plugin elision requests
-    crate::plugins::dispatch::note_alias_reference(state, node, symbol);
 
     if state.checker.is_undefined_symbol(symbol) {
         return Expr::Nil;
     } else if state.checker.is_arguments_symbol(symbol) {
         state.add_diagnostic(errors::no_arguments(node));
-    } else if symbol == state.macro_manager.get_symbol_or_throw(symbol_names::GLOBAL_THIS) {
+    } else if state.macro_manager.is(symbol, symbol_names::GLOBAL_THIS) {
         state.add_diagnostic(errors::no_global_this(node));
     }
 
@@ -150,7 +169,7 @@ pub fn transform_identifier(state: &mut TransformState<'_>, node: P<Node>) -> Ex
     }
 
     if let Some(construct_symbol) = get_first_construct_symbol(state, node)
-        && state.macro_manager.get_constructor_macro(construct_symbol).is_some()
+        && state.macro_manager.get_constructor_macro(state.checker, construct_symbol).is_some()
     {
         let class = node.parent().and_then(|p| p.parent()).and_then(|p| p.parent());
         let is_class_extends_node = class.is_some_and(|c| {

@@ -1,6 +1,6 @@
 //! `nodes/statements/transformModuleDeclaration.ts`: namespaces.
 
-use rbxts_luau::{AssignmentOperator, Expr, Stmt, create};
+use luau::{AssignmentOperator, Expr, Stmt, create};
 use rustc_hash::FxHashMap;
 use tsrs_ast::{Kind, Node, Symbol};
 use tsrs_core::P;
@@ -77,14 +77,14 @@ fn transform_namespace(state: &mut TransformState<'_>, name: P<Node>, body: P<No
     }
 
     if body.kind() == Kind::ModuleBlock {
-        let mut exports_map: FxHashMap<P<Node>, Vec<String>> = FxHashMap::default();
+        let mut exports_map: FxHashMap<P<Node>, Vec<P<Symbol>>> = FxHashMap::default();
         for &export_symbol in module_exports.iter() {
             let original_symbol = state.checker.skip_alias(export_symbol);
             if is_symbol_of_value(original_symbol)
                 && !is_symbol_mutable(state, original_symbol)
                 && let Some(statement) = get_value_declaration_statement(export_symbol)
             {
-                exports_map.entry(statement).or_default().push(export_symbol.name().to_owned());
+                exports_map.entry(statement).or_default().push(export_symbol);
             }
         }
         let export_info = ExportInfo { id: container_id.into(), mapping: &exports_map };
@@ -98,10 +98,10 @@ fn transform_namespace(state: &mut TransformState<'_>, name: P<Node>, body: P<No
         // `namespace A.B {}`: the inner namespace is declared in the outer one's block
         let inner = body.as_module_declaration();
         let inner_body = body.body().expect("a nested namespace has a body");
-        do_statements.extend(transform_namespace(state, inner.name, inner_body));
-        let inner_value = transform_identifier_defined(state, inner.name);
+        do_statements.extend(transform_namespace(state, inner.name(), inner_body));
+        let inner_value = transform_identifier_defined(state, inner.name());
         do_statements.push(create::assignment(
-            create::property(Expr::TemporaryIdentifier(container_id), inner.name.text()),
+            create::property(Expr::TemporaryIdentifier(container_id), inner.name().text()),
             AssignmentOperator::Assign,
             inner_value,
         ));
@@ -121,7 +121,7 @@ pub fn transform_module_declaration(state: &mut TransformState<'_>, node: P<Node
 
     // disallow merging
     let declaration = node.as_module_declaration();
-    let symbol = state.checker.get_symbol_at_location_exported(declaration.name);
+    let symbol = state.checker.get_symbol_at_location_exported(declaration.name());
     if let Some(symbol) = symbol
         && has_multiple_definitions(symbol, is_declaration_of_namespace)
     {
@@ -134,8 +134,8 @@ pub fn transform_module_declaration(state: &mut TransformState<'_>, node: P<Node
     }
 
     // a string literal name is only `declare module "x" {}`, which is filtered out above
-    assert!(declaration.name.kind() != Kind::StringLiteral, "a namespace has an identifier name");
+    assert!(declaration.name().kind() != Kind::StringLiteral, "a namespace has an identifier name");
     let body = node.body().expect("an instantiated namespace has a body");
     assert!(body.kind() != Kind::Identifier, "a namespace body is a block or a nested namespace");
-    transform_namespace(state, declaration.name, body)
+    transform_namespace(state, declaration.name(), body)
 }

@@ -1,6 +1,6 @@
 //! `nodes/statements/transformClassDeclaration.ts`
 
-use rbxts_luau::Stmt;
+use luau::Stmt;
 use tsrs_ast::Node;
 use tsrs_core::P;
 

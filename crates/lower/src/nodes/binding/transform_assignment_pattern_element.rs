@@ -1,6 +1,6 @@
 //! `nodes/binding/transformAssignmentPatternElement.ts`
 
-use rbxts_luau::{AssignmentOperator, Expr, create};
+use luau::{AssignmentOperator, Expr, create};
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 

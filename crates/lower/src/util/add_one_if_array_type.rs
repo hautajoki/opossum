@@ -1,6 +1,6 @@
 //! `util/addOneIfArrayType.ts`
 
-use rbxts_luau::Expr;
+use luau::Expr;
 use tsrs_checker::Type;
 use tsrs_core::P;
 

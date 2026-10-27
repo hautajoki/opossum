@@ -1,8 +1,8 @@
-//! `util/evaluation/facts.ts`: reading and writing the facts carried on Luau nodes ([`rbxts_luau::facts`]).
+//! `util/evaluation/facts.ts`: reading and writing the facts carried on Luau nodes ([`luau::facts`]).
 
 use std::sync::Arc;
 
-use rbxts_luau::{AnyIdentifier, Binding, BindingKey, Effects, Expr};
+use luau::{AnyIdentifier, Binding, BindingKey, Effects, Expr};
 use tsrs_ast::{Kind, NodeFlags, Symbol};
 use tsrs_core::P;
 

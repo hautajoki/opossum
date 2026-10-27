@@ -5,14 +5,13 @@ use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use rbxts_luau::{BindingKey, Effects, Expr};
+use luau::{BindingKey, Effects, Expr};
 use tsrs_ast::{Node, SourceFile, Symbol};
 use tsrs_checker::Type;
 use tsrs_core::P;
 
 use crate::classes::diagnostic_service::ReportOnce;
 use crate::util::evaluation::bindings::BindingUsage;
-use crate::util::symlink_cache::SymlinkedDirectories;
 
 /// `MultiTransformState`. Type classifications stay valid for the compilation; emitted AST facts can still change.
 #[derive(Default)]
@@ -46,9 +45,6 @@ pub struct MultiTransformState {
     pub get_module_exports_alias_map_cache: FxHashMap<P<Symbol>, Rc<FxHashMap<P<Symbol>, Expr>>>,
     /// rbxts-rs: whether a declaration file is under `node_modules/@rbxts/types` (`isRobloxType`, `isBuiltinDeclaration`).
     pub is_rbxts_types_file_cache: FxHashMap<P<SourceFile>, bool>,
-    /// rbxts-rs: TypeScript 5's symlinked directories by real path for `guessVirtualPath`, and the program they are
-    /// for, made on first use.
-    pub symlinked_directories: Option<(&'static tsrs_compiler::Program, Rc<SymlinkedDirectories>)>,
 }
 
 impl MultiTransformState {

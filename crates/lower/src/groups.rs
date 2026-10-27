@@ -1,195 +1,131 @@
-//! The transform over the program's checkers (S3-par).
-//!
-//! A file is transformed by its owner, the checker that checked it: the transform asks that checker about types, and
-//! checkers are not shareable. tsrs assigns every file to a checker when the pool is made (a function of the program,
-//! `compute_associations`), and none of our passes moves files between checkers (only tsrs's own type-check pass
-//! steals work), so the owner is `Program::checker_index_of_file`.
-//!
-//! Each checker that owns files to transform runs one group on its own thread (`for_each_checker_parallel`, 512 MiB
-//! stacks): it makes its own `MacroManager` (merged symbols are per checker), `MultiTransformState` (caches keyed by its
-//! types) and `PluginHost` (the plugin instances, made on that thread, `CheckerInfo { index, count }`), then transforms
-//! its files in the given order (the transform order). When one checker owns them all (one checker, or a small rebuild), the group runs on the
-//! calling thread. The results come back in the files' order, so what the build reports and writes does not depend on
-//! the checker count or the assignment: per-file state is per file, cross-file plugin data travels in file parts
-//! merged in that order, and the once-per-compilation diagnostics are deduplicated in it afterwards
-//! (`drop_reported_earlier`).
+//! Lowering over the program's checkers. A file is lowered by its owner, the checker that checked it: lowering asks
+//! that checker about types, and checkers are not shareable. Each checker that owns files runs one group on its own
+//! thread with its own macro manager and caches; results come back in the order of the files given, so the output does
+//! not depend on the checker count.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::{Mutex, PoisonError};
 
-use rustc_hash::FxHashMap;
-
-use rbxts_plugin::{CheckerInfo, FileIndex};
-use rbxts_plugin::erased::ErasedShared;
-use rbxts_project::{Project, ProjectServices};
+use luau::Stmt;
+use rustc_hash::FxHashSet;
 use tsrs_ast::{Diagnostic, SourceFile};
 use tsrs_checker::Checker;
-use tsrs_compiler::Context;
 use tsrs_core::P;
 
-use crate::build::plugin_inputs::EnvSnapshot;
+use crate::classes::diagnostic_service::ReportOnce;
 use crate::classes::macro_manager::MacroManager;
 use crate::classes::multi_transform_state::MultiTransformState;
-use crate::compile::{FileTransform, transform_file};
-use crate::plugins::host::HookTime;
-use crate::plugins::lifecycle::ActivePlugin;
-use crate::plugins::{HookKind, PluginHost};
+use crate::classes::prereqs::reset_temp_ids;
+use crate::classes::transform_state::TransformState;
+use crate::locate::Locator;
+use crate::nodes::transform_source_file::transform_source_file;
+use crate::program::Project;
+use crate::shared::diagnostics::internal_error;
 
-/// Hook times per plugin and hook kind.
-pub(crate) type HookTimes = Vec<[HookTime; HookKind::ALL.len()]>;
-
-/// The plugins of a build's transform.
-pub(crate) struct GroupPlugins<'a, 'p> {
-    pub active: &'a [ActivePlugin<'p>],
-    pub shared: &'a [ErasedShared],
-    pub env: &'a Arc<EnvSnapshot>,
-    /// The checker's diagnostics of each file (warnings and suggestions only: an error stops the build first).
-    pub file_diagnostics: &'a FxHashMap<P<SourceFile>, Vec<P<Diagnostic>>>,
-    /// Each program file's [`rbxts_plugin::FileIndex`] (its place in the transform order).
-    pub file_indices: &'a FxHashMap<P<SourceFile>, FileIndex>,
-    pub claims_all: bool,
+/// One file's lowering.
+pub struct Lowered {
+    pub file: P<SourceFile>,
+    /// The Luau tree; `None` when lowering panicked (an internal error, in `diagnostics`).
+    pub ast: Option<Vec<Stmt>>,
+    pub diagnostics: Vec<P<Diagnostic>>,
 }
 
-/// What the transform of a build's files gave.
-pub(crate) struct Transformed {
-    /// Per file, in the order of the files given: its transform, or `None` after the first file whose transform
-    /// panicked (an internal error), whichever checker had it.
-    pub files: Vec<Option<FileTransform>>,
-    /// The plugins' hook times, summed over the groups (thread time: with several checkers they overlap).
-    pub hook_times: Option<HookTimes>,
-    /// Errors that stop the build before any file is transformed (the macro manager, unsupported plugin interests):
-    /// every group meets the same ones, and the first group's are kept. `files` is then empty.
-    pub setup_fatal: Option<Vec<String>>,
-    /// The transform stopped by an internal error: its message (at most one).
-    pub stopped: Vec<String>,
+impl Lowered {
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics.iter().any(|d| d.category() == tsrs_diagnostics::Category::Error)
+    }
 }
 
-/// One group's results.
-struct GroupOutput {
-    files: Vec<(usize, FileTransform)>,
-    hook_times: Option<HookTimes>,
-    setup_fatal: Option<Vec<String>>,
+struct FileOutput {
+    lowered: Lowered,
+    once: Vec<(ReportOnce, P<Diagnostic>)>,
 }
 
-/// Transforms `files` (transform order, `build::transform_order`), each on its owner checker; see the module docs.
-pub(crate) fn transform_files(
-    project: &Project,
-    services: &ProjectServices,
-    ctx: &Context,
-    plugins: Option<&GroupPlugins<'_, '_>>,
-    files: &[P<SourceFile>],
-) -> Transformed {
+/// Lowers `files`, each on its owner checker; see the module docs. Call from a thread with [`crate::STACK_SIZE`].
+pub fn lower_files(project: &Project, locator: &Locator, files: &[P<SourceFile>]) -> Vec<Lowered> {
     let program = project.program;
-    let count = program.checker_count().max(1);
-    let mut groups: Vec<Vec<(usize, P<SourceFile>)>> = vec![Vec::new(); count];
+    let state = program.pool().state();
+    let mut groups: Vec<Vec<(usize, P<SourceFile>)>> = Vec::new();
     for (i, &file) in files.iter().enumerate() {
-        let owner = if count == 1 { 0 } else { program.checker_index_of_file(file).unwrap_or(0).min(count - 1) };
+        let owner = state
+            .file_indices
+            .get(&file)
+            .map_or(0, |&f| state.owners[f].load(std::sync::atomic::Ordering::Relaxed) as usize);
+        if groups.len() <= owner {
+            groups.resize_with(owner + 1, Vec::new);
+        }
         groups[owner].push((i, file));
     }
-    let owners: Vec<usize> = (0..count).filter(|&c| !groups[c].is_empty()).collect();
-    let outputs: Vec<GroupOutput> = match owners.as_slice() {
-        [] => Vec::new(),
-        &[only] => {
-            // no thread needed: lock the owner's checker here
-            let mut checker = program.get_type_checker_for_file_exclusive(ctx, groups[only][0].1);
-            vec![run_group(project, services, plugins, &mut checker, CheckerInfo { index: only, count }, &groups[only])]
-        }
-        _ => {
-            let slots: Vec<Mutex<Option<GroupOutput>>> = (0..count).map(|_| Mutex::new(None)).collect();
-            program.for_each_checker_parallel(|index, checker| {
-                let Some(group) = groups.get(index).filter(|g| !g.is_empty()) else { return };
-                let output = run_group(project, services, plugins, checker, CheckerInfo { index, count }, group);
-                *slots[index].lock().unwrap_or_else(PoisonError::into_inner) = Some(output);
-            });
-            slots.into_iter().filter_map(|slot| slot.into_inner().unwrap_or_else(PoisonError::into_inner)).collect()
-        }
-    };
+    let slots: Vec<Mutex<Vec<(usize, FileOutput)>>> = groups.iter().map(|_| Mutex::new(Vec::new())).collect();
+    program.for_each_checker_parallel(|index, checker| {
+        let Some(group) = groups.get(index).filter(|g| !g.is_empty()) else { return };
+        let output = run_group(project, locator, checker, group);
+        *slots[index].lock().unwrap_or_else(PoisonError::into_inner) = output;
+    });
 
-    let mut transformed = Transformed {
-        files: files.iter().map(|_| None).collect(),
-        hook_times: None,
-        setup_fatal: None,
-        stopped: Vec::new(),
-    };
-    let mut first_panic: Option<usize> = None;
-    for output in outputs {
-        if let Some(fatal) = output.setup_fatal {
-            transformed.setup_fatal.get_or_insert(fatal);
-            continue;
-        }
-        if let Some(times) = output.hook_times {
-            match &mut transformed.hook_times {
-                None => transformed.hook_times = Some(times),
-                Some(sum) => {
-                    for (sum, times) in sum.iter_mut().zip(&times) {
-                        for (sum, time) in sum.iter_mut().zip(times) {
-                            sum.calls += time.calls;
-                            sum.time += time.time;
-                        }
-                    }
-                }
-            }
-        }
-        for (i, file) in output.files {
-            if file.panicked && first_panic.is_none_or(|first| i < first) {
-                first_panic = Some(i);
-            }
-            transformed.files[i] = Some(file);
+    let mut outputs: Vec<Option<FileOutput>> = files.iter().map(|_| None).collect();
+    for slot in slots {
+        for (i, output) in slot.into_inner().unwrap_or_else(PoisonError::into_inner) {
+            outputs[i] = Some(output);
         }
     }
-    if transformed.setup_fatal.is_some() {
-        transformed.files.iter_mut().for_each(|f| *f = None);
-    } else if let Some(first) = first_panic {
-        // rbxts-rs: a group stops at its first panic (its checker may be inconsistent, FOLLOWUPS T1); the other groups
-        // go on. What the report holds is cut at the first panic in transform order, so it is what one checker gives,
-        // for any checker count: every file before it, and nothing after it.
-        transformed.files.iter_mut().skip(first + 1).for_each(|f| *f = None);
-        let name = files[first].get().file_name();
-        transformed.stopped =
-            vec![format!("the transform stopped after an internal error in {name}; later files were not transformed")];
-    }
-    transformed
+    // a once-per-compilation diagnostic stays with the first file (in the order given) that reported it
+    let mut reported: FxHashSet<ReportOnce> = FxHashSet::default();
+    outputs
+        .into_iter()
+        .zip(files)
+        .map(|(output, &file)| match output {
+            Some(mut output) => {
+                let dropped: FxHashSet<P<Diagnostic>> =
+                    output.once.iter().filter(|(key, _)| !reported.insert(*key)).map(|&(_, d)| d).collect();
+                output.lowered.diagnostics.retain(|d| !dropped.contains(d));
+                output.lowered
+            }
+            None => Lowered {
+                file,
+                ast: None,
+                diagnostics: vec![internal_error(file.as_node(), "not lowered: an earlier file of its checker panicked")],
+            },
+        })
+        .collect()
 }
 
-/// One checker's files, in transform order, on the calling thread.
+/// One checker's files, in order, on the calling thread. Stops at a panic: the checker may be inconsistent after it.
 fn run_group(
     project: &Project,
-    services: &ProjectServices,
-    plugins: Option<&GroupPlugins<'_, '_>>,
+    locator: &Locator,
     checker: &mut Checker,
-    info: CheckerInfo,
     files: &[(usize, P<SourceFile>)],
-) -> GroupOutput {
-    let mut output = GroupOutput { files: Vec::with_capacity(files.len()), hook_times: None, setup_fatal: None };
-    let macro_manager = match MacroManager::new(checker) {
-        Ok(manager) => manager,
-        Err(error) => {
-            output.setup_fatal = Some(error.messages);
-            return output;
-        }
-    };
-    let host = plugins.map(|plugins| {
-        let mut host = PluginHost::new(
-            project.program,
-            plugins.active,
-            plugins.shared,
-            info,
-            plugins.file_diagnostics.clone(),
-            plugins.file_indices.clone(),
-            plugins.claims_all,
-        );
-        host.env = Arc::clone(plugins.env);
-        host
-    });
+) -> Vec<(usize, FileOutput)> {
+    let macro_manager = MacroManager::new(checker);
     let mut multi = MultiTransformState::new();
+    let mut outputs = Vec::with_capacity(files.len());
     for &(i, file) in files {
-        let transformed = transform_file(project, checker, services, &macro_manager, &mut multi, host.as_ref(), file);
-        let panicked = transformed.panicked;
-        output.files.push((i, transformed));
+        reset_temp_ids();
+        // per file, so a file's output depends only on the program, not on what its checker lowered before
+        multi.function_effects.clear();
+        multi.binding_keys.clear();
+        let mut state = TransformState::new(project, locator, checker, &macro_manager, &mut multi, file);
+        let result = catch_unwind(AssertUnwindSafe(|| transform_source_file(&mut state, file)));
+        let panicked = result.is_err();
+        let ast = match result {
+            Ok(ast) => Some(ast),
+            Err(panic) => {
+                let message = panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                    .unwrap_or_else(|| "panic".to_owned());
+                state.add_diagnostic(internal_error(file.as_node(), &message));
+                None
+            }
+        };
+        let diagnostics = std::mem::take(&mut state.diagnostics.diagnostics);
+        let once = std::mem::take(&mut state.diagnostics.once);
+        outputs.push((i, FileOutput { lowered: Lowered { file, ast, diagnostics }, once }));
         if panicked {
-            // rbxts-rs: after a panic this checker may be inconsistent (FOLLOWUPS T1): its group stops here
             break;
         }
     }
-    output.hook_times = host.map(|host| host.times.borrow().clone());
-    output
+    outputs
 }

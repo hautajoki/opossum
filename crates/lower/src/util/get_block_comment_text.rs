@@ -3,7 +3,7 @@
 
 /// JavaScript's `trimStart` / `trimEnd` whitespace (`String.prototype.trim`).
 fn is_js_space(c: char) -> bool {
-    rbxts_luau::is_js_whitespace(c)
+    luau::is_js_whitespace(c)
 }
 
 /// `/^[ \t]*\*/`
