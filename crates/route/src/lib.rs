@@ -247,7 +247,8 @@ fn diag(code: Code, path: &Path, message: String) -> Diag {
 /// Routes one file, given its path relative to the source root. `Ok(None)` for files that never route
 /// (`.d.ts`, dotfiles, docs); the returned module's `file` is `rel`. The outermost route signal governs: a
 /// routing folder (consumed) or an `@key` suffix on a folder or the file (kept, minus the suffix). A later
-/// signal for the same key is an ordinary name; one for another key is `route.nested`.
+/// folder for the same key stays an ordinary folder and a later suffix for it comes off; a signal for another key
+/// is `route.nested`.
 pub fn route(routes: &Routes, rel: &Path) -> Result<Option<Module>, Diag> {
     let mut parts: Vec<&str> = Vec::new();
     for c in rel.components() {
