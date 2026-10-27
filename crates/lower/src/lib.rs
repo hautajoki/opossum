@@ -20,6 +20,8 @@ pub mod source_cache;
 pub mod types;
 pub mod util;
 pub mod vector;
+pub mod ecs;
+pub mod callsite;
 
 pub use groups::{Lowered, lower_files};
 pub use locate::{Location, Locator, Realm};

@@ -5,6 +5,7 @@ use tsrs_ast::{Kind, Node};
 use tsrs_checker::Type;
 use tsrs_core::P;
 
+use crate::callsite::append_callsite;
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
@@ -80,6 +81,7 @@ pub fn transform_call_expression_inner(
     let mut args_prereqs = Prereqs::new();
     let mut args = ensure_transform_order(state, &mut args_prereqs, node_arguments);
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);
+    append_callsite(state, node, node_arguments, &mut args);
 
     if !effects_commute(&get_effects(&expression), &get_effects_of_statements(&args_prereqs.statements)) {
         expression = prereqs.push_to_var(expression, "fn");
@@ -216,9 +218,14 @@ pub fn transform_property_call_expression_inner(
         );
     }
 
+    if let Some(exp) = crate::ecs::transform_world_get(state, prereqs, node, &base_expression, name, node_arguments) {
+        return exp;
+    }
+
     let mut args_prereqs = Prereqs::new();
     let mut args = ensure_transform_order(state, &mut args_prereqs, node_arguments);
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);
+    append_callsite(state, node, node_arguments, &mut args);
 
     let method = is_method(state, expression);
     let key = PropertyKey::Name(name.to_owned());
@@ -300,6 +307,7 @@ pub fn transform_element_call_expression_inner(
     let mut args_prereqs = Prereqs::new();
     let mut args = ensure_transform_order(state, &mut args_prereqs, node_arguments);
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);
+    append_callsite(state, node, node_arguments, &mut args);
     let receiver_type = state.get_type(access.expression);
     let receiver_type = state.checker.get_non_optional_type(receiver_type);
     let key = PropertyKey::Index(add_one_if_array_type(state, receiver_type, argument_exp));

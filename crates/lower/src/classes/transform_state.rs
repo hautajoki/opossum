@@ -102,6 +102,8 @@ pub struct TransformState<'a> {
     pub macro_inputs: Vec<Input>,
     /// Native types: the file's aliases and the type walk's state.
     pub types: crate::types::TypeGen,
+    /// The module-level locals of the jecs lowering ([`crate::ecs`]).
+    pub ecs: crate::ecs::Ecs,
 }
 
 impl<'a> TransformState<'a> {
@@ -147,6 +149,7 @@ impl<'a> TransformState<'a> {
             spans: Vec::new(),
             macro_inputs: Vec::new(),
             types: crate::types::TypeGen::default(),
+            ecs: crate::ecs::Ecs::default(),
         }
     }
 

@@ -212,6 +212,7 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
     {
         header_statements.push(import);
     }
+    header_statements.extend(crate::ecs::module_statements(state));
 
     // Luau directive comments from the source go first, except `--!optimize` (the header sets it) and a blanket
     // `--!native` (`@native` goes on functions); a mode the source sets wins over the header's `--!strict`

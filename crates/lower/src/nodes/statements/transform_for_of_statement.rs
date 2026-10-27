@@ -566,6 +566,10 @@ pub fn transform_for_of_statement(state: &mut TransformState<'_>, node: P<Node>)
         }
     }
 
+    if let Some(statements) = crate::ecs::transform_query_loop(state, node) {
+        return statements;
+    }
+
     if let Some(range_macro_call) = find_range_macro(state, node) {
         return transform_for_of_range_macro(state, node, range_macro_call);
     }

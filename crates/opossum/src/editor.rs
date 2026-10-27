@@ -1,5 +1,6 @@
 //! `.opossum/`: what the editor reads. `tsconfig.json` carries the compiler options lowering uses (the project's own
-//! tsconfig is `{ "extends": "./.opossum/tsconfig.json" }`), `opossum.d.ts` the macro declarations lowering injects.
+//! tsconfig is `{ "extends": "./.opossum/tsconfig.json" }`), `opossum.d.ts` and `vector.d.ts` the declarations
+//! lowering injects.
 
 use std::path::{Path, PathBuf};
 
@@ -11,12 +12,15 @@ pub fn dir(root: &Path) -> PathBuf {
     root.join(DIR)
 }
 
-/// Writes `tsconfig.json` and `opossum.d.ts`, leaving files whose text is already right alone.
+/// Writes `tsconfig.json` and the injected declarations, leaving files whose text is already right alone.
 pub fn write(root: &Path, flags: &[(String, bool)]) -> Result<(), String> {
     let dir = dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     write_if_changed(&dir.join("tsconfig.json"), &tsconfig(root, flags))?;
-    write_if_changed(&dir.join("opossum.d.ts"), lower::overlay::MACROS_D_TS)
+    for (path, text) in lower::program::declarations(&root.to_string_lossy()) {
+        write_if_changed(Path::new(&path), &text)?;
+    }
+    Ok(())
 }
 
 pub fn write_if_changed(path: &Path, text: &str) -> Result<(), String> {
@@ -61,7 +65,7 @@ fn tsconfig(root: &Path, flags: &[(String, bool)]) -> String {
     }
     let config = json!({
         "compilerOptions": options,
-        "include": ["../src", "opossum.d.ts"],
+        "include": ["../src", "opossum.d.ts", "vector.d.ts"],
     });
     let mut text = serde_json::to_string_pretty(&config).unwrap_or_default();
     text.push('\n');

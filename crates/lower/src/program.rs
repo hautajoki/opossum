@@ -112,15 +112,22 @@ pub fn compiler_options(root: &str, flags: &[(String, bool)]) -> Result<Compiler
     Ok(options)
 }
 
+/// The declaration files opossum injects into every program and writes to `.opossum/` for editors, by path: the
+/// compile-time macros with `Callsite`, and the vector library's operator macros.
+pub fn declarations(root: &str) -> [(String, String); 2] {
+    [
+        (macros_file(root), format!("{MACROS_D_TS}{}", crate::callsite::CALLSITE_D_TS)),
+        (crate::vector::declarations_file(root), crate::vector::VECTOR_D_TS.to_owned()),
+    ]
+}
+
 /// Loads the program. `cache` keeps parsed files across loads (watch mode).
 pub fn load(opts: &LoadOptions, cache: Option<&Arc<SourceFileCache>>) -> Result<Project, String> {
     let root = tspath::normalize_path(&opts.root);
     let options = compiler_options(&root, &opts.flags)?;
     let macros = macros_file(&root);
-    let mut files = FxHashMap::default();
-    files.insert(macros.clone(), MACROS_D_TS.to_owned());
     let vector = crate::vector::declarations_file(&root);
-    files.insert(vector.clone(), crate::vector::VECTOR_D_TS.to_owned());
+    let files: FxHashMap<String, String> = declarations(&root).into_iter().collect();
     let fs: Arc<dyn FS> = Arc::new(Overlay { inner: Box::new(bundled::wrap_fs(osvfs::fs())), files });
 
     let mut root_files: Vec<String> = opts.files.iter().map(|f| tspath::normalize_path(f)).collect();
