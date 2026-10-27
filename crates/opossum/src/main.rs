@@ -86,7 +86,7 @@ fn emit(project: &Path, out: &Path) -> Result<bool, String> {
 
     let locator = placeholder_locator(&project);
     let t = Instant::now();
-    let lowered = lower::lower_files(&project, &locator, &sources);
+    let lowered = lower::lower_files(&project, &locator, &lower::Options::default(), &sources);
     let lower_time = t.elapsed();
 
     let t = Instant::now();

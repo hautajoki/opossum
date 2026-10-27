@@ -14,6 +14,7 @@ use crate::classes::diagnostic_service::DiagnosticService;
 use crate::classes::macro_manager::MacroManager;
 use crate::classes::multi_transform_state::MultiTransformState;
 use crate::locate::{Location, Locator};
+use crate::options::Options;
 use crate::program::Project;
 use crate::shared::diagnostics::{errors, internal_error};
 use crate::util::get_block_comment_text::get_block_comment_text;
@@ -51,6 +52,8 @@ pub struct TransformState<'a> {
     pub checker: &'a mut Checker,
     /// Where every module lives once routed.
     pub locator: &'a Locator,
+    /// What the caller turned on.
+    pub options: &'a Options,
     /// Where this file lives; `None` when the locator does not route it (`route.unrouted` at the file, and none of
     /// its requires is made).
     pub location: Option<&'a Location>,
@@ -99,6 +102,7 @@ impl<'a> TransformState<'a> {
     pub fn new(
         project: &'a Project,
         locator: &'a Locator,
+        options: &'a Options,
         checker: &'a mut Checker,
         macro_manager: &'a MacroManager,
         multi_transform_state: &'a mut MultiTransformState,
@@ -111,6 +115,7 @@ impl<'a> TransformState<'a> {
             root: &project.root,
             checker,
             locator,
+            options,
             location: locator.get(source_file.get().file_name()),
             compiler_options: program.options(),
             macro_manager,

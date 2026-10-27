@@ -18,6 +18,7 @@ use crate::classes::multi_transform_state::MultiTransformState;
 use crate::classes::prereqs::reset_temp_ids;
 use crate::classes::transform_state::TransformState;
 use crate::locate::Locator;
+use crate::options::Options;
 use crate::nodes::transform_source_file::transform_source_file;
 use crate::program::Project;
 use crate::shared::diagnostics::internal_error;
@@ -42,7 +43,7 @@ struct FileOutput {
 }
 
 /// Lowers `files`, each on its owner checker; see the module docs. Call from a thread with [`crate::STACK_SIZE`].
-pub fn lower_files(project: &Project, locator: &Locator, files: &[P<SourceFile>]) -> Vec<Lowered> {
+pub fn lower_files(project: &Project, locator: &Locator, options: &Options, files: &[P<SourceFile>]) -> Vec<Lowered> {
     let program = project.program;
     let state = program.pool().state();
     let mut groups: Vec<Vec<(usize, P<SourceFile>)>> = Vec::new();
@@ -59,7 +60,7 @@ pub fn lower_files(project: &Project, locator: &Locator, files: &[P<SourceFile>]
     let slots: Vec<Mutex<Vec<(usize, FileOutput)>>> = groups.iter().map(|_| Mutex::new(Vec::new())).collect();
     program.for_each_checker_parallel(|index, checker| {
         let Some(group) = groups.get(index).filter(|g| !g.is_empty()) else { return };
-        let output = run_group(project, locator, checker, group);
+        let output = run_group(project, locator, options, checker, group);
         *slots[index].lock().unwrap_or_else(PoisonError::into_inner) = output;
     });
 
@@ -94,6 +95,7 @@ pub fn lower_files(project: &Project, locator: &Locator, files: &[P<SourceFile>]
 fn run_group(
     project: &Project,
     locator: &Locator,
+    options: &Options,
     checker: &mut Checker,
     files: &[(usize, P<SourceFile>)],
 ) -> Vec<(usize, FileOutput)> {
@@ -105,7 +107,7 @@ fn run_group(
         // per file, so a file's output depends only on the program, not on what its checker lowered before
         multi.function_effects.clear();
         multi.binding_keys.clear();
-        let mut state = TransformState::new(project, locator, checker, &macro_manager, &mut multi, file);
+        let mut state = TransformState::new(project, locator, options, checker, &macro_manager, &mut multi, file);
         let result = catch_unwind(AssertUnwindSafe(|| transform_source_file(&mut state, file)));
         let panicked = result.is_err();
         let ast = match result {

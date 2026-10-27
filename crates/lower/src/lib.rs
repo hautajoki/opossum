@@ -11,6 +11,7 @@ pub mod groups;
 pub mod locate;
 pub mod macros;
 pub mod nodes;
+pub mod options;
 pub mod overlay;
 pub mod parallel;
 pub mod program;
@@ -20,5 +21,6 @@ pub mod util;
 
 pub use groups::{Lowered, lower_files};
 pub use locate::{Location, Locator, Realm};
+pub use options::Options;
 pub use program::{LoadOptions, Project, STACK_SIZE, compiler_options, load};
 pub use source_cache::SourceFileCache;
