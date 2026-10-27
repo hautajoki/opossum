@@ -118,7 +118,7 @@ pub fn load(opts: &LoadOptions, cache: Option<&Arc<SourceFileCache>>) -> Result<
     let options = compiler_options(&root, &opts.flags)?;
     let macros = macros_file(&root);
     let mut files = FxHashMap::default();
-    files.insert(macros.clone(), MACROS_D_TS.to_owned());
+    files.insert(macros.clone(), format!("{MACROS_D_TS}{}", crate::callsite::CALLSITE_D_TS));
     let fs: Arc<dyn FS> = Arc::new(Overlay { inner: Box::new(bundled::wrap_fs(osvfs::fs())), files });
 
     let mut root_files: Vec<String> = opts.files.iter().map(|f| tspath::normalize_path(f)).collect();

@@ -18,6 +18,7 @@ pub mod program;
 pub mod shared;
 pub mod source_cache;
 pub mod util;
+pub mod callsite;
 
 pub use groups::{Lowered, lower_files};
 pub use locate::{Location, Locator, Realm};
