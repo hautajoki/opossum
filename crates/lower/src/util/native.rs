@@ -1,6 +1,6 @@
-//! Which functions get Luau's `@native` attribute: a `/** @native */` JSDoc on the function, on the variable
-//! statement or property it initializes, or on its class; every function of a file that starts with a `// @native`
-//! pragma or is listed in [`crate::Options::native_files`].
+//! Which functions get Luau's `@native` attribute (with every function nested in them): a `/** @native */` JSDoc on the
+//! function, on the variable statement or property it initializes, or on its class; every function of a file that
+//! starts with a `// @native` pragma or is listed in [`crate::Options::native_files`].
 
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
@@ -69,34 +69,6 @@ pub fn is_native_file(state: &TransformState<'_>) -> bool {
     })
 }
 
-/// Sets the `@native` flag of a lowered function declaration: a `function` or method statement, or the
-/// `local f = TS.async(function …)` form of an async one.
-pub fn set_native_stmt(statement: &mut luau::Stmt) {
-    match statement {
-        luau::Stmt::FunctionDeclaration(node) => node.native = true,
-        luau::Stmt::MethodDeclaration(node) => node.native = true,
-        luau::Stmt::VariableDeclaration(node) => node.right.iter_mut().for_each(set_native_expr),
-        luau::Stmt::Assignment(node) => node.right.iter_mut().for_each(set_native_expr),
-        _ => {}
-    }
-}
-
-/// Sets the `@native` flag of a lowered function expression, or of the function a wrapper call (`TS.async(…)`)
-/// takes.
-pub fn set_native_expr(expression: &mut luau::Expr) {
-    match expression {
-        luau::Expr::Function(node) => node.native = true,
-        luau::Expr::Call(call) => {
-            for arg in &mut call.args {
-                if let luau::Expr::Function(node) = arg {
-                    node.native = true;
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::Options;
@@ -126,8 +98,9 @@ mod tests {
         options.native_files.insert("listed.ts".to_owned());
         let lowered = lower(&[("tagged.ts", tagged), ("pragma.ts", pragma), ("listed.ts", listed)], options);
         let tagged = &lowered["tagged.ts"];
-        // a, b, the constructor and m; not a's closure, not plain; the JSDoc is not echoed as a comment
-        assert_eq!(attributes(tagged), 4, "{tagged}");
+        // a and its closure (Luau compiles natively only functions that carry the attribute), b, the constructor and
+        // m; not plain; the JSDoc is not echoed as a comment
+        assert_eq!(attributes(tagged), 5, "{tagged}");
         assert!(tagged.contains("const b = @native function(x)") && !tagged.contains("-- @native"), "{tagged}");
         // every function, nested ones included, and the pragma is gone
         assert_eq!(attributes(&lowered["pragma.ts"]), 2, "{}", lowered["pragma.ts"]);

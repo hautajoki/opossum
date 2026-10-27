@@ -13,7 +13,7 @@ use crate::nodes::transform_parameters::{TransformedParameters, transform_parame
 use crate::nodes::transform_statement_list::transform_statement_list;
 use crate::shared::diagnostics::errors;
 use crate::util::evaluation::effects::get_function_effects;
-use crate::util::native::{is_native_function, set_native_stmt};
+use crate::util::native::is_native_function;
 use crate::util::symbols::validate_identifier;
 use crate::util::traversal::has_syntactic_modifier;
 use crate::util::wrap_statements_as_generator::wrap_statements_as_generator;
@@ -73,7 +73,7 @@ pub fn transform_function_declaration(state: &mut TransformState<'_>, node: P<No
         create::function_declaration(localize, name, parameters, has_dot_dot_dot, statements)
     };
     if is_native_function(node) {
-        set_native_stmt(&mut declaration);
+        luau::native::mark_native_stmt(&mut declaration);
     }
     vec![declaration]
 }

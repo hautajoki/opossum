@@ -13,7 +13,7 @@ use crate::nodes::transform_parameters::{TransformedParameters, transform_parame
 use crate::nodes::transform_property_name::transform_property_name;
 use crate::nodes::transform_statement_list::transform_statement_list;
 use crate::shared::diagnostics::errors;
-use crate::util::native::{has_native_jsdoc, is_native_function, set_native_stmt};
+use crate::util::native::{has_native_jsdoc, is_native_function};
 use crate::util::symbols::{get_extends_node, get_statements};
 
 const CONSTRUCTOR: &str = "constructor";
@@ -74,7 +74,7 @@ pub fn transform_implicit_class_constructor(
     let mut constructor =
         create::method_declaration(name.clone().into(), CONSTRUCTOR, Vec::new(), has_dot_dot_dot, statements);
     if has_native_jsdoc(node) {
-        set_native_stmt(&mut constructor);
+        luau::native::mark_native_stmt(&mut constructor);
     }
     vec![constructor]
 }
@@ -118,7 +118,7 @@ pub fn transform_class_constructor(state: &mut TransformState<'_>, node: P<Node>
     let mut constructor =
         create::method_declaration(name.clone().into(), CONSTRUCTOR, parameters, has_dot_dot_dot, statements);
     if is_native_function(node) {
-        set_native_stmt(&mut constructor);
+        luau::native::mark_native_stmt(&mut constructor);
     }
     vec![constructor]
 }

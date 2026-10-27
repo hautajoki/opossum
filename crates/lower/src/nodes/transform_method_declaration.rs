@@ -12,7 +12,7 @@ use crate::nodes::transform_property_name::transform_property_name;
 use crate::nodes::transform_statement_list::transform_statement_list;
 use crate::shared::diagnostics::errors;
 use crate::util::is_method::is_method;
-use crate::util::native::{is_native_function, set_native_expr, set_native_stmt};
+use crate::util::native::is_native_function;
 use crate::util::pointer::{Pointer, assign_to_map_pointer};
 use crate::util::traversal::has_syntactic_modifier;
 use crate::util::wrap_statements_as_generator::wrap_statements_as_generator;
@@ -87,7 +87,7 @@ pub fn transform_method_declaration(
             ));
         }
         if native && let Some(declaration) = result.last_mut() {
-            set_native_stmt(declaration);
+            luau::native::mark_native_stmt(declaration);
         }
         return result;
     }
@@ -99,7 +99,7 @@ pub fn transform_method_declaration(
         expression = create::call(callee, vec![expression]);
     }
     if native {
-        set_native_expr(&mut expression);
+        luau::native::mark_native_expr(&mut expression);
     }
 
     // we have to use `class[name] = function()`
