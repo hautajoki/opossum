@@ -151,3 +151,32 @@ fn map_uri<'a>(inst: &'a Instance, map: &str) -> &'a str {
         _ => "",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rbx_dom_weak::InstanceBuilder;
+
+    // The keys must match place/texture-packs.json byte for byte, or packs silently stop applying.
+    #[test]
+    fn pack_keys() {
+        let decal = |maps: &[(&str, &str)]| {
+            let mut b = InstanceBuilder::new("Decal");
+            for &(map, uri) in maps {
+                b = b.with_property(format!("{map}Content"), Content::from_uri(uri));
+            }
+            let dom = rbx_dom_weak::WeakDom::new(b);
+            pack_key(dom.root(), "Decal", &PACKED[2].1)
+        };
+        // A colour alone is a plain decal, never packed.
+        assert_eq!(decal(&[("Texture", "rbxassetid://1")]), None);
+        assert_eq!(
+            decal(&[
+                ("Texture", "rbxassetid://1"),
+                ("NormalMap", "rbxassetid://2")
+            ])
+            .as_deref(),
+            Some("Decal|rbxassetid://1|rbxassetid://2||")
+        );
+    }
+}
