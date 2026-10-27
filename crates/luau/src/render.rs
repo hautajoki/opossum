@@ -269,6 +269,9 @@ impl Renderer<'_> {
                 if node.localize {
                     assert!(node.name.is_any_identifier(), "local function cannot be a property");
                 }
+                if node.native {
+                    self.line("@native");
+                }
                 self.write_indent();
                 if node.localize {
                     self.out.push_str("local ");
@@ -281,6 +284,9 @@ impl Renderer<'_> {
                 self.line("end");
             }
             Stmt::MethodDeclaration(node) => {
+                if node.native {
+                    self.line("@native");
+                }
                 self.write_indent();
                 self.out.push_str("function ");
                 self.expr(&node.expression, Ctx::None);
@@ -294,7 +300,7 @@ impl Renderer<'_> {
             Stmt::VariableDeclaration(node) => {
                 assert!(!node.left.is_empty(), "variable declaration without names");
                 self.write_indent();
-                self.out.push_str("local ");
+                self.out.push_str(if node.constant { "const " } else { "local " });
                 for (i, id) in node.left.iter().enumerate() {
                     if i > 0 {
                         self.out.push_str(", ");
@@ -504,6 +510,9 @@ impl Renderer<'_> {
             }
             Expr::VarArgs => self.out.push_str("..."),
             Expr::Function(node) => {
+                if node.native {
+                    self.out.push_str("@native ");
+                }
                 self.out.push_str("function");
                 self.parameters(&node.parameters, node.has_dot_dot_dot);
                 if node.statements.is_empty() {

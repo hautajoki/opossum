@@ -190,6 +190,8 @@ pub struct FunctionExpression {
     pub statements: Vec<Stmt>,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
+    /// Renders Luau's `@native` attribute before `function`.
+    pub native: bool,
 }
 
 /// `(expression)`; rendered without parentheses when the innermost expression is simple.
@@ -410,6 +412,8 @@ pub struct FunctionDeclaration {
     pub has_dot_dot_dot: bool,
     /// The body.
     pub statements: Vec<Stmt>,
+    /// Renders Luau's `@native` attribute on the line before.
+    pub native: bool,
 }
 
 /// `function expression:name(parameters) statements end`
@@ -425,15 +429,19 @@ pub struct MethodDeclaration {
     pub has_dot_dot_dot: bool,
     /// The body.
     pub statements: Vec<Stmt>,
+    /// Renders Luau's `@native` attribute on the line before.
+    pub native: bool,
 }
 
-/// `local left[ = right]`
+/// `local left[ = right]`, or `const left = right`
 #[derive(Clone, Debug, PartialEq)]
 pub struct VariableDeclaration {
     /// Not empty.
     pub left: Vec<AnyIdentifier>,
     /// Empty for `local a` (no initializer).
     pub right: Vec<Expr>,
+    /// Renders `const`: no name is ever assigned after the declaration (set by [`crate::mark_const_locals`]).
+    pub constant: bool,
 }
 
 /// `return expressions` (comma-separated).
