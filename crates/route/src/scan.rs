@@ -26,7 +26,8 @@ pub struct Where<'a> {
 /// Walks `root`, routes every source file and checks the routed tree. Dotfiles and dot-directories are skipped.
 pub fn scan(root: &Path, routes: &Routes) -> Scan {
     let mut files = Vec::new();
-    walk(root, &mut PathBuf::new(), &mut files);
+    let mut walked = vec![fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())];
+    walk(root, &mut PathBuf::new(), &mut walked, &mut files);
     scan_files(root, files, routes)
 }
 
@@ -84,8 +85,10 @@ pub fn scan_files(root: &Path, files: Vec<PathBuf>, routes: &Routes) -> Scan {
     s
 }
 
-/// Appends every file under `dir` to `out`, relative to the root, in name order.
-fn walk(dir: &Path, rel: &mut PathBuf, out: &mut Vec<PathBuf>) {
+/// Appends every file under `dir` to `out`, relative to the root, in name order. A linked directory is followed
+/// only when its target neither holds nor lies in the root or a directory followed before (`walked`), so
+/// link cycles end and no file is walked twice through a link.
+fn walk(dir: &Path, rel: &mut PathBuf, walked: &mut Vec<PathBuf>, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -100,14 +103,23 @@ fn walk(dir: &Path, rel: &mut PathBuf, out: &mut Vec<PathBuf>) {
             continue;
         };
         if ft.is_symlink() {
-            match fs::metadata(e.path()) {
-                Ok(m) => ft = m.file_type(),
-                Err(_) => continue,
+            let Ok(m) = fs::metadata(e.path()) else {
+                continue;
+            };
+            if m.is_dir() {
+                let Ok(target) = fs::canonicalize(e.path()) else {
+                    continue;
+                };
+                if walked.iter().any(|w| target.starts_with(w) || w.starts_with(&target)) {
+                    continue;
+                }
+                walked.push(target);
             }
+            ft = m.file_type();
         }
         rel.push(&name);
         if ft.is_dir() {
-            walk(&e.path(), rel, out);
+            walk(&e.path(), rel, walked, out);
         } else if ft.is_file() {
             out.push(rel.clone());
         }
