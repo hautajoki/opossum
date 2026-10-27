@@ -30,6 +30,9 @@ rustc-hash = "2"
 luau = { path = "crates/luau" }
 lower = { path = "crates/lower" }
 route = { path = "crates/route" }
+place = { path = "crates/place" }
+sync = { path = "crates/sync" }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
 
 # A debug checker is unusably slow, so even dev builds are optimised (as in tsrs).
 [profile.dev]
