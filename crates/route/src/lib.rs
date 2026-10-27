@@ -25,14 +25,13 @@ pub enum Kind {
     Json,
 }
 
-/// Script classes with Rojo's legacy semantics (RunContext Legacy): a Script runs only under Workspace and
-/// ServerScriptService, a LocalScript only under the Starter containers and ReplicatedFirst, so a script template
-/// kept in ReplicatedStorage stays inert until something clones it into place.
+/// `Server` and `Client` are Scripts with that RunContext: they run wherever they land, so a script inside a module
+/// is a template (`Module::template`), mounted disabled for its module to clone and enable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Class {
     ModuleScript,
-    Script,
-    LocalScript,
+    Server,
+    Client,
 }
 
 /// What routed a module: a routing folder, an `@key` name suffix, or the `*` fallback.
@@ -111,6 +110,8 @@ pub struct Module {
     pub via: Via,
     /// The `.d.ts` that gives this Luau module its types.
     pub types: Option<PathBuf>,
+    /// A script inside a module: mounted with `Enabled = false`.
+    pub template: bool,
 }
 
 impl Module {
@@ -218,8 +219,8 @@ fn file_type(name: &str) -> Option<FileType<'_>> {
     };
     let (stem, class) = match (stem.strip_suffix(".server"), stem.strip_suffix(".client")) {
         _ if kind == Kind::Json => (stem, Class::ModuleScript),
-        (Some(s), _) => (s, Class::Script),
-        (_, Some(s)) => (s, Class::LocalScript),
+        (Some(s), _) => (s, Class::Server),
+        (_, Some(s)) => (s, Class::Client),
         _ => (stem, Class::ModuleScript),
     };
     let init = match kind {
@@ -364,6 +365,7 @@ pub fn route(routes: &Routes, rel: &Path) -> Result<Option<Module>, Diag> {
         route,
         via,
         types: None,
+        template: false,
     }))
 }
 

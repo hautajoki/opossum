@@ -81,6 +81,11 @@ pub fn scan_files(root: &Path, files: Vec<PathBuf>, routes: &Routes) -> Scan {
         }
     }
 
+    // A script under another module is a template that module clones.
+    let homes: HashSet<Vec<String>> = s.modules.iter().map(|m| m.instance.clone()).collect();
+    for m in &mut s.modules {
+        m.template = m.class != Class::ModuleScript && (1..m.instance.len()).any(|k| homes.contains(&m.instance[..k]));
+    }
     check(&s.modules, routes, root, &mut s.diags);
     s
 }
@@ -198,9 +203,9 @@ fn check(modules: &[Module], routes: &Routes, root: &Path, diags: &mut Vec<Diag>
         }
     }
 
-    // A script under a module is a template the module clones into place, so only loose scripts can be dead.
-    for m in modules.iter().filter(|m| m.class != Class::ModuleScript) {
-        if (1..m.instance.len()).any(|k| at.contains_key(&m.instance[..k])) || runs_at(m.class, &m.instance) {
+    // Templates are cloned into place by their module, so only loose scripts can be dead.
+    for m in modules.iter().filter(|m| m.class != Class::ModuleScript && !m.template) {
+        if runs_at(m.class, &m.instance) {
             continue;
         }
         diags.push(Diag {
@@ -236,19 +241,12 @@ fn check(modules: &[Module], routes: &Routes, root: &Path, diags: &mut Vec<Diag>
     }
 }
 
-/// Whether a script of this class runs where it lands, under legacy RunContext.
+/// Whether a RunContext script runs where it lands: ServerStorage never runs scripts, and the client never sees
+/// the server-only services.
 fn runs_at(class: Class, instance: &[String]) -> bool {
-    let service = instance[0].as_str();
     match class {
-        Class::Script => matches!(service, "Workspace" | "ServerScriptService"),
-        Class::LocalScript => {
-            matches!(service, "StarterGui" | "StarterPack" | "ReplicatedFirst")
-                || service == "StarterPlayer"
-                    && matches!(
-                        instance.get(1).map(String::as_str),
-                        Some("StarterPlayerScripts" | "StarterCharacterScripts")
-                    )
-        }
+        Class::Server => instance[0] != "ServerStorage",
+        Class::Client => !matches!(instance[0].as_str(), "ServerStorage" | "ServerScriptService"),
         Class::ModuleScript => true,
     }
 }

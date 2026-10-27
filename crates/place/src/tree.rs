@@ -29,7 +29,6 @@ pub enum ScriptKind {
     Server,
     /// A Script with RunContext Client.
     Client,
-    Local,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,7 +155,6 @@ impl Place {
             ScriptKind::Module => ("ModuleScript", None),
             ScriptKind::Server => ("Script", Some("Server")),
             ScriptKind::Client => ("Script", Some("Client")),
-            ScriptKind::Local => ("LocalScript", None),
         };
         let r = match self.child(parent, last) {
             Some(r) if self.is_owned(r) => r,
@@ -192,6 +190,13 @@ impl Place {
             None => self.files.remove(&r),
         };
         Ok(r)
+    }
+
+    /// Mounts a script template disabled, for the module that clones it to enable the copy.
+    pub fn disable(&mut self, r: Ref) {
+        if let Some(inst) = self.dom.get_by_ref_mut(r) {
+            inst.properties.insert("Enabled".into(), Variant::Bool(false));
+        }
     }
 
     /// Walks `dirs` from the DataModel, making owned folders (or the service, or a nested container such as

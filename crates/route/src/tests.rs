@@ -88,7 +88,7 @@ fn names_drop_suffixes_and_extensions() {
     let m = route(&r, Path::new("server/boot@server.server.luau")).unwrap().unwrap();
     assert_eq!(
         (m.instance.join("/"), m.class),
-        ("ServerScriptService/server/boot".into(), Class::Script)
+        ("ServerScriptService/server/boot".into(), Class::Server)
     );
     for never in [
         "shared/x.d.ts",
@@ -113,7 +113,7 @@ fn init_files_make_the_folder_the_module() {
     let m = route(&r, Path::new("app/server/index.server.ts")).unwrap().unwrap();
     assert_eq!(
         (m.instance.join("/"), m.class, m.init),
-        ("ServerScriptService/server/app".into(), Class::Script, true)
+        ("ServerScriptService/server/app".into(), Class::Server, true)
     );
     assert_eq!(
         at(
@@ -156,9 +156,9 @@ fn tree_clashes() {
             "c/shared/thing.ts",
             "k/core/init.luau", // core/shared is consumed, so its init lands on core
             "k/core/shared/init.luau",
-            "w/worker.server.luau", // a loose Script in ReplicatedStorage never runs
+            "w/server/worker.client.luau", // the client never sees ServerScriptService
             "p/init.luau",
-            "p/worker.server.luau", // a template its module clones
+            "p/worker.client.luau", // a template its module clones, client scripts run in ReplicatedStorage
         ],
     );
     assert_eq!(
@@ -167,10 +167,12 @@ fn tree_clashes() {
             ("tree.instanceClash", "a/shared/x.ts".into()),
             ("tree.instanceClash", "b/y.ts".into()),
             ("tree.instanceClash", "k/core/shared/init.luau".into()),
-            ("tree.deadScript", "w/worker.server.luau".into()),
+            ("tree.deadScript", "w/server/worker.client.luau".into()),
             ("scan.portableName", "c/shared/thing.ts".into()),
         ]
     );
+    assert!(s.find(Path::new("p/worker.client.luau")).unwrap().template);
+    assert!(!s.find(Path::new("w/server/worker.client.luau")).unwrap().template);
 }
 
 #[test]
