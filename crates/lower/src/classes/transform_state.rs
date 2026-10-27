@@ -188,17 +188,19 @@ impl<'a> TransformState<'a> {
     /// `getLeadingComments`: the comments before `pos` (a node's full start), as Luau comments.
     pub fn get_leading_comments_at(&self, pos: u32) -> Vec<Stmt> {
         tsrs_scanner::get_leading_comment_ranges(self.source_file_text, pos)
-            .map(|range| {
+            .filter_map(|range| {
                 let (start, end) = (
                     range.text_range.pos().expect_source("comment") as usize,
                     range.text_range.end().expect_source("comment") as usize,
                 );
                 let source = &self.source_file_text[start..end];
-                create::comment(if range.kind == Kind::SingleLineCommentTrivia {
+                let text = if range.kind == Kind::SingleLineCommentTrivia {
                     source[2..].to_owned()
                 } else {
                     get_block_comment_text(source)
-                })
+                };
+                // a comment that only says `@native` became the attribute
+                (!crate::util::native::is_native_directive(&text)).then(|| create::comment(text))
             })
             .collect()
     }

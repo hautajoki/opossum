@@ -11,6 +11,7 @@ use crate::nodes::expressions::transform_identifier::{renamed_binding, transform
 use crate::nodes::transform_property_name::property_name_key;
 use crate::nodes::transform_statement_list::transform_statement_list;
 use crate::shared::diagnostics::errors;
+use crate::util::native::is_native_file;
 use crate::util::symbols::{get_original_symbol_of_node, is_symbol_mutable, is_symbol_of_value};
 use crate::util::traversal::{get_ancestor, has_declare_modifier};
 
@@ -196,26 +197,45 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
         statements.push(create::return_stmt(Expr::Nil));
     }
 
-    let mut header_statements = vec![create::comment("!optimize 2")];
+    if is_native_file(state) {
+        luau::native::mark_native_functions(&mut statements);
+    }
+
+    let mut header_statements = Vec::new();
     if state.uses_runtime_lib
         && let Some(import) = state.create_runtime_lib_import()
     {
         header_statements.push(import);
     }
 
-    // Luau directive comments like --!strict go before the header
+    // Luau directive comments from the source go first, except `--!optimize` (the header sets it) and a blanket
+    // `--!native` (`@native` goes on functions); a mode the source sets wins over the header's `--!strict`
     let directive_count =
         statements.iter().take_while(|s| matches!(s, Stmt::Comment(text) if text.starts_with('!'))).count();
-    let directives: Vec<Stmt> = statements.drain(..directive_count).collect();
-    let header_len = header_statements.len();
-    statements.splice(0..0, header_statements);
-    statements.splice(0..0, directives);
-    // the spans index the body: shift them past `local exports` and the header (directives keep their place)
+    let mut directives: Vec<Stmt> = statements.drain(..directive_count).collect();
+    directives.retain(|s| !matches!(s, Stmt::Comment(text) if ["optimize", "native"].contains(&directive_name(text))));
+    let has_mode = directives.iter().any(
+        |s| matches!(s, Stmt::Comment(text) if ["strict", "nonstrict", "nocheck"].contains(&directive_name(text))),
+    );
+    if state.options.native_types && !has_mode {
+        directives.insert(0, create::comment("!strict"));
+    }
+    directives.push(create::comment("!optimize 2"));
+    // the spans index the body: shift them past `local exports`, the header and the rewritten directives
+    let shift = directives.len() + header_statements.len();
     for span in &mut state.spans {
         span.0 += usize::from(exports_first);
         if span.0 >= directive_count {
-            span.0 += header_len;
+            span.0 = span.0 - directive_count + shift;
         }
     }
+    statements.splice(0..0, header_statements);
+    statements.splice(0..0, directives);
+    luau::mark_const_locals(&mut statements);
     statements
+}
+
+/// `strict` of `!strict`, `optimize` of `!optimize 2`.
+fn directive_name(text: &str) -> &str {
+    text[1..].split_whitespace().next().unwrap_or("")
 }

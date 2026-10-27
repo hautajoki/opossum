@@ -496,3 +496,35 @@ fn statement_lines() {
     assert_eq!(luau, "--a\nlocal function f()\n\tg()\nend\nlocal x = 1\n");
     assert_eq!(lines, vec![1, 2, 5]);
 }
+
+#[test]
+fn const_locals_follow_luau_scoping_and_every_write() {
+    let local = |name: &str, value: Expr| crate::create::local(any_id(name), Some(value));
+    let set = |name: &str, op: &str, value: Expr| assignment(id(name), AssignmentOperator::parse(op).unwrap(), value);
+    let mut statements = vec![
+        // shadowed: only the inner `a` is written
+        local("a", number(1.0)),
+        do_stmt(vec![local("a", number(2.0)), set("a", "=", number(3.0))]),
+        // written from a closure, by a compound assignment, by a global-style function declaration
+        local("b", number(1.0)),
+        local("f", function(Vec::new(), false, vec![set("b", "+=", number(1.0))])),
+        local("c", string("x")),
+        set("c", "..=", string("y")),
+        local("g", nil()),
+        function_declaration(false, id("g"), Vec::new(), false, Vec::new()),
+        // a `repeat` body's local is visible in its `until`; Luau needs a value per name
+        repeat_stmt(vec![local("r", number(1.0))], id("r")),
+        locals(vec![any_id("p"), any_id("q")], vec![number(1.0)]),
+        locals(vec![any_id("s"), any_id("t")], vec![call(id("pair"), Vec::new())]),
+        print(vec![id("a"), id("f"), id("c"), id("g"), id("p"), id("q"), id("s"), id("t")]),
+    ];
+    assert_eq!(mark_const_locals(&mut statements), 4);
+    let text = render_lines(statements);
+    assert_eq!(
+        text,
+        "const a = 1\ndo\n\tlocal a = 2\n\ta = 3\nend\nlocal b = 1\nconst f = function()\n\tb += 1\nend\nlocal c = \"x\"\n\
+         c ..= \"y\"\nlocal g = nil\nfunction g()\nend\nrepeat\n\tconst r = 1\nuntil r\nlocal p, q = 1\nconst s, t = pair()\n\
+         print(a, f, c, g, p, q, s, t)\n"
+    );
+    crate::gate::compile(&text, 2, 1).unwrap();
+}

@@ -196,6 +196,10 @@ pub fn transform_identifier(state: &mut TransformState<'_>, node: P<Node>) -> Ex
         return Expr::None;
     }
 
+    if let Some(literal) = crate::util::inline_constants::inline_constant(state, node, symbol) {
+        return literal;
+    }
+
     // exit here for export let so we don't check hoist later
     if let Some(value_declaration) = symbol.value_declaration()
         && tsrs_ast::get_source_file_of_node(value_declaration) == tsrs_ast::get_source_file_of_node(node)

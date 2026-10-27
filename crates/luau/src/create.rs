@@ -177,7 +177,13 @@ pub fn if_expr(condition: Expr, expression: Expr, alternative: Expr) -> Expr {
 
 /// `function(parameters[, ...]) statements end`
 pub fn function(parameters: Vec<AnyIdentifier>, has_dot_dot_dot: bool, statements: Vec<Stmt>) -> Expr {
-    Expr::Function(Box::new(FunctionExpression { parameters, has_dot_dot_dot, statements, facts: Facts::default() }))
+    Expr::Function(Box::new(FunctionExpression {
+        parameters,
+        has_dot_dot_dot,
+        statements,
+        facts: Facts::default(),
+        native: false,
+    }))
 }
 
 /// `...`
@@ -206,12 +212,13 @@ pub fn local(left: impl Into<AnyIdentifier>, right: Option<Expr>) -> Stmt {
     Stmt::VariableDeclaration(Box::new(VariableDeclaration {
         left: vec![left.into()],
         right: right.into_iter().collect(),
+        constant: false,
     }))
 }
 
 /// `local a, b = x, y`
 pub fn locals(left: Vec<AnyIdentifier>, right: Vec<Expr>) -> Stmt {
-    Stmt::VariableDeclaration(Box::new(VariableDeclaration { left, right }))
+    Stmt::VariableDeclaration(Box::new(VariableDeclaration { left, right, constant: false }))
 }
 
 /// `return expression`
@@ -257,7 +264,14 @@ pub fn function_declaration(
     has_dot_dot_dot: bool,
     statements: Vec<Stmt>,
 ) -> Stmt {
-    Stmt::FunctionDeclaration(Box::new(FunctionDeclaration { localize, name, parameters, has_dot_dot_dot, statements }))
+    Stmt::FunctionDeclaration(Box::new(FunctionDeclaration {
+        localize,
+        name,
+        parameters,
+        has_dot_dot_dot,
+        statements,
+        native: false,
+    }))
 }
 
 /// `function expression:name(parameters) statements end`
@@ -274,6 +288,7 @@ pub fn method_declaration(
         parameters,
         has_dot_dot_dot,
         statements,
+        native: false,
     }))
 }
 

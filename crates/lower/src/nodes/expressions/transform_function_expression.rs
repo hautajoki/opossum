@@ -13,6 +13,7 @@ use crate::nodes::transform_statement_list::transform_statement_list;
 use crate::shared::diagnostics::errors;
 use crate::util::evaluation::effects::get_function_effects;
 use crate::util::evaluation::facts::set_call_effects;
+use crate::util::native::is_native_function;
 use crate::util::traversal::has_syntactic_modifier;
 use crate::util::wrap_statements_as_generator::wrap_statements_as_generator;
 
@@ -43,6 +44,9 @@ pub fn transform_function_expression(state: &mut TransformState<'_>, node: P<Nod
 
     let effects = (!is_async && !is_generator).then(|| get_function_effects(&parameters, &statements));
     let mut expression = create::function(parameters, has_dot_dot_dot, statements);
+    if is_native_function(node) {
+        luau::native::mark_native_expr(&mut expression);
+    }
 
     if is_async {
         let callee = state.ts("async");

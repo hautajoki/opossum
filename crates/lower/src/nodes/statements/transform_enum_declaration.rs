@@ -35,6 +35,10 @@ pub fn transform_enum_declaration(state: &mut TransformState<'_>, node: P<Node>)
     if has_syntactic_modifier(node, ModifierFlags::Const) && !state.compiler_options.preserve_const_enums.is_true() {
         return Vec::new();
     }
+    // every use of its members was inlined
+    if crate::util::inline_constants::is_enum_table_unused(state, node) {
+        return Vec::new();
+    }
 
     let declaration = node.as_enum_declaration();
     let symbol = state.checker.get_symbol_at_location_exported(declaration.name);
