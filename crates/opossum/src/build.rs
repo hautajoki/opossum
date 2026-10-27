@@ -135,7 +135,8 @@ fn requires_runtime(ast: &[Stmt], runtime: &ModulePath) -> bool {
 impl Session {
     /// A session for `cfg`, with the `[profile.<name>]` excludes when a profile is given.
     pub fn new(cfg: Config, profile: Option<&str>) -> Result<Session, String> {
-        let git = inputs::start_git(&cfg.root);
+        // from the real source directory: the repository is the one that holds the code, even through a link
+        let git = inputs::start_git(&cfg.src().canonicalize().unwrap_or_else(|_| cfg.root.clone()));
         let exclude = match profile {
             Some(name) => globs(&cfg.profile(name)?.exclude, &format!("[profile.{name}] exclude"))?,
             None => GlobSet::empty(),
