@@ -1,5 +1,5 @@
 //! `nodes/statements/transformForStatement.ts`: `for (init; condition; incrementor)` as a numeric `for` loop when
-//! `--optimizedLoops` allows it, otherwise as a `while` loop.
+//! that is provably the same loop, otherwise as a `while` loop.
 
 use luau::{AssignmentOperator, ElseBody, Expr, IfStatement, Stmt, UnaryOperator, create};
 use rustc_hash::FxHashSet;
@@ -16,6 +16,8 @@ use crate::nodes::transform_statement_list::transform_body;
 use crate::shared::diagnostics::errors;
 use crate::util::create_truthiness_checks::create_truthiness_checks;
 use crate::util::get_constant_integer::get_constant_integer;
+use crate::util::loop_bounds::{is_integral, is_invariant};
+use crate::util::types::{is_definitely_type, is_number_type};
 use crate::util::get_declared_variables::get_declared_variables;
 use crate::util::get_literal_number_value::get_literal_number_value;
 use crate::util::offset::offset;
@@ -364,8 +366,12 @@ fn is_mutated_in_body(state: &mut TransformState<'_>, identifier: P<Node>, body:
     symbol_references_in(state, identifier, body).into_iter().any(tsrs_ast::is_write_access)
 }
 
-/// `transformForStatementOptimized`: `for i = start, end, step do`, when the loop variable is a `let` with constant
-/// integer start, bound and step, and the body never writes it.
+/// `for i = start, end, step do` for `for (let i = a; i < b; i += k)` (`<=`, `>`, `>=`, `++`, `--`, `-=` too) when
+/// it is provably the same loop: `i` is a number the body never writes, `k` a nonzero constant integer whose sign
+/// matches the comparison, and `b` invariant ([`is_invariant`]), so a numeric `for` may read it once. Luau's numeric
+/// `for` makes a fresh `i` per iteration, as `let` does, and steps it by repeated addition, as `i += k` does. A strict
+/// comparison becomes `<=` / `>=` on integers: `a` must be [`is_integral`], and `b` is too or is rounded
+/// (`i < b` is `i <= math.ceil(b) - 1`).
 fn transform_for_statement_optimized(state: &mut TransformState<'_>, node: P<Node>) -> Option<Vec<Stmt>> {
     let for_statement = node.as_for_statement();
     let (initializer, condition, incrementor, statement) =
@@ -387,8 +393,10 @@ fn transform_for_statement_optimized(state: &mut TransformState<'_>, node: P<Nod
     }
 
     let id_symbol = symbol_of(state, dec_name);
-
-    get_constant_integer(state, dec_init, false)?;
+    let id_type = state.get_type(dec_name);
+    if !is_definitely_type(state, id_type, &[&is_number_type]) {
+        return None;
+    }
 
     // require a nonzero constant step that updates the declared loop variable
 
@@ -412,11 +420,15 @@ fn transform_for_statement_optimized(state: &mut TransformState<'_>, node: P<Nod
         _ => return None,
     }
 
-    get_constant_integer(state, bound, false)?;
-
-    if is_mutated_in_body(state, dec_name, statement) {
+    if is_mutated_in_body(state, dec_name, statement) || !is_invariant(state, bound, node) {
         return None;
     }
+
+    let strict = matches!(operator, Kind::LessThanToken | Kind::GreaterThanToken);
+    if strict && !is_integral(state, dec_init) {
+        return None;
+    }
+    let integral_bound = !strict || is_integral(state, bound);
 
     // commit to the optimization and start transforming..
 
@@ -424,10 +436,9 @@ fn transform_for_statement_optimized(state: &mut TransformState<'_>, node: P<Nod
 
     let mut start_prereqs = Prereqs::new();
     let start = transform_expression(state, &mut start_prereqs, dec_init);
-    assert!(start_prereqs.statements.is_empty(), "a constant loop start has no prerequisites");
     let mut end_prereqs = Prereqs::new();
     let mut end = transform_expression(state, &mut end_prereqs, bound);
-    assert!(end_prereqs.statements.is_empty(), "a constant loop bound has no prerequisites");
+    assert!(end_prereqs.statements.is_empty(), "an invariant loop bound has no prerequisites");
 
     let mut step = create::number(increment.value);
     if let Some(step_expression) = increment.expression {
@@ -443,13 +454,24 @@ fn transform_for_statement_optimized(state: &mut TransformState<'_>, node: P<Nod
 
     let statements = transform_body(state, statement);
 
+    if !integral_bound {
+        let round = if operator == Kind::LessThanToken { "ceil" } else { "floor" };
+        end = create::call(create::property(create::id("math"), round), vec![end]);
+    }
     if operator == Kind::LessThanToken {
         end = offset(end, -1.0);
     } else if operator == Kind::GreaterThanToken {
         end = offset(end, 1.0);
     }
 
-    Some(vec![create::numeric_for(id, start, end, Some(step), statements)])
+    let numeric_for = create::numeric_for(id, start, end, Some(step), statements);
+    if start_prereqs.statements.is_empty() {
+        Some(vec![numeric_for])
+    } else {
+        let mut block = start_prereqs.statements;
+        block.push(numeric_for);
+        Some(vec![create::do_stmt(block)])
+    }
 }
 
 /// `transformForStatement`
