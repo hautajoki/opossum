@@ -63,22 +63,22 @@ fn file_json_becomes_a_table_and_a_path_into_it_a_literal() {
         "export const data = $file(\"../data.json\");\nexport const on: boolean = $file(\"../data.json\").inner.on;\n\
          export const third: number = $file(\"../data.json\").list[2];\n",
         &[("data.json", json)],
-        lower::Options::default(),
+        lower::Options { native_types: false, ..lower::Options::default() },
     );
     assert_eq!(diagnostics, Vec::<String>::new());
     // members in file order, a null member left out, a null element kept as nil
     assert!(luau.contains("name = \"deep\""), "{luau}");
     assert!(luau.contains("list = { 1, nil, 2.5 }"), "{luau}");
     assert!(!luau.contains("gone"), "{luau}");
-    assert!(luau.contains("local on = true"), "{luau}");
+    assert!(luau.contains("const on = true"), "{luau}");
     // a TS index is 0-based like the JSON array, so it folds without the Luau offset
-    assert!(luau.contains("local third = 2.5"), "{luau}");
+    assert!(luau.contains("const third = 2.5"), "{luau}");
     assert!(matches!(inputs.as_slice(), [Input::File(path)] if path.ends_with("/file_json/data.json")), "{inputs:?}");
 }
 
 #[test]
 fn env_falls_back_only_when_the_variable_is_unset() {
-    let mut options = lower::Options::default();
+    let mut options = lower::Options { native_types: false, ..lower::Options::default() };
     options.env.insert("SET".into(), "from env".into());
     let (luau, inputs, diagnostics) = lower_one(
         "env_fallback",
@@ -87,9 +87,9 @@ fn env_falls_back_only_when_the_variable_is_unset() {
         options,
     );
     assert_eq!(diagnostics, Vec::<String>::new());
-    assert!(luau.contains("local a = \"from env\""), "{luau}");
-    assert!(luau.contains("local b = \"yes\""), "{luau}");
-    assert!(luau.contains("local c = nil"), "{luau}");
+    assert!(luau.contains("const a = \"from env\""), "{luau}");
+    assert!(luau.contains("const b = \"yes\""), "{luau}");
+    assert!(luau.contains("const c = nil"), "{luau}");
     assert_eq!(inputs, [Input::Env("SET".into()), Input::Env("UNSET".into())]);
 }
 
@@ -99,9 +99,9 @@ fn keys_lists_optional_members_in_declaration_order() {
         "keys_optional",
         "interface Shape { b: number; a?: string; readonly c?: boolean; 0: number }\nexport const k = $keys<Shape>();\n",
         &[],
-        lower::Options::default(),
+        lower::Options { native_types: false, ..lower::Options::default() },
     );
     assert_eq!(diagnostics, Vec::<String>::new());
-    assert!(luau.contains("local k = { \"b\", \"a\", \"c\" }"), "{luau}");
+    assert!(luau.contains("const k = { \"b\", \"a\", \"c\" }"), "{luau}");
     assert!(inputs.is_empty());
 }
