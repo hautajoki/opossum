@@ -12,9 +12,16 @@ path = "src/main.rs"
 [dependencies]
 lower.workspace = true
 luau.workspace = true
+route.workspace = true
+place.workspace = true
+sync.workspace = true
 tsrs_core.workspace = true
 tsrs_ast.workspace = true
 tsrs_compiler.workspace = true
 tsrs_diagnostics.workspace = true
 mimalloc-safe.workspace = true
 rustc-hash.workspace = true
+serde_json.workspace = true
+toml = { version = "1.1.8", features = ["preserve_order"] }
+globset = "0.4"
+notify = { version = "8.2.0", default-features = false, features = ["macos_fsevent"] }
