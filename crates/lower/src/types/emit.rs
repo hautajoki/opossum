@@ -133,11 +133,10 @@ pub(super) fn alias_of(state: &mut TransformState<'_>, symbol: P<Symbol>) -> Opt
         name
     };
     let file_name = file.get().file_name();
-    let owner = match (own, exported) {
-        (false, Some(_)) if !file_name.ends_with(".d.ts") => {
-            state.locator.get(file_name).map(|location| (location.module.clone(), base))
-        }
-        _ => None,
+    let owner = if !own && exported && !file_name.ends_with(".d.ts") {
+        state.locator.get(file_name).map(|location| (location.module.clone(), base))
+    } else {
+        None
     };
     let params = if symbol.flags().intersects(SymbolFlags::Enum) {
         Vec::new()
@@ -160,7 +159,7 @@ pub(super) fn alias_of(state: &mut TransformState<'_>, symbol: P<Symbol>) -> Opt
     state.types.aliases.push(Alias {
         symbol,
         name,
-        export: own && exported.is_some(),
+        export: own && exported,
         params,
         param_names,
         defaults: Vec::new(),

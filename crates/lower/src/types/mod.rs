@@ -82,7 +82,16 @@ fn signature(
 ) -> Box<Signature> {
     start(state);
     let saved = state.types.scope.len();
-    // the type parameters of this function and of the functions around it are in scope in Luau too
+    let generics = bind_enclosing(state, node);
+    let mut sig = Box::new(Signature { generics, ..Signature::default() });
+    fill_signature(state, node, parameters, has_dot_dot_dot, body_returns, &mut sig);
+    state.types.scope.truncate(saved);
+    sig
+}
+
+/// Puts in scope the type parameters of `node` and of every function around it, outermost first, since Luau
+/// sees those generics too; returns the names of `node`'s own (none unless it is a function).
+fn bind_enclosing(state: &mut TransformState<'_>, node: P<Node>) -> Vec<String> {
     let mut binders = Vec::new();
     let mut at = Some(node);
     while let Some(n) = at {
@@ -91,18 +100,12 @@ fn signature(
         }
         at = n.parent();
     }
+    let mut names = Vec::new();
     for &binder in binders.iter().rev() {
         let params = type_parameters_of(state, binder);
-        let names = emit::bind(state, &params);
-        if binder == node {
-            let mut sig = Box::new(Signature { generics: names, ..Signature::default() });
-            fill_signature(state, node, parameters, has_dot_dot_dot, body_returns, &mut sig);
-            state.types.scope.truncate(saved);
-            return sig;
-        }
+        names = emit::bind(state, &params);
     }
-    state.types.scope.truncate(saved);
-    Box::default()
+    if binders.first() == Some(&node) { names } else { Vec::new() }
 }
 
 fn type_parameters_of(state: &mut TransformState<'_>, node: P<Node>) -> Vec<P<TsType>> {
@@ -241,20 +244,8 @@ fn written_variable_type(state: &mut TransformState<'_>, identifier: P<Node>) ->
     }
     let written = declaration.type_node()?;
     let t = state.checker.get_type_from_type_node_exported(written);
-    // types in the declaration's scope are the ones of the functions around it
     let saved = state.types.scope.len();
-    let mut binders = Vec::new();
-    let mut at = declaration.parent();
-    while let Some(n) = at {
-        if tsrs_ast::is_function_like(n) {
-            binders.push(n);
-        }
-        at = n.parent();
-    }
-    for &binder in binders.iter().rev() {
-        let params = type_parameters_of(state, binder);
-        emit::bind(state, &params);
-    }
+    bind_enclosing(state, declaration);
     let ty = emit::ty(state, t);
     state.types.scope.truncate(saved);
     Some(ty)
@@ -347,15 +338,12 @@ fn start(state: &mut TransformState<'_>) {
 
 /// Whether `symbol` is declared by `export` at the top level of a source file, which then declares its alias as
 /// `export type`.
-fn is_exported_declaration(symbol: P<Symbol>) -> Option<P<Node>> {
-    let [declaration] = symbol.declarations() else { return None };
-    let declaration = *declaration;
-    let flags = tsrs_ast::get_combined_modifier_flags(declaration);
-    let top_level = declaration.parent().is_some_and(|p| p.kind() == Kind::SourceFile);
-    (top_level
+fn is_exported_declaration(symbol: P<Symbol>) -> bool {
+    let [declaration] = symbol.declarations() else { return false };
+    let flags = tsrs_ast::get_combined_modifier_flags(*declaration);
+    declaration.parent().is_some_and(|p| p.kind() == Kind::SourceFile)
         && flags.intersects(ModifierFlags::Export)
-        && !flags.intersects(ModifierFlags::Default | ModifierFlags::Ambient))
-    .then_some(declaration)
+        && !flags.intersects(ModifierFlags::Default | ModifierFlags::Ambient)
 }
 
 /// The top-level locals bound to a module: `local m = require(path)`, by path.
