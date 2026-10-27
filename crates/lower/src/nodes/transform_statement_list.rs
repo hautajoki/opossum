@@ -81,7 +81,6 @@ pub fn transform_statement_list_with_exports(
     let remove_comments = state.compiler_options.remove_comments.is_true();
     let top_level = parent.is_some_and(|p| p.kind() == Kind::SourceFile);
     for &statement in statements {
-        let first = result.len();
         let transformed_statements = transform_statement(state, statement);
         if !remove_comments {
             result.extend(state.get_leading_comments(statement));
@@ -93,6 +92,8 @@ pub fn transform_statement_list_with_exports(
         }
 
         let is_final = transformed_statements.last().is_some_and(Stmt::is_final);
+        // the span starts at the statement's own Luau, past its leading comments and hoisted declaration
+        let first = result.len();
         result.extend(transformed_statements);
         if top_level && result.len() > first {
             state.spans.push((first, get_start(statement), statement.end().source_offset().unwrap_or(0)));
