@@ -24,3 +24,6 @@ pub use locate::{Location, Locator, Realm};
 pub use options::Options;
 pub use program::{LoadOptions, Project, STACK_SIZE, compiler_options, load};
 pub use source_cache::SourceFileCache;
+
+#[cfg(test)]
+mod tests;
