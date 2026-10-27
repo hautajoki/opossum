@@ -254,3 +254,21 @@ fn log_lines_reach_the_channel() {
         }
     );
 }
+
+#[test]
+fn plugin_rbxm_round_trips() {
+    let bytes = sync::plugin_rbxm().expect("rbxm");
+    let dom = rbx_binary::from_reader(bytes.as_slice()).expect("parse");
+    let script = dom.get_by_ref(dom.root().children()[0]).expect("script");
+    assert_eq!(
+        (script.name.as_str(), script.class.as_str()),
+        ("opossum", "Script")
+    );
+    let source = script.properties.get(&rbx_dom_weak::ustr("Source"));
+    assert_eq!(
+        source,
+        Some(&rbx_dom_weak::types::Variant::String(
+            sync::PLUGIN_SOURCE.into()
+        ))
+    );
+}

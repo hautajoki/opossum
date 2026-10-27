@@ -1,10 +1,11 @@
 //! Studio sync: an HTTP long-poll server (std::net, a thread per connection) that streams instance-tree patches to
-//! the opossum Studio plugin.
+//! the opossum Studio plugin, and the plugin itself, built into an .rbxm by `plugin_rbxm`.
 //!
 //! The binary publishes whole snapshots; the server diffs each against the previous generation and keeps a bounded
 //! log of patches, so a plugin that is a few generations behind gets the composed ops and one that is too far behind
 //! (or new) gets the full snapshot. Sources travel separately, by content hash.
 
+mod install;
 mod server;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -14,6 +15,8 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+pub use install::{PLUGIN_SOURCE, install_plugin, plugin_rbxm};
 
 pub const DEFAULT_PORT: u16 = 34872;
 /// Ports tried from `Config::port` upward when it is taken.

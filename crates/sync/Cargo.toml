@@ -8,3 +8,5 @@ publish.workspace = true
 [dependencies]
 serde_json.workspace = true
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+rbx_binary = "3.0.1"
+rbx_dom_weak = "4.2"
