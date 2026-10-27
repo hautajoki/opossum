@@ -8,7 +8,7 @@ local LogService = game:GetService("LogService")
 local RunService = game:GetService("RunService")
 local ScriptEditorService = game:GetService("ScriptEditorService")
 
-local FIRST_PORT = 34872
+local FIRST_PORT = 34900
 local PORTS = 16
 -- `Source` assignment fails above this; longer sources go through ScriptEditorService.
 local SOURCE_LIMIT = 199999

@@ -18,7 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub use install::{PLUGIN_SOURCE, install_plugin, plugin_rbxm};
 
-pub const DEFAULT_PORT: u16 = 34872;
+pub const DEFAULT_PORT: u16 = 34900;
 /// Ports tried from `Config::port` upward when it is taken.
 const PORT_TRIES: u16 = 16;
 /// Patches kept; a plugin further behind than this gets a full snapshot.
