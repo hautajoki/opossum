@@ -123,7 +123,7 @@ pub fn for_each_child<'a>(node: LuauNode<'a>, f: &mut dyn FnMut(LuauNode<'a>)) {
                 exprs(&n.left, f);
                 exprs(&n.right, f);
             }
-            Stmt::Break | Stmt::Continue | Stmt::Comment(_) => {}
+            Stmt::Break | Stmt::Continue | Stmt::Comment(_) | Stmt::TypeAlias(_) => {}
             Stmt::Call(e) => f(LuauNode::Expr(e)),
             Stmt::Do(n) => stmts(&n.statements, f),
             Stmt::While(n) => {

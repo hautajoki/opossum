@@ -12,6 +12,7 @@
 
 use crate::facts::Facts;
 use crate::require::ModulePath;
+use crate::types::{Signature, Type, TypeAlias};
 
 /// An expression. The first seven variants are TypeScript's `IndexableExpression`s: the ones that can be called,
 /// indexed or have a method called on them without parentheses (see [`Expr::is_indexable`]).
@@ -190,6 +191,8 @@ pub struct FunctionExpression {
     pub statements: Vec<Stmt>,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
+    /// Native types: parameter, `...`, return and generic annotations.
+    pub signature: Option<Box<Signature>>,
 }
 
 /// `(expression)`; rendered without parentheses when the innermost expression is simple.
@@ -307,6 +310,8 @@ pub enum Stmt {
     Return(ReturnStatement),
     /// `--text`, or a `--[[ ]]` block when the text has several lines.
     Comment(String),
+    /// `[export ]type name<generics> = type`
+    TypeAlias(Box<TypeAlias>),
 }
 
 /// `left operator right`, with comma-separated lists on both sides.
@@ -410,6 +415,8 @@ pub struct FunctionDeclaration {
     pub has_dot_dot_dot: bool,
     /// The body.
     pub statements: Vec<Stmt>,
+    /// Native types: parameter, `...`, return and generic annotations.
+    pub signature: Option<Box<Signature>>,
 }
 
 /// `function expression:name(parameters) statements end`
@@ -425,6 +432,8 @@ pub struct MethodDeclaration {
     pub has_dot_dot_dot: bool,
     /// The body.
     pub statements: Vec<Stmt>,
+    /// Native types: parameter (after `self`), `...`, return and generic annotations.
+    pub signature: Option<Box<Signature>>,
 }
 
 /// `local left[ = right]`
@@ -434,6 +443,8 @@ pub struct VariableDeclaration {
     pub left: Vec<AnyIdentifier>,
     /// Empty for `local a` (no initializer).
     pub right: Vec<Expr>,
+    /// Native types: the annotation of each name in `left`; shorter than `left` (or empty) leaves the rest bare.
+    pub types: Vec<Option<Type>>,
 }
 
 /// `return expressions` (comma-separated).

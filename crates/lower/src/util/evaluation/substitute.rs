@@ -131,7 +131,7 @@ pub fn substitute_stmt(node: &mut Stmt, replacements: &FxHashMap<u32, Expr>) {
                 substitute_expr(e, replacements);
             }
         }
-        Stmt::Break | Stmt::Continue | Stmt::Comment(_) => {}
+        Stmt::Break | Stmt::Continue | Stmt::Comment(_) | Stmt::TypeAlias(_) => {}
         Stmt::Call(e) => substitute_expr(e, replacements),
         Stmt::Do(n) => substitute_stmts(&mut n.statements, replacements),
         Stmt::While(n) => {

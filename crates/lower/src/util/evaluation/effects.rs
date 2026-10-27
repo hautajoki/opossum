@@ -222,6 +222,7 @@ pub fn get_intrinsic_effects(node: LuauNode<'_>) -> Effects {
             | Stmt::If(_)
             | Stmt::Do(_)
             | Stmt::Comment(_)
+            | Stmt::TypeAlias(_)
             | Stmt::Break
             | Stmt::Continue => Effects::none(),
             Stmt::FunctionDeclaration(_) | Stmt::MethodDeclaration(_) => Effects::unknown(),

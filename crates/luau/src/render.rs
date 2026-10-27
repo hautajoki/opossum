@@ -15,6 +15,7 @@
 use crate::ast::*;
 use crate::require::{ModulePath, spell};
 use crate::solve::{Root, TempNames, solve_temp_ids};
+use crate::types::{Signature, Type, TypePack};
 use crate::util::{
     is_js_whitespace, is_valid_identifier, is_valid_number_literal, js_number_to_string, js_string_to_number,
 };
@@ -275,7 +276,7 @@ impl Renderer<'_> {
                 }
                 self.out.push_str("function ");
                 self.expr(&node.name, Ctx::None);
-                self.parameters(&node.parameters, node.has_dot_dot_dot);
+                self.typed_parameters(&node.parameters, node.has_dot_dot_dot, node.signature.as_deref());
                 self.out.push('\n');
                 self.block(&node.statements);
                 self.line("end");
@@ -286,7 +287,7 @@ impl Renderer<'_> {
                 self.expr(&node.expression, Ctx::None);
                 self.out.push(':');
                 self.out.push_str(&node.name);
-                self.parameters(&node.parameters, node.has_dot_dot_dot);
+                self.typed_parameters(&node.parameters, node.has_dot_dot_dot, node.signature.as_deref());
                 self.out.push('\n');
                 self.block(&node.statements);
                 self.line("end");
@@ -300,6 +301,10 @@ impl Renderer<'_> {
                         self.out.push_str(", ");
                     }
                     self.any_identifier(id);
+                    if let Some(Some(ty)) = node.types.get(i) {
+                        self.out.push_str(": ");
+                        self.ty(ty);
+                    }
                 }
                 if !node.right.is_empty() {
                     self.out.push_str(" = ");
@@ -314,6 +319,31 @@ impl Renderer<'_> {
                 self.out.push('\n');
             }
             Stmt::Comment(text) => self.comment(text),
+            Stmt::TypeAlias(node) => {
+                self.write_indent();
+                if node.export {
+                    self.out.push_str("export ");
+                }
+                self.out.push_str("type ");
+                self.identifier(&node.name);
+                if !node.generics.is_empty() {
+                    self.out.push('<');
+                    for (i, g) in node.generics.iter().enumerate() {
+                        if i > 0 {
+                            self.out.push_str(", ");
+                        }
+                        self.identifier(&g.name);
+                        if let Some(default) = &g.default {
+                            self.out.push_str(" = ");
+                            self.ty(default);
+                        }
+                    }
+                    self.out.push('>');
+                }
+                self.out.push_str(" = ");
+                self.ty(&node.ty);
+                self.out.push('\n');
+            }
         }
     }
 
@@ -505,7 +535,7 @@ impl Renderer<'_> {
             Expr::VarArgs => self.out.push_str("..."),
             Expr::Function(node) => {
                 self.out.push_str("function");
-                self.parameters(&node.parameters, node.has_dot_dot_dot);
+                self.typed_parameters(&node.parameters, node.has_dot_dot_dot, node.signature.as_deref());
                 if node.statements.is_empty() {
                     self.out.push_str(" end");
                 } else {
@@ -663,6 +693,215 @@ impl Renderer<'_> {
                 self.indent -= 1;
                 self.write_indent();
                 self.out.push('}');
+            }
+        }
+    }
+
+    /// `<G>(a: A, ...: V): R`: [`Renderer::parameters`] with a function's native types.
+    fn typed_parameters(&mut self, parameters: &[AnyIdentifier], has_dot_dot_dot: bool, signature: Option<&Signature>) {
+        let Some(signature) = signature else {
+            self.parameters(parameters, has_dot_dot_dot);
+            return;
+        };
+        self.generics(&signature.generics);
+        self.out.push('(');
+        for (i, p) in parameters.iter().enumerate() {
+            if i > 0 {
+                self.out.push_str(", ");
+            }
+            self.any_identifier(p);
+            if let Some(Some(ty)) = signature.parameters.get(i) {
+                self.out.push_str(": ");
+                self.ty(ty);
+            }
+        }
+        if has_dot_dot_dot {
+            if !parameters.is_empty() {
+                self.out.push_str(", ");
+            }
+            self.out.push_str("...");
+            if let Some(ty) = &signature.var_args {
+                self.out.push_str(": ");
+                self.ty(ty);
+            }
+        }
+        self.out.push(')');
+        if let Some(returns) = &signature.returns {
+            self.out.push_str(": ");
+            self.type_pack(returns);
+        }
+    }
+
+    fn generics(&mut self, generics: &[String]) {
+        if generics.is_empty() {
+            return;
+        }
+        self.out.push('<');
+        for (i, g) in generics.iter().enumerate() {
+            if i > 0 {
+                self.out.push_str(", ");
+            }
+            self.identifier(g);
+        }
+        self.out.push('>');
+    }
+
+    /// A return pack: one type bare (a function type in parentheses), anything else in parentheses.
+    fn type_pack(&mut self, pack: &TypePack) {
+        if let ([ty], None) = (pack.types.as_slice(), &pack.variadic)
+            && !matches!(ty, Type::Function(_))
+        {
+            self.ty(ty);
+            return;
+        }
+        self.out.push('(');
+        for (i, ty) in pack.types.iter().enumerate() {
+            if i > 0 {
+                self.out.push_str(", ");
+            }
+            self.ty(ty);
+        }
+        if let Some(variadic) = &pack.variadic {
+            if !pack.types.is_empty() {
+                self.out.push_str(", ");
+            }
+            self.out.push_str("...");
+            self.ty(variadic);
+        }
+        self.out.push(')');
+    }
+
+    /// A type; `wrap` lists the kinds that need parentheses where it stands.
+    fn ty_in(&mut self, ty: &Type, wrap: fn(&Type) -> bool) {
+        if wrap(ty) {
+            self.out.push('(');
+            self.ty(ty);
+            self.out.push(')');
+        } else {
+            self.ty(ty);
+        }
+    }
+
+    fn ty(&mut self, ty: &Type) {
+        match ty {
+            Type::Named(named) => {
+                if let Some(prefix) = &named.prefix {
+                    self.any_identifier(prefix);
+                    self.out.push('.');
+                }
+                self.out.push_str(&named.name);
+                if !named.args.is_empty() {
+                    self.out.push('<');
+                    for (i, arg) in named.args.iter().enumerate() {
+                        if i > 0 {
+                            self.out.push_str(", ");
+                        }
+                        self.ty(arg);
+                    }
+                    self.out.push('>');
+                }
+            }
+            Type::String(value) => type_string(self.out, value),
+            Type::Bool(value) => self.out.push_str(if *value { "true" } else { "false" }),
+            Type::Table(table) => {
+                if table.fields.is_empty()
+                    && let Some(indexer) = &table.indexer
+                    && !indexer.read
+                    && indexer.key.simple_name() == Some("number")
+                {
+                    self.out.push('{');
+                    self.ty(&indexer.value);
+                    self.out.push('}');
+                    return;
+                }
+                if table.fields.is_empty() && table.indexer.is_none() {
+                    self.out.push_str("{}");
+                    return;
+                }
+                self.out.push_str("{ ");
+                let mut first = true;
+                if let Some(indexer) = &table.indexer {
+                    if indexer.read {
+                        self.out.push_str("read ");
+                    }
+                    self.out.push('[');
+                    self.ty(&indexer.key);
+                    self.out.push_str("]: ");
+                    self.ty(&indexer.value);
+                    first = false;
+                }
+                for field in &table.fields {
+                    if !first {
+                        self.out.push_str(", ");
+                    }
+                    first = false;
+                    if field.read {
+                        self.out.push_str("read ");
+                    }
+                    // `read` and `write` are property modifiers, so as names they are quoted
+                    if is_valid_identifier(&field.name) && field.name != "read" && field.name != "write" {
+                        self.out.push_str(&field.name);
+                    } else {
+                        self.out.push('[');
+                        type_string(self.out, &field.name);
+                        self.out.push(']');
+                    }
+                    self.out.push_str(": ");
+                    self.ty(&field.ty);
+                }
+                self.out.push_str(" }");
+            }
+            Type::Function(function) => {
+                self.generics(&function.generics);
+                self.out.push('(');
+                for (i, (name, ty)) in function.parameters.iter().enumerate() {
+                    if i > 0 {
+                        self.out.push_str(", ");
+                    }
+                    if let Some(name) = name {
+                        self.identifier(name);
+                        self.out.push_str(": ");
+                    }
+                    self.ty(ty);
+                }
+                if let Some(var_args) = &function.var_args {
+                    if !function.parameters.is_empty() {
+                        self.out.push_str(", ");
+                    }
+                    self.out.push_str("...");
+                    self.ty(var_args);
+                }
+                self.out.push_str(") -> ");
+                if function.returns.types.is_empty() && function.returns.variadic.is_none() {
+                    self.out.push_str("()");
+                } else {
+                    self.type_pack(&function.returns);
+                }
+            }
+            Type::Union(members) => {
+                for (i, member) in members.iter().enumerate() {
+                    if i > 0 {
+                        self.out.push_str(" | ");
+                    }
+                    self.ty_in(member, |t| matches!(t, Type::Function(_) | Type::Intersection(_)));
+                }
+            }
+            Type::Intersection(members) => {
+                for (i, member) in members.iter().enumerate() {
+                    if i > 0 {
+                        self.out.push_str(" & ");
+                    }
+                    self.ty_in(member, |t| matches!(t, Type::Function(_) | Type::Union(_) | Type::Optional(_)));
+                }
+            }
+            Type::Optional(inner) => {
+                self.ty_in(inner, |t| matches!(t, Type::Function(_) | Type::Union(_) | Type::Intersection(_)));
+                self.out.push('?');
+            }
+            Type::Typeof(expression) => {
+                self.out.push_str("typeof(");
+                self.expr(expression, Ctx::None);
+                self.out.push(')');
             }
         }
     }
@@ -833,4 +1072,24 @@ fn starts_with_parenthesis(statement: &Stmt) -> bool {
         Stmt::Assignment(node) => node.left.first().is_some_and(inner),
         _ => false,
     }
+}
+
+/// A string singleton type, `"text"`, escaped for a double-quoted Luau string.
+fn type_string(out: &mut String, value: &str) {
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                use std::fmt::Write;
+                let _ = write!(out, "\\{:03}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
 }

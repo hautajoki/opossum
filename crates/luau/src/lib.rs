@@ -6,6 +6,7 @@
 //! - [`globals`]: `luau.globals` and `luau.strings`.
 //! - [`facts`]: the evaluation facts roblox-ts records on nodes (`TSTransformer/util/evaluation/facts.ts`).
 //! - [`render()`]: Luau text from a tree, with requires spelled from the module's instance path ([`require`]).
+//! - [`types`]: type syntax for native types: annotations on functions and locals, `type` aliases.
 //! - [`gate`]: Luau's own compiler, the O2 gate every emitted file passes.
 //! - name and number rules: [`is_valid_identifier`], [`is_metamethod`], [`is_reserved_identifier`],
 //!   [`is_valid_number_literal`], and JavaScript's number conversions ([`js_number_to_string`]).
@@ -27,6 +28,7 @@ pub mod globals;
 mod render;
 pub mod require;
 mod solve;
+pub mod types;
 mod util;
 
 pub use ast::*;
@@ -34,6 +36,9 @@ pub use create::TempIds;
 pub use facts::{Binding, BindingKey, Effects, Facts};
 pub use render::{render, render_ast, render_expr, render_into, render_with_lines};
 pub use require::{ModulePath, spell};
+pub use types::{
+    FunctionType, GenericParameter, Indexer, NamedType, Signature, TableType, TableTypeField, Type, TypeAlias, TypePack,
+};
 pub use util::{
     LUAU_METAMETHODS, LUAU_RESERVED_CLASS_FIELDS, LUAU_RESERVED_KEYWORDS, RESERVED_IDENTIFIERS, is_js_whitespace,
     is_metamethod, is_reserved_class_field, is_reserved_identifier, is_valid_identifier, is_valid_number_literal,

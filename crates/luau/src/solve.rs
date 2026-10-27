@@ -339,7 +339,7 @@ impl<'a> Solver<'a> {
                 self.exprs(&node.left);
                 self.exprs(&node.right);
             }
-            Stmt::Break | Stmt::Continue | Stmt::Comment(_) => {}
+            Stmt::Break | Stmt::Continue | Stmt::Comment(_) | Stmt::TypeAlias(_) => {}
             Stmt::Call(e) => self.expr(e),
             Stmt::Do(node) => self.statements(&node.statements, true),
             Stmt::While(node) => {
@@ -511,7 +511,7 @@ fn walk_statement<'t>(s: &'t Stmt, f: &mut impl FnMut(Found<'t>)) {
             walk_exprs(&node.left, f);
             walk_exprs(&node.right, f);
         }
-        Stmt::Break | Stmt::Continue | Stmt::Comment(_) => {}
+        Stmt::Break | Stmt::Continue | Stmt::Comment(_) | Stmt::TypeAlias(_) => {}
         Stmt::Call(e) => walk_expr(e, f),
         Stmt::Do(node) => walk_statements(&node.statements, f),
         Stmt::While(node) => {
