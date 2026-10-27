@@ -1,6 +1,0 @@
-{
-	"name": "fixture",
-	"speed": 16,
-	"tags": ["a", "b"],
-	"nested": { "on": true }
-}

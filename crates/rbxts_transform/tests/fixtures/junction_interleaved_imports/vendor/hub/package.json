@@ -1,6 +1,0 @@
-{
-	"name": "@rbxts/hub",
-	"version": "1.0.0",
-	"main": "init.lua",
-	"types": "index.d.ts"
-}
