@@ -199,6 +199,9 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
     crate::types::finish(state, &mut statements);
 
     let mut header_statements = vec![create::comment("!optimize 2")];
+    if state.options.native_types {
+        header_statements.insert(0, create::comment("!strict"));
+    }
     if state.uses_runtime_lib
         && let Some(import) = state.create_runtime_lib_import()
     {
