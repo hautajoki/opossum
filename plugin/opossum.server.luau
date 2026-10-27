@@ -178,11 +178,15 @@ end
 
 -- Sources the ops need that are not already in place, or nil when the server no longer has one of them.
 local function fetch(url: string, ops: { Op }): { [string]: string }?
-	local need = {}
+	local need, seen = {}, {}
 	for _, op in ops do
-		local inst = if op.op == "set" and op.hash then find(op.path) else nil
-		if op.hash and (hashes[op.path] ~= op.hash or not inst or inst.ClassName ~= op.class) then
-			table.insert(need, op.hash)
+		local hash = op.hash
+		if hash and not seen[hash] then
+			local inst = find(op.path)
+			if hashes[op.path] ~= hash or not inst or inst.ClassName ~= op.class then
+				seen[hash] = true
+				table.insert(need, hash)
+			end
 		end
 	end
 	local sources = {}
