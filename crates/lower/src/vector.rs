@@ -28,7 +28,7 @@
 use std::sync::Arc;
 
 use luau::{Effects, Expr, create};
-use tsrs_ast::{Kind, Node, Symbol};
+use tsrs_ast::{Kind, Node};
 use tsrs_checker::TypeFlags;
 use tsrs_core::P;
 
@@ -114,12 +114,6 @@ fn library_call(name: &str, args: Vec<Expr>) -> Expr {
     call
 }
 
-/// Every declaration of `symbol` is in `@rbxts/types`.
-fn declared_in_rbxts_types(state: &mut TransformState<'_>, symbol: P<Symbol>) -> bool {
-    let declarations = symbol.declarations();
-    !declarations.is_empty() && declarations.iter().all(|&d| is_in_rbxts_types(state, d))
-}
-
 /// `declaration` is a member of the `@rbxts/types` interface named `owner`.
 fn member_of(state: &mut TransformState<'_>, declaration: P<Node>, owner: &str) -> bool {
     declaration.parent().is_some_and(|parent| {
@@ -129,10 +123,11 @@ fn member_of(state: &mut TransformState<'_>, declaration: P<Node>, owner: &str) 
     })
 }
 
-/// `node` evaluates to exactly the `@rbxts/types` `Vector3`.
+/// `node` evaluates to exactly the `@rbxts/types` `Vector3` (an object type: never a union, an intersection, a type
+/// parameter or `any`).
 fn is_vector3(state: &mut TransformState<'_>, node: P<Node>) -> bool {
     let t = state.get_type(node);
-    if !t.flags().intersects(TypeFlags::Object) || t.flags().intersects(TypeFlags::UnionOrIntersection) {
+    if !t.flags().intersects(TypeFlags::Object) {
         return false;
     }
     let Some(symbol) = t.symbol() else { return false };
@@ -149,11 +144,12 @@ fn is_vector3_global(state: &mut TransformState<'_>, node: P<Node>) -> bool {
     symbol.value_declaration().is_some_and(|d| is_in_rbxts_types(state, d))
 }
 
-/// The member `name` of the property access or call `node` is `Vector3`'s own (declared only in `@rbxts/types`).
+/// Every declaration of the member named by the property access `access` is in the `@rbxts/types` interface `owner`.
 fn is_own_member(state: &mut TransformState<'_>, access: P<Node>, owner: &str) -> bool {
     let name = access.as_property_access_expression().name;
     let Some(symbol) = state.checker.get_symbol_at_location_exported(name) else { return false };
-    declared_in_rbxts_types(state, symbol) && symbol.declarations().iter().all(|&d| member_of(state, d, owner))
+    let declarations = symbol.declarations();
+    !declarations.is_empty() && declarations.iter().all(|&d| member_of(state, d, owner))
 }
 
 /// `new Vector3(args)` as `vector.create(x, y, z)`, or `None` for the plain lowering.
@@ -228,8 +224,5 @@ pub fn lower_method(
         receiver = prereqs.push_to_var(receiver, "vec");
     }
     prereqs.push_list(args_prereqs.statements);
-    let mut with_receiver = Vec::with_capacity(args.len() + 1);
-    with_receiver.push(receiver);
-    with_receiver.extend(args);
-    library_call(function, with_receiver)
+    library_call(function, std::iter::once(receiver).chain(args).collect())
 }
