@@ -18,6 +18,7 @@ use crate::classes::multi_transform_state::MultiTransformState;
 use crate::classes::prereqs::reset_temp_ids;
 use crate::classes::transform_state::TransformState;
 use crate::locate::Locator;
+use crate::macros::compile_time::Input;
 use crate::options::Options;
 use crate::nodes::transform_source_file::transform_source_file;
 use crate::program::Project;
@@ -29,6 +30,8 @@ pub struct Lowered {
     /// The Luau tree; `None` when lowering panicked (an internal error, in `diagnostics`).
     pub ast: Option<Vec<Stmt>>,
     pub diagnostics: Vec<P<Diagnostic>>,
+    /// What the file's compile-time macros read: the file lowers differently when one of them changes.
+    pub inputs: Vec<Input>,
 }
 
 impl Lowered {
@@ -86,6 +89,7 @@ pub fn lower_files(project: &Project, locator: &Locator, options: &Options, file
                 file,
                 ast: None,
                 diagnostics: vec![internal_error(file.as_node(), "not lowered: an earlier file of its checker panicked")],
+                inputs: Vec::new(),
             },
         })
         .collect()
@@ -124,7 +128,8 @@ fn run_group(
         };
         let diagnostics = std::mem::take(&mut state.diagnostics.diagnostics);
         let once = std::mem::take(&mut state.diagnostics.once);
-        outputs.push((i, FileOutput { lowered: Lowered { file, ast, diagnostics }, once }));
+        let inputs = std::mem::take(&mut state.macro_inputs);
+        outputs.push((i, FileOutput { lowered: Lowered { file, ast, diagnostics, inputs }, once }));
         if panicked {
             break;
         }

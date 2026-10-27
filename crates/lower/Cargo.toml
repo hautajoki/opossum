@@ -19,3 +19,4 @@ tsrs_parser.workspace = true
 tsrs_printer.workspace = true
 tsrs_contentmapper.workspace = true
 rustc-hash.workspace = true
+serde_json.workspace = true

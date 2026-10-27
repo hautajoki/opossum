@@ -14,6 +14,7 @@ use crate::classes::diagnostic_service::DiagnosticService;
 use crate::classes::macro_manager::MacroManager;
 use crate::classes::multi_transform_state::MultiTransformState;
 use crate::locate::{Location, Locator};
+use crate::macros::compile_time::Input;
 use crate::options::Options;
 use crate::program::Project;
 use crate::shared::diagnostics::{errors, internal_error};
@@ -95,6 +96,8 @@ pub struct TransformState<'a> {
     /// Project bindings named after a Luau keyword or reserved global, by declaration
     /// (`transform_identifier::renamed_binding`).
     pub renames: FxHashMap<P<Node>, TemporaryIdentifier>,
+    /// What this file's compile-time macros read ([`crate::macros::compile_time`]).
+    pub macro_inputs: Vec<Input>,
 }
 
 impl<'a> TransformState<'a> {
@@ -137,6 +140,7 @@ impl<'a> TransformState<'a> {
             symbol_to_id_map: FxHashMap::default(),
             class_element_to_object_key_map: FxHashMap::default(),
             renames: FxHashMap::default(),
+            macro_inputs: Vec::new(),
         }
     }
 

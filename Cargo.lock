@@ -426,6 +426,7 @@ version = "0.0.0"
 dependencies = [
  "luau",
  "rustc-hash",
+ "serde_json",
  "tsrs_ast",
  "tsrs_checker",
  "tsrs_compiler",
