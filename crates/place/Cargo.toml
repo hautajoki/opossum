@@ -1,0 +1,16 @@
+[package]
+name = "place"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rbx_dom_weak = "4.2.0"
+rbx_binary = "3.0.1"
+rbx_xml = "3.0.1"
+rbx_types = { version = "3.1.0", features = ["serde"] }
+rbx_reflection = "7.0.0"
+rbx_reflection_database = "3.0.1"
+serde_json.workspace = true
+toml = { version = "1.1.8", features = ["preserve_order"] }
