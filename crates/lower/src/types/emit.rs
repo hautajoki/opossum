@@ -84,7 +84,8 @@ fn sanitize(name: &str, fallback: &str) -> String {
     if luau::is_valid_identifier(&out) { out } else { fallback.to_owned() }
 }
 
-/// Whether `name` is a type every Luau file sees: Luau's own, or a Roblox one (`@rbxts/types`).
+/// Whether `name` is a type every Luau file sees: Luau's own, or a Roblox one (`@rbxts/types`). Looked up in the
+/// global scope, so a file's own `Part` does not hide Roblox's and every file renames it the same.
 fn is_global_type_name(state: &mut TransformState<'_>, name: &str) -> bool {
     if LUAU_TYPES.contains(&name) {
         return true;
@@ -92,10 +93,9 @@ fn is_global_type_name(state: &mut TransformState<'_>, name: &str) -> bool {
     if let Some(&known) = state.types.globals.get(name) {
         return known;
     }
-    let file = state.source_file.as_node();
     let global = state
         .checker
-        .resolve_name_exported(name, file, SymbolFlags::Type, false)
+        .get_global_symbol_exported(name, SymbolFlags::Type, None)
         .is_some_and(|s| s.declarations().iter().any(|&d| is_in_rbxts_types(state, d)));
     state.types.globals.insert(name.to_owned(), global);
     global
