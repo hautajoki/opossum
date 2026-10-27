@@ -119,10 +119,13 @@ pub fn load(opts: &LoadOptions, cache: Option<&Arc<SourceFileCache>>) -> Result<
     let macros = macros_file(&root);
     let mut files = FxHashMap::default();
     files.insert(macros.clone(), MACROS_D_TS.to_owned());
+    let vector = crate::vector::declarations_file(&root);
+    files.insert(vector.clone(), crate::vector::VECTOR_D_TS.to_owned());
     let fs: Arc<dyn FS> = Arc::new(Overlay { inner: Box::new(bundled::wrap_fs(osvfs::fs())), files });
 
     let mut root_files: Vec<String> = opts.files.iter().map(|f| tspath::normalize_path(f)).collect();
     root_files.push(macros);
+    root_files.push(vector);
     let options = CompilerOptions { checkers: Some(opts.checkers.max(1) as i64), ..options };
     let compare = ComparePathsOptions {
         use_case_sensitive_file_names: fs.use_case_sensitive_file_names(),

@@ -37,6 +37,9 @@ pub fn transform_property_access_expression_inner(
         prereqs.push(create::assignment(target, AssignmentOperator::Assign, Expr::Nil));
         return Expr::None;
     }
+    if let Some(access) = crate::vector::access(state, node, name) {
+        return crate::vector::lower_access(access, expression);
+    }
 
     let mut property = create::property(convert_to_indexable_expression(expression), name);
     try_mark_builtin_member(state, node, &mut property);

@@ -197,6 +197,10 @@ pub fn transform_property_call_expression_inner(
         return create::call(callee_exp, args);
     }
 
+    if let Some(function) = crate::vector::method(state, expression, name) {
+        return crate::vector::lower_method(state, prereqs, function, base_expression, node_arguments);
+    }
+
     let callee_type = state.get_type(callee);
     let exp_type = state.checker.get_non_optional_type(callee_type);
     if let Some(symbol) = get_first_defined_symbol(state, exp_type)
