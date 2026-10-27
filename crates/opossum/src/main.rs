@@ -1,7 +1,8 @@
 //! A temporary driver for the compiler core:
 //!
 //! - `opossum emit <project-dir> <out-dir>`: type-checks `<project-dir>/src`, lowers every file and writes one `.luau`
-//!   per TypeScript file under `<out-dir>` (mirroring `src/`), then prints the diagnostics and the timings.
+//!   per TypeScript file that type-checked and lowered without errors under `<out-dir>` (mirroring `src/`), then
+//!   prints the diagnostics and the timings.
 //! - `opossum gate <dir>`: compiles every `.luau` under `<dir>` with Luau at `-O2`, printing each error.
 //!
 //! Routing is a placeholder until the router lands: the outermost `server/`, `client/` or `shared/` folder of a path
@@ -14,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use lower::{LoadOptions, Location, Locator, Lowered, Realm};
 use luau::ModulePath;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsrs_ast::{Diagnostic, SourceFile};
 use tsrs_core::P;
 use tsrs_diagnostics::Category;
@@ -89,7 +91,9 @@ fn emit(project: &Path, out: &Path) -> Result<bool, String> {
 
     let t = Instant::now();
     let src_prefix = format!("{}/", slashed(&src));
-    let written = write_outputs(&lowered, &locator, &src_prefix, out)?;
+    let failed: FxHashSet<P<SourceFile>> =
+        checked.iter().filter(|d| d.category() == Category::Error).filter_map(|d| d.file()).collect();
+    let written = write_outputs(&lowered, &failed, &locator, &src_prefix, out)?;
     let write_time = t.elapsed();
 
     let mut diagnostics: Vec<P<Diagnostic>> = checked;
@@ -154,10 +158,11 @@ fn module_names(rel: &str) -> (Vec<String>, bool) {
     (names, init)
 }
 
-/// A source file's placeholder route: the outermost route folder, consumed.
+/// A source file's placeholder route: the outermost route folder, consumed. A file's own name never routes.
 fn route_source(rel: &str) -> Location {
     let (mut names, init) = module_names(rel);
-    let routed = names.iter().position(|n| matches!(n.as_str(), "server" | "client" | "shared"));
+    let folders = if init { names.len() } else { names.len().saturating_sub(1) };
+    let routed = names[..folders].iter().position(|n| matches!(n.as_str(), "server" | "client" | "shared"));
     let (root, realm): (&[&str], Realm) = match routed.map(|i| names.remove(i)).as_deref() {
         Some("server") => (&["ServerScriptService", "server"], Realm::Server),
         Some("client") => (&["StarterPlayer", "StarterPlayerScripts", "client"], Realm::Client),
@@ -205,7 +210,7 @@ fn json_string(json: &str, key: &str) -> Option<String> {
 
 fn placeholder_locator(project: &lower::Project) -> Locator {
     let src = format!("{}/src/", project.root);
-    let mut files = rustc_hash::FxHashMap::default();
+    let mut files = FxHashMap::default();
     for &file in project.program.source_files() {
         let name = file.file_name();
         let location = match name.strip_prefix(&src) {
@@ -222,14 +227,21 @@ fn placeholder_locator(project: &lower::Project) -> Locator {
     Locator { files, runtime_lib }
 }
 
-/// Renders and writes every file lowered without errors; returns how many were written.
-fn write_outputs(lowered: &[Lowered], locator: &Locator, src_prefix: &str, out: &Path) -> Result<usize, String> {
+/// Renders and writes every file that type-checked (not in `failed`) and lowered without errors; returns how many
+/// were written.
+fn write_outputs(
+    lowered: &[Lowered],
+    failed: &FxHashSet<P<SourceFile>>,
+    locator: &Locator,
+    src_prefix: &str,
+    out: &Path,
+) -> Result<usize, String> {
     let rendered = lower::parallel::map(lowered, |l| {
         let name = l.file.file_name();
         let (Some(ast), Some(location), Some(rel)) = (&l.ast, locator.get(name), name.strip_prefix(src_prefix)) else {
             return None;
         };
-        if l.has_errors() {
+        if l.has_errors() || failed.contains(&l.file) {
             return None;
         }
         let stem = rel.strip_suffix(".tsx").or_else(|| rel.strip_suffix(".ts")).unwrap_or(rel);
