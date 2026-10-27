@@ -200,9 +200,10 @@ pub mod errors {
         at_node(node, new_ad_hoc_message(&text), Category::Error)
     }
 
-    /// `route.unrouted`: the imported (or importing) file has no instance path.
+    /// `route.unrouted`: a file lowering needs an instance path for (the file itself, an import, the runtime
+    /// library) has none.
     pub fn unrouted(node: P<Node>, file: &str) -> P<Diagnostic> {
-        let text = format!("route.unrouted: {file} has no instance path, so it cannot be required");
+        let text = format!("route.unrouted: {file} has no instance path");
         at_node(node, new_ad_hoc_message(&text), Category::Error)
     }
 

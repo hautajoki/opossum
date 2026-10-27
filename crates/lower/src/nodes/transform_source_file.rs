@@ -10,6 +10,7 @@ use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_identifier::{renamed_binding, transform_identifier_defined};
 use crate::nodes::transform_property_name::property_name_key;
 use crate::nodes::transform_statement_list::transform_statement_list;
+use crate::shared::diagnostics::errors;
 use crate::util::symbols::{get_original_symbol_of_node, is_symbol_mutable, is_symbol_of_value};
 use crate::util::traversal::{get_ancestor, has_declare_modifier};
 
@@ -178,6 +179,9 @@ fn last_non_comment_statement(statements: &[Stmt]) -> Option<&Stmt> {
 
 /// `transformSourceFile`: the file's Luau statements.
 pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>) -> Vec<Stmt> {
+    if state.location.is_none() {
+        state.add_diagnostic(errors::unrouted(node.as_node(), node.get().file_name()));
+    }
     let symbol = state.checker.get_symbol_at_location_exported(node.as_node()).expect("a module file has a symbol");
     state.set_module_id_by_symbol(symbol, as_any_identifier(globals::exports()));
 

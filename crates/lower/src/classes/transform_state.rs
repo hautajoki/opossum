@@ -51,7 +51,8 @@ pub struct TransformState<'a> {
     pub checker: &'a mut Checker,
     /// Where every module lives once routed.
     pub locator: &'a Locator,
-    /// Where this file lives; `None` when the locator does not route it (reported at its first import).
+    /// Where this file lives; `None` when the locator does not route it (`route.unrouted` at the file, and none of
+    /// its requires is made).
     pub location: Option<&'a Location>,
     /// The program's compiler options.
     pub compiler_options: P<CompilerOptions>,

@@ -35,14 +35,11 @@ pub fn is_services_file(file: P<SourceFile>) -> bool {
     file.get().file_name().contains("/node_modules/@rbxts/services/")
 }
 
-/// The instance path this file requires `module_file` by, or `None` after reporting (at `at`) why it cannot: either
-/// file is unrouted, or the target is out of the importer's reach (another realm, or a client module named from
-/// outside its root).
+/// The instance path this file requires `module_file` by, or `None` when it cannot: this file is unrouted (reported
+/// once, at the file), or, reported at `at`, the target is unrouted or out of the importer's reach (another realm,
+/// or a client module named from outside its root).
 pub fn require_path(state: &mut TransformState<'_>, at: P<Node>, module_file: P<SourceFile>) -> Option<ModulePath> {
-    let Some(from) = state.location else {
-        state.add_diagnostic(errors::unrouted(at, state.source_file.get().file_name()));
-        return None;
-    };
+    let from = state.location?;
     let Some(to) = state.locator.get(module_file.get().file_name()) else {
         state.add_diagnostic(errors::unrouted(at, module_file.get().file_name()));
         return None;
