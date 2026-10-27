@@ -73,16 +73,16 @@ impl Diag {
     }
 }
 
-/// A tsrs diagnostic: lowering's carry their dotted code at the start of the message, TypeScript's become
-/// `ts.<code>`. `file_of` turns a program file name back into the project's path.
+/// A tsrs diagnostic: TypeScript's become `ts.<code>`, lowering's (code -1) carry their dotted code at the start of
+/// the message. `file_of` turns a program file name back into the project's path.
 pub fn from_ts(d: P<Diagnostic>, file_of: &dyn Fn(&str) -> PathBuf) -> Diag {
     let mut text = d.localize();
     flatten_chain(d, 1, &mut text);
     let (code, message) = match text.split_once(": ") {
+        _ if d.code() > 0 => (format!("ts.{}", d.code()), text),
         Some((code, rest)) if code.contains('.') && !code.contains(char::is_whitespace) => {
             (code.to_owned(), rest.to_owned())
         }
-        _ if d.code() > 0 => (format!("ts.{}", d.code()), text),
         _ => ("lower".to_owned(), text),
     };
     let severity = match d.category() {
