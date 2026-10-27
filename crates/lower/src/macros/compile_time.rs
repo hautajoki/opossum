@@ -33,8 +33,12 @@ pub enum Input {
 
 /// The macro `symbol` is, by name (`$env`), when it is one of opossum's declarations.
 pub fn macro_name(state: &TransformState<'_>, symbol: P<Symbol>) -> Option<&'static str> {
+    let name = symbol.name();
+    if !name.starts_with('$') {
+        return None;
+    }
     let file = symbol.declarations().first().and_then(|&d| tsrs_ast::get_source_file_of_node(d))?;
-    (file.get().file_name() == crate::program::macros_file(state.root)).then(|| symbol.name())
+    (file.get().file_name() == crate::program::macros_file(state.root)).then_some(name)
 }
 
 /// The macro the receiver of a chain names (wrappers skipped).
