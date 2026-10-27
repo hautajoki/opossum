@@ -214,6 +214,10 @@ pub fn transform_property_call_expression_inner(
         );
     }
 
+    if let Some(exp) = crate::ecs::transform_world_get(state, prereqs, node, &base_expression, name, node_arguments) {
+        return exp;
+    }
+
     let mut args_prereqs = Prereqs::new();
     let mut args = ensure_transform_order(state, &mut args_prereqs, node_arguments);
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);

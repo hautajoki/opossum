@@ -18,6 +18,7 @@ pub mod program;
 pub mod shared;
 pub mod source_cache;
 pub mod util;
+pub mod ecs;
 pub mod callsite;
 
 pub use groups::{Lowered, lower_files};

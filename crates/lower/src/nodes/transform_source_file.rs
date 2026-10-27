@@ -202,6 +202,7 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
     {
         header_statements.push(import);
     }
+    header_statements.extend(crate::ecs::module_statements(state));
 
     // Luau directive comments like --!strict go before the header
     let directive_count =
