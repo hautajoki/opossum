@@ -20,6 +20,8 @@ use tsrs_ast::{Diagnostic, SourceFile};
 use tsrs_core::P;
 use tsrs_diagnostics::Category;
 
+mod macro_values;
+
 #[global_allocator]
 static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 
@@ -75,6 +77,7 @@ fn emit(project: &Path, out: &Path) -> Result<bool, String> {
 
     let checkers = std::thread::available_parallelism().map_or(4, usize::from);
     let options = LoadOptions { root: slashed(project), files, checkers, flags: strict_flags() };
+    let lower_options = macro_values::fill(lower::Options::default(), project);
     let project = lower::load(&options, None)?;
     let load_time = start.elapsed();
 
@@ -86,7 +89,7 @@ fn emit(project: &Path, out: &Path) -> Result<bool, String> {
 
     let locator = placeholder_locator(&project);
     let t = Instant::now();
-    let lowered = lower::lower_files(&project, &locator, &lower::Options::default(), &sources);
+    let lowered = lower::lower_files(&project, &locator, &lower_options, &sources);
     let lower_time = t.elapsed();
 
     let t = Instant::now();
