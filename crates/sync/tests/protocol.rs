@@ -187,6 +187,52 @@ fn patches_compose_and_scope() {
     );
 }
 
+/// A plugin several generations behind gets the patches merged per path (main, made and removed since, comes back
+/// as a del); one further behind than the patch log gets the full tree.
+#[test]
+fn patches_merge_until_the_log_runs_out() {
+    let server = start(None);
+    let port = server.port();
+    server.publish(first());
+    server.publish(second());
+    let mut third = second();
+    third.remove("ServerScriptService/server/main");
+    assert_eq!(server.publish(third.clone()), 3);
+    let session = get(port, "/hello")["session"]
+        .as_str()
+        .expect("session")
+        .to_string();
+
+    let merged = get(port, &format!("/patch?since=1&session={session}"));
+    let expect = [
+        ("set", "ServerScriptService/server/doors/door"),
+        ("del", "ServerScriptService/server/old/gone"),
+        ("del", "ServerScriptService/server/old"),
+        ("del", "ServerScriptService/server/main"),
+    ];
+    assert_eq!(
+        ops(&merged),
+        expect.map(|(o, p)| (o.to_string(), p.to_string()))
+    );
+
+    // 64 more generations: the log now starts at the patch to generation 4, so 3 is the oldest it can serve.
+    for i in 0..64 {
+        third
+            .get_mut("ServerScriptService/server/doors/door")
+            .expect("door")
+            .source = Some(format!("return {i}").into());
+        server.publish(third.clone());
+    }
+    assert_eq!(
+        get(port, &format!("/patch?since=3&session={session}"))["full"],
+        false
+    );
+    assert_eq!(
+        get(port, &format!("/patch?since=2&session={session}"))["full"],
+        true
+    );
+}
+
 #[test]
 fn long_poll_wakes_on_publish() {
     let server = start(None);
