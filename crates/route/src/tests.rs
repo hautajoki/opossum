@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::*;
@@ -15,7 +16,7 @@ fn standard(fallback: bool) -> Routes {
 }
 
 fn at(routes: &Routes, rel: &str) -> String {
-    match route(routes, Path::new(rel)) {
+    match route(routes, Path::new(rel), &HashSet::new()) {
         Ok(Some(m)) => m.instance.join("/"),
         Ok(None) => "-".into(),
         Err(d) => d.code.as_str().into(),
@@ -85,7 +86,7 @@ fn names_drop_suffixes_and_extensions() {
     assert_eq!(at(&r, "shared/pkg@1/x.ts"), "ReplicatedStorage/shared/pkg@1/x");
     assert_eq!(at(&r, "shared/deck.spec.ts"), "ReplicatedStorage/shared/deck.spec");
     assert_eq!(at(&r, "shared/x.server.json"), "ReplicatedStorage/shared/x.server");
-    let m = route(&r, Path::new("server/boot@server.server.luau")).unwrap().unwrap();
+    let m = route(&r, Path::new("server/boot@server.server.luau"), &HashSet::new()).unwrap().unwrap();
     assert_eq!(
         (m.instance.join("/"), m.class),
         ("ServerScriptService/server/boot".into(), Class::Server)
@@ -110,7 +111,7 @@ fn init_files_make_the_folder_the_module() {
         "ReplicatedStorage/shared/mods/flux/index"
     );
     // A routing folder holding the init file is consumed, so the module takes its parent's name.
-    let m = route(&r, Path::new("app/server/index.server.ts")).unwrap().unwrap();
+    let m = route(&r, Path::new("app/server/index.server.ts"), &HashSet::new()).unwrap().unwrap();
     assert_eq!(
         (m.instance.join("/"), m.class, m.init),
         ("ServerScriptService/server/app".into(), Class::Server, true)
@@ -128,12 +129,17 @@ fn init_files_make_the_folder_the_module() {
         &[
             "m/init.luau",
             "m/a.luau",
-            "m/core/server/b.luau",
+            "m/core/init.luau",
+            "m/core/server/b.luau", // inside a module nothing routes: a library's own layout
+            "m/core/shared/init.luau",
             "m/index.d.ts",
             "t.d.ts",
         ],
     );
-    assert_eq!(codes(&s), [("route.splitFolder", "m/core/server/b.luau".into())]);
+    assert_eq!(codes(&s), []);
+    let at = |f: &str| s.find(Path::new(f)).unwrap().instance.join("/");
+    assert_eq!(at("m/core/server/b.luau"), "ReplicatedStorage/shared/m/core/server/b");
+    assert_eq!(at("m/core/shared/init.luau"), "ReplicatedStorage/shared/m/core/shared");
     assert_eq!(s.modules[0].types.as_deref(), Some(Path::new("/src/m/index.d.ts")));
     assert_eq!(s.decls, [PathBuf::from("/src/t.d.ts")]);
     assert_eq!(
@@ -154,8 +160,6 @@ fn tree_clashes() {
             "b/y/z.ts",
             "c/Thing.ts", // case-only sibling of c/thing
             "c/shared/thing.ts",
-            "k/core/init.luau", // core/shared is consumed, so its init lands on core
-            "k/core/shared/init.luau",
             "w/server/worker.client.luau", // the client never sees ServerScriptService
             "p/init.luau",
             "p/worker.client.luau", // a template its module clones, client scripts run in ReplicatedStorage
@@ -166,7 +170,6 @@ fn tree_clashes() {
         [
             ("tree.instanceClash", "a/shared/x.ts".into()),
             ("tree.instanceClash", "b/y.ts".into()),
-            ("tree.instanceClash", "k/core/shared/init.luau".into()),
             ("tree.deadScript", "w/server/worker.client.luau".into()),
             ("scan.portableName", "c/shared/thing.ts".into()),
         ]

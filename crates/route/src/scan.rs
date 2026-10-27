@@ -37,6 +37,14 @@ pub fn scan_files(root: &Path, files: Vec<PathBuf>, routes: &Routes) -> Scan {
         root: root.to_path_buf(),
         ..Scan::default()
     };
+    let module_dirs: HashSet<PathBuf> = files
+        .iter()
+        .filter(|rel| {
+            let name = rel.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            matches!(file_type(name), Some(FileType::Source { init: true, .. }))
+        })
+        .filter_map(|rel| rel.parent().map(Path::to_path_buf))
+        .collect();
     let mut dts = Vec::new();
     for rel in files {
         let name = rel.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -47,7 +55,7 @@ pub fn scan_files(root: &Path, files: Vec<PathBuf>, routes: &Routes) -> Scan {
                 ..
             })
             | None => {}
-            Some(FileType::Source { .. }) => match route(routes, &rel) {
+            Some(FileType::Source { .. }) => match route(routes, &rel, &module_dirs) {
                 Ok(Some(mut m)) => {
                     m.file = root.join(&rel);
                     s.by_file.insert(m.file.clone(), s.modules.len());
@@ -86,7 +94,7 @@ pub fn scan_files(root: &Path, files: Vec<PathBuf>, routes: &Routes) -> Scan {
     for m in &mut s.modules {
         m.template = m.class != Class::ModuleScript && (1..m.instance.len()).any(|k| homes.contains(&m.instance[..k]));
     }
-    check(&s.modules, routes, root, &mut s.diags);
+    check(&s.modules, root, &mut s.diags);
     s
 }
 
@@ -132,9 +140,8 @@ fn walk(dir: &Path, rel: &mut PathBuf, walked: &mut Vec<PathBuf>, out: &mut Vec<
     }
 }
 
-/// The checks that need the whole routed tree: instance clashes, split init folders, dead scripts and case-only
-/// sibling names.
-fn check(modules: &[Module], routes: &Routes, root: &Path, diags: &mut Vec<Diag>) {
+/// The checks that need the whole routed tree: instance clashes, dead scripts and case-only sibling names.
+fn check(modules: &[Module], root: &Path, diags: &mut Vec<Diag>) {
     let mut at: HashMap<&[String], usize> = HashMap::new();
     let mut folders: HashMap<&[String], usize> = HashMap::new();
     for (i, m) in modules.iter().enumerate() {
@@ -166,40 +173,6 @@ fn check(modules: &[Module], routes: &Routes, root: &Path, diags: &mut Vec<Diag>
                     shown(root, &modules[j].file)
                 ),
             });
-        }
-    }
-
-    // Every file under an init module's folder must route to the same target, so it lands inside that module.
-    let mut init_dirs: HashMap<&Path, usize> = HashMap::new();
-    for (i, m) in modules.iter().enumerate() {
-        if m.init
-            && let Some(dir) = m.file.parent()
-        {
-            init_dirs.insert(dir, i);
-        }
-    }
-    for m in modules {
-        let target = &routes.get(m.route).target;
-        let mut dir = m.file.parent();
-        while let Some(d) = dir.filter(|d| d.starts_with(root) && *d != root) {
-            if let Some(&j) = init_dirs.get(d) {
-                let owner = &modules[j];
-                if routes.get(owner.route).target != *target {
-                    diags.push(Diag {
-                        code: Code::SplitFolder,
-                        path: m.file.clone(),
-                        other: Some(owner.file.clone()),
-                        message: format!(
-                            "routes to {} but its folder is the module {} ({}); an init folder routes as one",
-                            routes.get(m.route).key,
-                            owner.full_name(),
-                            routes.get(owner.route).key
-                        ),
-                    });
-                    break;
-                }
-            }
-            dir = d.parent();
         }
     }
 

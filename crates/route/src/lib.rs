@@ -1,7 +1,8 @@
 //! Pure routing: a source path under `src/` to its instance path, realm and script class, by rogen v2's rules
-//! trimmed as DESIGN.md says. `route` decides one file from its path alone; `scan` walks a source root, routes
-//! every file and runs the tree checks that need all of them at once.
+//! trimmed as DESIGN.md says. `route` decides one file from its path and the folders that are modules; `scan`
+//! walks a source root, routes every file and runs the tree checks that need all of them at once.
 
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 mod scan;
@@ -46,7 +47,6 @@ pub enum Via {
 pub enum Code {
     Unrouted,
     Nested,
-    SplitFolder,
     Boundary,
     InstanceClash,
     DeadScript,
@@ -58,7 +58,6 @@ impl Code {
         match self {
             Code::Unrouted => "route.unrouted",
             Code::Nested => "route.nested",
-            Code::SplitFolder => "route.splitFolder",
             Code::Boundary => "route.boundary",
             Code::InstanceClash => "tree.instanceClash",
             Code::DeadScript => "tree.deadScript",
@@ -245,12 +244,13 @@ fn diag(code: Code, path: &Path, message: String) -> Diag {
     }
 }
 
-/// Routes one file, given its path relative to the source root. `Ok(None)` for files that never route
-/// (`.d.ts`, dotfiles, docs); the returned module's `file` is `rel`. The outermost route signal governs: a
-/// routing folder (consumed) or an `@key` suffix on a folder or the file (kept, minus the suffix). A later
-/// folder for the same key stays an ordinary folder and a later suffix for it comes off; a signal for another key
-/// is `route.nested`.
-pub fn route(routes: &Routes, rel: &Path) -> Result<Option<Module>, Diag> {
+/// Routes one file, given its path relative to the source root and the folders (relative too) that are modules,
+/// holding an init file. `Ok(None)` for files that never route (`.d.ts`, dotfiles, docs); the returned module's
+/// `file` is `rel`. The outermost route signal governs: a routing folder (consumed) or an `@key` suffix on a folder
+/// or the file (kept, minus the suffix). A later folder for the same key stays an ordinary folder and a later suffix
+/// for it comes off; a signal for another key is `route.nested`. Inside a module folder nothing routes: its
+/// children are its own parts, reached through `@self`, and keep their names as written.
+pub fn route(routes: &Routes, rel: &Path, module_dirs: &HashSet<PathBuf>) -> Result<Option<Module>, Diag> {
     let mut parts: Vec<&str> = Vec::new();
     for c in rel.components() {
         match c {
@@ -283,9 +283,16 @@ pub fn route(routes: &Routes, rel: &Path) -> Result<Option<Module>, Diag> {
     let mut governing: Option<(usize, Via, usize)> = None; // route, via, index of the part that routed
     let mut names: Vec<String> = Vec::new();
     let last = if init { dirs.len() } else { parts.len() };
+    // the parts after the outermost module folder are plain names
+    let plain =
+        (1..=dirs.len()).find(|&k| module_dirs.contains(&dirs[..k].iter().collect::<PathBuf>())).unwrap_or(last);
     for (i, &part) in parts[..last].iter().enumerate() {
         let is_file = i == dirs.len();
         let name = if is_file { stem } else { part };
+        if i >= plain {
+            names.push(name.to_owned());
+            continue;
+        }
         let (signal, kept) = match routes.folder(name) {
             Some(r) if !is_file => (Some((r, Via::Folder)), ""),
             _ => match routes.suffix(name) {
