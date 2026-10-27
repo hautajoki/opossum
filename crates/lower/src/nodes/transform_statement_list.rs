@@ -79,7 +79,9 @@ pub fn transform_statement_list_with_exports(
 ) -> Vec<Stmt> {
     let mut result = Vec::new();
     let remove_comments = state.compiler_options.remove_comments.is_true();
+    let top_level = parent.is_some_and(|p| p.kind() == Kind::SourceFile);
     for &statement in statements {
+        let first = result.len();
         let transformed_statements = transform_statement(state, statement);
         if !remove_comments {
             result.extend(state.get_leading_comments(statement));
@@ -92,6 +94,9 @@ pub fn transform_statement_list_with_exports(
 
         let is_final = transformed_statements.last().is_some_and(Stmt::is_final);
         result.extend(transformed_statements);
+        if top_level && result.len() > first {
+            state.spans.push((first, get_start(statement), statement.end().source_offset().unwrap_or(0)));
+        }
         if is_final {
             break;
         }

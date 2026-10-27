@@ -95,6 +95,8 @@ pub struct TransformState<'a> {
     /// Project bindings named after a Luau keyword or reserved global, by declaration
     /// (`transform_identifier::renamed_binding`).
     pub renames: FxHashMap<P<Node>, TemporaryIdentifier>,
+    /// The file's top-level statements as [`crate::Lowered::spans`] records them.
+    pub spans: Vec<(usize, u32, u32)>,
 }
 
 impl<'a> TransformState<'a> {
@@ -137,6 +139,7 @@ impl<'a> TransformState<'a> {
             symbol_to_id_map: FxHashMap::default(),
             class_element_to_object_key_map: FxHashMap::default(),
             renames: FxHashMap::default(),
+            spans: Vec::new(),
         }
     }
 

@@ -95,7 +95,7 @@ fn is_export_symbol_only_from_declare(export_symbol: P<Symbol>) -> bool {
     })
 }
 
-/// `handleExports`: the export table at the end of the file.
+/// `handleExports`: the export table at the end of the file. Returns whether `local exports = {}` went in at the top.
 fn handle_exports(
     state: &mut TransformState<'_>,
     source_file: P<SourceFile>,
@@ -188,7 +188,7 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
     // the statements of the source file
     let file_node = node.as_node();
     let mut statements = transform_statement_list(state, Some(file_node), node.get().statements.nodes());
-    handle_exports(state, node, symbol, &mut statements);
+    let exports_first = handle_exports(state, node, symbol, &mut statements);
 
     // a module returns nil when it exports no values
     let ends_with_return = last_non_comment_statement(&statements).is_some_and(|s| matches!(s, Stmt::Return(_)));
@@ -207,7 +207,15 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
     let directive_count =
         statements.iter().take_while(|s| matches!(s, Stmt::Comment(text) if text.starts_with('!'))).count();
     let directives: Vec<Stmt> = statements.drain(..directive_count).collect();
+    let header_len = header_statements.len();
     statements.splice(0..0, header_statements);
     statements.splice(0..0, directives);
+    // the spans index the body: shift them past `local exports` and the header (directives keep their place)
+    for span in &mut state.spans {
+        span.0 += usize::from(exports_first);
+        if span.0 >= directive_count {
+            span.0 += header_len;
+        }
+    }
     statements
 }

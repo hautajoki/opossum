@@ -29,6 +29,10 @@ pub struct Lowered {
     /// The Luau tree; `None` when lowering panicked (an internal error, in `diagnostics`).
     pub ast: Option<Vec<Stmt>>,
     pub diagnostics: Vec<P<Diagnostic>>,
+    /// Per top-level TypeScript statement that produced Luau: the index in `ast` of its first Luau statement, and
+    /// its start and end offsets in the file, in `ast` order. With `luau::render_with_lines` this maps a line of the
+    /// output back to the TypeScript that made it.
+    pub spans: Vec<(usize, u32, u32)>,
 }
 
 impl Lowered {
@@ -86,6 +90,7 @@ pub fn lower_files(project: &Project, locator: &Locator, options: &Options, file
                 file,
                 ast: None,
                 diagnostics: vec![internal_error(file.as_node(), "not lowered: an earlier file of its checker panicked")],
+                spans: Vec::new(),
             },
         })
         .collect()
@@ -124,7 +129,8 @@ fn run_group(
         };
         let diagnostics = std::mem::take(&mut state.diagnostics.diagnostics);
         let once = std::mem::take(&mut state.diagnostics.once);
-        outputs.push((i, FileOutput { lowered: Lowered { file, ast, diagnostics }, once }));
+        let spans = std::mem::take(&mut state.spans);
+        outputs.push((i, FileOutput { lowered: Lowered { file, ast, diagnostics, spans }, once }));
         if panicked {
             break;
         }
