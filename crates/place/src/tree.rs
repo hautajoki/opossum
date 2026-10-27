@@ -192,10 +192,11 @@ impl Place {
         Ok(r)
     }
 
-    /// Mounts a script template disabled, for the module that clones it to enable the copy.
+    /// Mounts a script template disabled, for the module that clones it to enable the copy. `Disabled` is what a
+    /// place file stores; `Enabled` does not serialize.
     pub fn disable(&mut self, r: Ref) {
         if let Some(inst) = self.dom.get_by_ref_mut(r) {
-            inst.properties.insert("Enabled".into(), Variant::Bool(false));
+            inst.properties.insert("Disabled".into(), Variant::Bool(true));
         }
     }
 
