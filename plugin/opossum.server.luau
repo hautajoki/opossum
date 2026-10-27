@@ -266,8 +266,9 @@ end
 local function sync(url: string, session: string)
 	local generation = 0
 	while enabled and server == url do
-		while RunService:IsRunning() do
+		if RunService:IsRunning() then
 			task.wait(0.5)
+			continue
 		end
 		local query = `{url}/patch?since={generation}&session={session}`
 		if only then
@@ -276,6 +277,10 @@ local function sync(url: string, session: string)
 		local patch: Patch? = decode(request("GET", query))
 		if not patch or not enabled then
 			return
+		end
+		-- A patch that lands after a playtest started is left for the poll after it ends, which returns it again.
+		if RunService:IsRunning() then
+			continue
 		end
 		if apply(url, patch) then
 			generation = patch.generation
