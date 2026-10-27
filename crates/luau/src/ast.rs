@@ -577,7 +577,7 @@ impl Expr {
 
     /// `isCall`: a call or a method call.
     pub fn is_call(&self) -> bool {
-        matches!(self, Expr::Call(_) | Expr::MethodCall(_))
+        matches!(self, Expr::Call(_) | Expr::MethodCall(_) | Expr::Require(_))
     }
 
     /// `isWritableExpression`: what can be assigned to.
