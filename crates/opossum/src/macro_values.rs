@@ -17,7 +17,8 @@ pub fn fill(mut options: lower::Options, project: &Path) -> lower::Options {
 }
 
 fn run_git(dir: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+    // no optional locks: `status` would otherwise refresh the index, writing into the repository
+    let output = Command::new("git").arg("--no-optional-locks").arg("-C").arg(dir).args(args).output().ok()?;
     output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
