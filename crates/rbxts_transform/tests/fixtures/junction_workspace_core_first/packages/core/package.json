@@ -1,0 +1,9 @@
+{
+	"name": "@rbxts/core",
+	"version": "1.0.0",
+	"main": "init.lua",
+	"types": "index.d.ts",
+	"dependencies": {
+		"@rbxts/services": "*"
+	}
+}

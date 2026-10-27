@@ -1,0 +1,10 @@
+{
+	"name": "P",
+	"tree": {
+		"Child": {
+			"$path": {
+				"optional": 1
+			}
+		}
+	}
+}

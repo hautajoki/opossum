@@ -1,0 +1,29 @@
+{"args":["build","--timings"],"ok":{"project":".","timings":true}}
+{"args":["--timings"],"ok":{"project":".","timings":true}}
+{"args":["build","--timings=false"],"ok":{"project":".","timings":false}}
+{"args":["build","--timings","false"],"ok":{"project":".","timings":false}}
+{"args":["build","--no-timings"],"ok":{"project":".","timings":false}}
+{"args":["build","--timings","--timings"],"ok":{"project":".","timings":true}}
+{"args":["build","--timings=yes"],"ok":{"project":".","timings":false}}
+{"args":["build","--events","json"],"ok":{"project":".","events":"json"}}
+{"args":["build","--events=json"],"ok":{"project":".","events":"json"}}
+{"args":["build","-w","--events","json"],"ok":{"project":".","watch":true,"events":"json"}}
+{"args":["build","--events"],"ok":{"project":".","events":""}}
+{"args":["build","--events","json","--events","text"],"ok":{"project":".","events":["json","text"]}}
+{"args":["build","--events","--timings"],"ok":{"project":".","timings":true,"events":""}}
+{"args":["build","--no-events"],"ok":{"project":".","events":false}}
+{"args":["build","--events","1"],"ok":{"project":".","events":"1"}}
+{"args":["build","--events","-w"],"ok":{"project":".","watch":true,"events":""}}
+{"args":["-w","--events","json","--timings","-p","."],"ok":{"project":".","watch":true,"timings":true,"events":"json"}}
+{"args":["build","--checkers","4"],"ok":{"project":".","checkers":4}}
+{"args":["build","--checkers=4"],"ok":{"project":".","checkers":4}}
+{"args":["build","--checkers","abc"],"ok":{"project":".","checkers":"abc"}}
+{"args":["build","--checkers"],"ok":{"project":".","checkers":true}}
+{"args":["build","--checkers","0x10"],"ok":{"project":".","checkers":16}}
+{"args":["build","--checkers","1e1"],"ok":{"project":".","checkers":10}}
+{"args":["build","--checkers","-1"],"ok":{"project":".","checkers":-1}}
+{"args":["build","--checkers","2","--checkers","3"],"ok":{"project":".","checkers":[2,3]}}
+{"args":["build","--no-checkers"],"ok":{"project":".","checkers":false}}
+{"args":["build","--checkers","4","--timings","--events=json","--verbose"],"ok":{"project":".","verbose":true,"timings":true,"events":"json","checkers":4}}
+{"args":["build","--timing"],"fail":"Unknown argument: timing"}
+{"args":["build","--event","json"],"fail":"Unknown argument: event"}

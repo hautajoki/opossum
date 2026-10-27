@@ -1,0 +1,14 @@
+{
+	"include": ["src"],
+	"compilerOptions": {
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"noLib": true,
+		"moduleDetection": "force",
+		"strict": true,
+		"target": "ESNext",
+		"types": [],
+		"rootDir": "src",
+		"noEmit": true
+	}
+}

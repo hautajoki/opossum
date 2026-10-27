@@ -1,0 +1,33 @@
+{
+	"name": "validator-graph",
+	"tree": {
+		"$className": "DataModel",
+		"ReplicatedStorage": {
+			"$className": "ReplicatedStorage",
+			"include": {
+				"$path": "include",
+				"node_modules": {
+					"$className": "Folder",
+					"@rbxts": {
+						"$path": "node_modules/@rbxts"
+					}
+				}
+			},
+			"common": {
+				"$path": "out/common"
+			},
+			"left": {
+				"$path": "out/left"
+			},
+			"right": {
+				"$path": "out/right"
+			}
+		},
+		"ServerScriptService": {
+			"$className": "ServerScriptService",
+			"game": {
+				"$path": "out/game"
+			}
+		}
+	}
+}

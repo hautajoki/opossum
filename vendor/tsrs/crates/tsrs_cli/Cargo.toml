@@ -1,0 +1,36 @@
+[package]
+name = "tsrs_cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tsrs_core.workspace = true
+tsrs_vfs.workspace = true
+tsrs_compiler.workspace = true
+tsrs_lsp.workspace = true
+tsrs_api.workspace = true
+tsrs_api_transport.workspace = true
+tsrs_execute.workspace = true
+mimalloc-safe.workspace = true
+libc.workspace = true
+
+[features]
+noembed = ["tsrs_vfs/noembed"]
+# The system allocator instead of mimalloc, for sanitizer builds (AddressSanitizer and ThreadSanitizer track only its
+# blocks; mimalloc's memory looks like one long-lived region to them).
+system-alloc = []
+
+[lib]
+test = false
+doctest = false
+
+[[bin]]
+name = "tsrs"
+path = "src/main.rs"
+test = false

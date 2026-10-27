@@ -1,0 +1,10 @@
+[96msrc/index.ts[0m:[93m3[0m:[93m1[0m - [91merror[0m[90m TS1005: [0m'}' expected.
+
+[7m3[0m 
+[7m [0m [91m[0m
+
+  [96msrc/index.ts[0m:[93m1[0m:[93m18[0m
+    [7m1[0m export const x = {
+    [7m [0m [96m                 ~[0m
+    The parser expected to find a '}' to match the '{' token here.
+

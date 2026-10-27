@@ -1,0 +1,53 @@
+use tsrs_contentmapper::{
+    Diagnostic, METHOD_INITIALIZE, METHOD_TRANSFORM, ProtocolJson, TransformParams, TransformResult,
+};
+use tsrs_core::json::Value;
+use tsrs_diagnostics as diagnostics;
+use tsrs_ipc as ipc;
+
+use crate::protocol::{
+    TestHandler, identity_mapped_output, initialize_result, no_notifications, unexpected_method,
+    unmarshal_params,
+};
+
+// diagnostic_code_collision.go:13
+pub struct DiagnosticCodeCollisionHandler;
+
+impl TestHandler for DiagnosticCodeCollisionHandler {}
+
+impl ipc::Handler for DiagnosticCodeCollisionHandler {
+    // diagnostic_code_collision.go:15
+    fn handle_request(&self, method: &str, params: Option<&Value>) -> Result<Value, ipc::Error> {
+        match method {
+            METHOD_INITIALIZE => Ok(initialize_result("mapper").marshal_json()),
+            METHOD_TRANSFORM => {
+                let p: TransformParams = unmarshal_params(params)?;
+                let mapped_output = identity_mapped_output(&p.content)?;
+                let start = i64::try_from(
+                    p.content.find("foo").expect("collision test input contains foo"),
+                )
+                .expect("diagnostic position exceeds protocol i64");
+                Ok(TransformResult {
+                    mapped_output,
+                    diagnostics: vec![Diagnostic {
+                        message_text: "Mapper diagnostic with a colliding code.".to_string(),
+                        start,
+                        length: "foo".len() as i64,
+                        code: diagnostics::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATED_DECLARATIONS.code(),
+                    }],
+                    ..Default::default()
+                }
+                .marshal_json())
+            }
+            _ => Err(unexpected_method(method)),
+        }
+    }
+
+    fn handle_notification(
+        &self,
+        _method: &str,
+        _params: Option<&Value>,
+    ) -> Result<(), ipc::Error> {
+        no_notifications()
+    }
+}

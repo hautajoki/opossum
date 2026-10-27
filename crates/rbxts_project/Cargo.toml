@@ -1,0 +1,17 @@
+[package]
+name = "rbxts_project"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+tsrs_core.workspace = true
+tsrs_ast.workspace = true
+tsrs_vfs.workspace = true
+tsrs_tsoptions.workspace = true
+tsrs_compiler.workspace = true
+tsrs_diagnostics.workspace = true
+tsrs_module.workspace = true
+tsrs_contentmapper.workspace = true
+serde_json.workspace = true

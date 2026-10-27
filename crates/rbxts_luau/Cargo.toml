@@ -1,0 +1,9 @@
+[package]
+name = "rbxts_luau"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# No dependencies: plain owned data and a renderer (DESIGN §3).
+[dependencies]

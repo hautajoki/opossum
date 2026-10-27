@@ -1,0 +1,2539 @@
+{"args":[],"ok":{"project":"."}}
+{"args":["build"],"ok":{"project":"."}}
+{"args":["build","build"],"fail":"Unknown argument: build"}
+{"args":["x","build"],"fail":"Unknown arguments: x, build"}
+{"args":["--verbose","build"],"fail":"Unknown argument: build"}
+{"args":["-w","build"],"fail":"Unknown argument: build"}
+{"args":["help"],"other":"help"}
+{"args":["x","help"],"other":"help"}
+{"args":["help","x"],"fail":"Unknown arguments: help, x"}
+{"args":["--verbose","x","build"],"fail":"Unknown argument: build"}
+{"args":["-p","x","build"],"ok":{"project":"x"}}
+{"args":["--","build"],"ok":{"project":"."}}
+{"args":["build","--","help"],"ok":{"project":"."}}
+{"args":["--type","game","--type","model"],"ok":{"project":".","type":["game","model"]}}
+{"args":["--type","game","--type","place"],"fail":"Invalid values:\n  Argument: type, Given: \"place\", Choices: \"game\", \"model\", \"package\""}
+{"args":["-p","a","-p","b"],"ok":{"project":["a","b"]}}
+{"args":["--project=a","--project=b"],"ok":{"project":["a","b"]}}
+{"args":["--include-path=a","-i","b"],"ok":{"project":".","includePath":["a","b"]}}
+{"args":["--verbose","--verbose=false"],"ok":{"project":".","verbose":false}}
+{"args":["--noInclude","--noInclude"],"ok":{"project":".","noInclude":true}}
+{"args":["-w","--usePolling"],"ok":{"project":".","watch":true,"usePolling":true}}
+{"args":["--usePolling","-w","false"],"ok":{"project":".","watch":false,"usePolling":true}}
+{"args":["--no-watch","--usePolling"],"ok":{"project":".","watch":false,"usePolling":true}}
+{"args":["--type","place","--bogus"],"fail":"Unknown argument: bogus"}
+{"args":["--type","x","--usePolling"],"fail":"Invalid values:\n  Argument: type, Given: \"x\", Choices: \"game\", \"model\", \"package\""}
+{"args":["--includePath","-x"],"fail":"Unknown argument: x"}
+{"args":["-p","-1"],"ok":{"project":"-1"}}
+{"args":["--type","-1"],"fail":"Invalid values:\n  Argument: type, Given: -1, Choices: \"game\", \"model\", \"package\""}
+{"args":["--type","5"],"fail":"Invalid values:\n  Argument: type, Given: 5, Choices: \"game\", \"model\", \"package\""}
+{"args":["--type","1e3"],"fail":"Invalid values:\n  Argument: type, Given: 1000, Choices: \"game\", \"model\", \"package\""}
+{"args":["--type","0x10"],"fail":"Invalid values:\n  Argument: type, Given: 16, Choices: \"game\", \"model\", \"package\""}
+{"args":["--type","010"],"fail":"Invalid values:\n  Argument: type, Given: \"010\", Choices: \"game\", \"model\", \"package\""}
+{"args":["--type","x\ny"],"fail":"Invalid values:\n  Argument: type, Given: \"x\\ny\", Choices: \"game\", \"model\", \"package\""}
+{"args":["--10","--2","--b"],"fail":"Unknown arguments: 2, 10, b"}
+{"args":["1.50"],"fail":"Unknown argument: 1.50"}
+{"args":[""],"fail":"Unknown argument: \"\""}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["--include-path","include"],"ok":{"project":".","includePath":"include"}}
+{"args":["--optimized-loops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["1e3","-","1e3"],"fail":"Unknown arguments: 1e3, -, 1e3"}
+{"args":["--allow-comment-directives","--writeTransformedFiles","-wp"],"ok":{"project":".","watch":true,"writeTransformedFiles":true,"allowCommentDirectives":true}}
+{"args":["-wv","--no-verbose"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","--no-verbose=true"],"fail":"Unknown arguments: no-verbose, noVerbose, x"}
+{"args":["--watch","--luau","-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--writeTransformedFiles","-wp","1e3","-"],"fail":"Unknown argument: -"}
+{"args":["-v","--usePolling","--INCLUDE-PATH","place"],"other":"version"}
+{"args":["--optimizedLoops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-watch","--writeTransformedFiles","--verbose=maybe"],"ok":{"project":".","watch":false,"verbose":false,"writeTransformedFiles":true}}
+{"args":["--no-include","x","-w","--type=game"],"fail":"Unknown arguments: include, x"}
+{"args":["--no-no-include","-p-","-1","--luau=yes"],"fail":"Unknown argument: -1"}
+{"args":["--foo-bar","place","--LUAU"],"fail":"Unknown arguments: foo-bar, fooBar, LUAU"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--no-i","-v","--usePolling","--no-luau"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["-1","--writeOnlyChanged"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","--Include-Path","-1","-"],"fail":"Unknown arguments: Include-Path, IncludePath, place, -"}
+{"args":["--10","--no-luau","--luau=yes"],"fail":"Unknown argument: 10"}
+{"args":["-wp"],"ok":{"project":".","watch":true}}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--no-rojo"],"ok":{"project":".","rojo":false}}
+{"args":["--writeOnlyChanged"],"ok":{"project":".","writeOnlyChanged":true}}
+{"args":["--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["place","-1","--bogus","--bogus"],"fail":"Unknown arguments: bogus, place, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-p=."],"ok":{"project":"."}}
+{"args":["--optimizedLoops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["1e3","x","-1","place"],"fail":"Unknown arguments: 1e3, x, -1, place"}
+{"args":["-","--type=game"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","--optimizedLoops"],"fail":"Unknown argument: x"}
+{"args":["--no-verbose","--include-path"],"ok":{"project":".","verbose":false,"includePath":""}}
+{"args":["-i","-1","place","1e3"],"fail":"Unknown arguments: place, 1e3"}
+{"args":["--noInclude=0"],"ok":{"project":".","noInclude":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-","--include-path","--no-no-include"],"fail":"Unknown arguments: no-, no"}
+{"args":["--help=false","--optimizedLoops","-","--5"],"fail":"Unknown arguments: 5, -"}
+{"args":["--include-path"],"ok":{"project":".","includePath":""}}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--include-path"],"ok":{"project":".","includePath":""}}
+{"args":["--version=false","place","x"],"fail":"Unknown arguments: place, x"}
+{"args":["-p=.","--no-no-include","--verbose=true","place"],"fail":"Unknown argument: place"}
+{"args":["-1","1e3"],"fail":"Unknown arguments: -1, 1e3"}
+{"args":["--noInclude=0","--NO-INCLUDE","-i","x"],"fail":"Unknown arguments: noInclude, no-include"}
+{"args":["--NO-INCLUDE"],"fail":"Unknown argument: noInclude"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["-wv","---x"],"other":"version"}
+{"args":["place","--include-path=a"],"fail":"Unknown argument: place"}
+{"args":["place","--no-i"],"fail":"Unknown argument: place"}
+{"args":["-ip","--type=\"game\"","--no-rojo"],"ok":{"project":".","type":"game","includePath":"","rojo":false}}
+{"args":["-","--luau=yes","--no-p"],"fail":"Unknown argument: -"}
+{"args":["place","--=x","-1"],"fail":"Unknown arguments: =x, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--foo-bar","place"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["--type=","--bogus"],"fail":"Unknown argument: bogus"}
+{"args":["1e3","x","--type"],"fail":"Unknown arguments: 1e3, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-pw","-","--use-polling"],"fail":"Unknown argument: -"}
+{"args":["--bogus","place","--no-i","-pw"],"fail":"Unknown argument: bogus"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-w","x"],"fail":"Unknown argument: x"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","--verbose","--verbose=maybe"],"fail":"Unknown argument: x"}
+{"args":["--type"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["--NO-INCLUDE","--rojo='r'","--noInclude=0"],"fail":"Unknown arguments: noInclude, no-include"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","--writeTransformedFiles","1e3","place"],"fail":"Unknown arguments: place, 1e3, place"}
+{"args":["--allow-comment-directives","--no-no-include"],"ok":{"project":".","noInclude":false,"allowCommentDirectives":true}}
+{"args":["-h","--verbose=maybe"],"other":"help"}
+{"args":["--luau=yes","--10","-i=inc"],"fail":"Unknown argument: 10"}
+{"args":["-x.y","--verbose=true","--help"],"other":"help"}
+{"args":["---"],"fail":"Unknown argument: ---"}
+{"args":["--no-","-","-i","-"],"fail":"Unknown arguments: no-, no, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-luau","--use-polling","-1"],"fail":"Unknown argument: -1"}
+{"args":["--include-path","--no-watch"],"ok":{"project":".","watch":false,"includePath":""}}
+{"args":["--usePolling","--no-no-include","-h"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--use-polling","--optimizedLoops"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["-","--5","---","-v"],"other":"version"}
+{"args":["--noInclude=0","x","---x","--bogus"],"fail":"Unknown arguments: -x, x, bogus, x"}
+{"args":["-pi"],"ok":{"project":".","includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--version","-1","--writeTransformedFiles","-p"],"other":"version"}
+{"args":["-pi","x","1e3","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":["place","-1","1e3"],"fail":"Unknown arguments: place, -1, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-type"],"fail":"Invalid values:\n  Argument: type, Given: false, Choices: \"game\", \"model\", \"package\""}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["-","-1","--rojo"],"fail":"Unknown arguments: -, -1"}
+{"args":["--allow-comment-directives"],"ok":{"project":".","allowCommentDirectives":true}}
+{"args":["--verbose=maybe","--luau","--optimized-loops","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-x.y","x","--rojo"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","1e3"],"fail":"Unknown arguments: -1, 1e3"}
+{"args":["--no-watch","--type=game","-h"],"other":"help"}
+{"args":["--NO-INCLUDE","--LUAU","x","-1"],"fail":"Unknown arguments: noInclude, LUAU, -1"}
+{"args":["--no-i","-include","place"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--project.x","--include-path=a","-p-"],"ok":{"project":[{"x":true},"-"],"includePath":"a"}}
+{"args":["--help","--optimizedLoops","place","--10"],"other":"help"}
+{"args":["-ip"],"ok":{"project":".","includePath":""}}
+{"args":["--watch"],"ok":{"project":".","watch":true}}
+{"args":["-pw","--rojo"],"ok":{"project":".","watch":true,"rojo":""}}
+{"args":["--allow-comment-directives","-pi"],"ok":{"project":".","includePath":"","allowCommentDirectives":true}}
+{"args":["--no-p","x"],"fail":"Unknown argument: x"}
+{"args":["place","--LUAU","--INCLUDE-PATH","--no-noInclude"],"fail":"Unknown arguments: LUAU, place"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["--no-","place","--logTruthyChanges","--no-verbose"],"fail":"Unknown arguments: no-, no"}
+{"args":["--5","--version=false"],"fail":"Unknown argument: 5"}
+{"args":["-x","-p=."],"fail":"Unknown argument: x"}
+{"args":["--no-no-include","--x.y","--no-p"],"fail":"Unknown argument: x"}
+{"args":["-x","-h","-p=.","--rojo='r'"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["place","--verbose"],"fail":"Unknown argument: place"}
+{"args":["--include-path=a"],"ok":{"project":".","includePath":"a"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-","--allowCommentDirectives"],"fail":"Unknown arguments: no-, no"}
+{"args":["---x","--type=\"game\"","--bogus","place"],"fail":"Unknown arguments: -x, x, bogus"}
+{"args":["place","--project.x"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--verbose=maybe","--version"],"other":"version"}
+{"args":["-p=.","--include-path=a","--project.x"],"ok":{"project":[".",{"x":true}],"includePath":"a"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--usePolling","--no-rojo","--no-no-include"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["-ip","-p","-w"],"ok":{"project":[".","."],"watch":true,"includePath":""}}
+{"args":["-","--=x"],"fail":"Unknown arguments: =x, -"}
+{"args":["-1","-wp"],"fail":"Unknown argument: -1"}
+{"args":["-include","--logTruthyChanges"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--includePath","--allowCommentDirectives","1e3","place"],"fail":"Unknown arguments: 1e3, place"}
+{"args":["x","-p"],"fail":"Unknown argument: x"}
+{"args":["--no-verbose=true","-1","-p-"],"fail":"Unknown arguments: no-verbose, noVerbose, -1"}
+{"args":["--10","--type=","1e3"],"fail":"Unknown arguments: 10, 1e3"}
+{"args":["--=x"],"fail":"Unknown argument: =x"}
+{"args":["-","--10","-p"],"fail":"Unknown arguments: 10, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--luau=yes","--type=\"game\""],"ok":{"project":".","type":"game","luau":false}}
+{"args":["--help=false","-"],"fail":"Unknown argument: -"}
+{"args":["--Include-Path","--use-polling"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":["-p-","--NO-INCLUDE","--help=false","x"],"fail":"Unknown arguments: noInclude, x"}
+{"args":["-p","place","--logTruthyChanges","-"],"fail":"Unknown argument: -"}
+{"args":["--no-verbose","--no-watch","place","--LUAU"],"fail":"Unknown arguments: LUAU, place"}
+{"args":["--INCLUDE-PATH","--bogus","x","--no-verbose=true"],"fail":"Unknown arguments: bogus, no-verbose, noVerbose"}
+{"args":["-1","-wv","-pi","1e3"],"other":"version"}
+{"args":["--no-include","--writeTransformedFiles","x","--help=false"],"fail":"Unknown arguments: include, x"}
+{"args":["--logTruthyChanges"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--writeTransformedFiles","--Include-Path"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":["--use-polling","--noInclude"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimizedLoops","--watch","x","place"],"fail":"Unknown arguments: x, place"}
+{"args":["-p=."],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--writeOnlyChanged","--luau","-","--INCLUDE-PATH"],"fail":"Unknown argument: -"}
+{"args":["--include-path","--use-polling","--help"],"other":"help"}
+{"args":["--luau"],"ok":{"project":".","luau":true}}
+{"args":["--project"],"ok":{"project":"."}}
+{"args":["--no-rojo","--5","1e3","--verbose=maybe"],"fail":"Unknown argument: 5"}
+{"args":["-","--bogus","--rojo"],"fail":"Unknown arguments: bogus, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-pi","--use-polling","place","-i"],"fail":"Unknown argument: place"}
+{"args":["-","-x.y"],"fail":"Unknown arguments: x, -"}
+{"args":["-v","-pi","--no-verbose"],"other":"version"}
+{"args":["place","x","-p=.","--=x"],"fail":"Unknown arguments: =x, place, x"}
+{"args":["--no-verbose=true","--writeOnlyChanged","x","--no-include"],"fail":"Unknown arguments: no-verbose, noVerbose, include, x"}
+{"args":["place","place"],"fail":"Unknown arguments: place, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","--writeOnlyChanged","1e3"],"fail":"Unknown arguments: place, 1e3"}
+{"args":["--optimized-loops","--writeTransformedFiles"],"ok":{"project":".","writeTransformedFiles":true,"optimizedLoops":true}}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["--optimized-loops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["--noInclude=0","--includePath","--allowCommentDirectives","x"],"fail":"Unknown argument: x"}
+{"args":["place","--no-verbose","--rojo","--project"],"fail":"Unknown argument: place"}
+{"args":["1e3","--include-path=a","--writeOnlyChanged"],"fail":"Unknown argument: 1e3"}
+{"args":["--logTruthyChanges"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--type=","-","-1","-w"],"fail":"Unknown arguments: -, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--=x","--luau","--include-path=a","--log-truthy-changes"],"fail":"Unknown argument: =x"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--type","-","-","--version"],"other":"version"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--watch","--bogus"],"fail":"Unknown argument: bogus"}
+{"args":["--no-verbose=true","place"],"fail":"Unknown arguments: no-verbose, noVerbose, place"}
+{"args":["-p-","-h","place"],"other":"help"}
+{"args":["-pw"],"ok":{"project":".","watch":true}}
+{"args":["--LUAU","--type"],"fail":"Unknown argument: LUAU"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-x","--no-p","--no-verbose","1e3"],"fail":"Unknown arguments: x, 1e3"}
+{"args":["1e3","--include-path=a","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":["1e3","--rojo='r'","--verbose=true","place"],"fail":"Unknown arguments: 1e3, place"}
+{"args":["--project.x","x","-i"],"ok":{"project":{"x":"x"},"includePath":""}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-w","-i=inc","--type=\"game\""],"ok":{"project":".","watch":true,"type":"game","includePath":"inc"}}
+{"args":["1e3","-p-","x","--watch"],"fail":"Unknown arguments: 1e3, x"}
+{"args":["-","--type=\"game\"","--luau"],"fail":"Unknown argument: -"}
+{"args":["--type=\"game\""],"ok":{"project":".","type":"game"}}
+{"args":["-","--allow-comment-directives"],"fail":"Unknown argument: -"}
+{"args":["--foo-bar","place"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-rojo","--no-p"],"ok":{"project":false,"rojo":false}}
+{"args":["x","--verbose=true"],"fail":"Unknown argument: x"}
+{"args":["--bogus"],"fail":"Unknown argument: bogus"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-i=inc","--writeTransformedFiles","--verbose"],"ok":{"project":".","verbose":true,"writeTransformedFiles":true,"includePath":"inc"}}
+{"args":["--x.y","--log-truthy-changes","--log-truthy-changes"],"fail":"Unknown argument: x"}
+{"args":["--no-noInclude","--Include-Path","-v"],"other":"version"}
+{"args":["place","-","place","--rojo"],"fail":"Unknown arguments: place, -, place"}
+{"args":["--help=false","-x"],"fail":"Unknown argument: x"}
+{"args":["--no-verbose=true","--rojo='r'","x"],"fail":"Unknown arguments: no-verbose, noVerbose, x"}
+{"args":["--bogus","-"],"fail":"Unknown arguments: bogus, -"}
+{"args":["--log-truthy-changes","1e3","--verbose=maybe","--rojo='r'"],"fail":"Unknown argument: 1e3"}
+{"args":["--use-polling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["--noInclude"],"ok":{"project":".","noInclude":true}}
+{"args":["--verbose"],"ok":{"project":".","verbose":true}}
+{"args":["place","-wv","--no-noInclude"],"other":"version"}
+{"args":["1e3","--no-luau","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-noInclude","1e3","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-p=.","place"],"fail":"Unknown argument: place"}
+{"args":["-ip","x"],"ok":{"project":"x","includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-p","--bogus","--foo-bar"],"fail":"Unknown arguments: bogus, foo-bar, fooBar"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["place","-1"],"fail":"Unknown arguments: place, -1"}
+{"args":["1e3","--type=\"game\"","place"],"fail":"Unknown arguments: 1e3, place"}
+{"args":["--writeOnlyChanged","--LUAU","--include-path=a"],"fail":"Unknown argument: LUAU"}
+{"args":["-p","x","1e3","-1"],"fail":"Unknown arguments: 1e3, -1"}
+{"args":["--no-noInclude","place","--LUAU"],"fail":"Unknown arguments: LUAU, place"}
+{"args":["--optimized-loops","--type=game","x","--usePolling"],"fail":"Unknown argument: x"}
+{"args":["--no-include","--no-luau"],"fail":"Unknown argument: include"}
+{"args":["--optimizedLoops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--no-noInclude","--Include-Path","--version=false","x"],"fail":"Unknown arguments: Include-Path, IncludePath, x"}
+{"args":["place","--use-polling","--10"],"fail":"Unknown arguments: 10, place"}
+{"args":["--no-type","--LUAU","--verbose","-wp"],"fail":"Unknown argument: LUAU"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--log-truthy-changes","-1","--allow-comment-directives","--no-p"],"fail":"Unknown argument: -1"}
+{"args":["-x"],"fail":"Unknown argument: x"}
+{"args":["--verbose","--no-include"],"fail":"Unknown argument: include"}
+{"args":["--type=game"],"ok":{"project":".","type":"game"}}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","--no-p","-x.y","--includePath"],"fail":"Unknown arguments: x, place"}
+{"args":["-wv","--include-path=a","-"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-noInclude"],"ok":{"project":".","noInclude":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["---x","--rojo","-p=."],"fail":"Unknown arguments: -x, x"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","-1","--project","-1"],"fail":"Unknown arguments: -1, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-pw"],"ok":{"project":".","watch":true}}
+{"args":["--no-i","--project.x"],"ok":{"project":{"x":true},"includePath":false}}
+{"args":["--includePath","-","--logTruthyChanges"],"fail":"Unknown argument: -"}
+{"args":["--luau=yes","-v"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--=x"],"fail":"Unknown argument: =x"}
+{"args":["--10"],"fail":"Unknown argument: 10"}
+{"args":["--verbose=maybe","place"],"fail":"Unknown argument: place"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["-wv","--no-noInclude","--Include-Path","x"],"other":"version"}
+{"args":["-i=inc"],"ok":{"project":".","includePath":"inc"}}
+{"args":["--type","-x.y","-1","--verbose=maybe"],"fail":"Unknown arguments: x, -1"}
+{"args":["1e3","-x.y","--no-i"],"fail":"Unknown arguments: x, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--x.y"],"fail":"Unknown argument: x"}
+{"args":["-x.y","x","1e3","---"],"fail":"Unknown arguments: x, 1e3, ---"}
+{"args":["--verbose=maybe","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--project","--foo-bar","--type=\"game\"","x"],"fail":"Unknown arguments: foo-bar, fooBar, x"}
+{"args":["---","--no-no-include"],"fail":"Unknown argument: ---"}
+{"args":["1e3","--no-rojo"],"fail":"Unknown argument: 1e3"}
+{"args":["-wp","--writeOnlyChanged","--verbose=maybe","place"],"fail":"Unknown argument: place"}
+{"args":["--no-include","--luau","--version","--noInclude"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-i","--verbose"],"ok":{"project":".","verbose":true,"includePath":""}}
+{"args":["--type=","--no-noInclude","-1","--10"],"fail":"Unknown arguments: 10, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-watch","x","-"],"fail":"Unknown arguments: x, -"}
+{"args":["--use-polling","x"],"fail":"Unknown argument: x"}
+{"args":["--no-luau","--allow-comment-directives"],"ok":{"project":".","allowCommentDirectives":true,"luau":false}}
+{"args":["--verbose"],"ok":{"project":".","verbose":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--version","--writeTransformedFiles","--5","--writeTransformedFiles"],"other":"version"}
+{"args":["--project.x","-x.y"],"fail":"Unknown argument: x"}
+{"args":["--help"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--includePath"],"ok":{"project":".","includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-wp","1e3"],"ok":{"project":"1e3","watch":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--luau=yes"],"ok":{"project":".","luau":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--help","--use-polling"],"other":"help"}
+{"args":["-wv","-1","place","--INCLUDE-PATH"],"other":"version"}
+{"args":["place","--no-p","x"],"fail":"Unknown arguments: place, x"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--=x","--includePath","--type"],"fail":"Unknown argument: =x"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["-x.y"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--logTruthyChanges"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":["-1","--type=\"game\""],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--watch","--no-","--help=false"],"fail":"Unknown arguments: no-, no, 1e3"}
+{"args":["1e3","-wp"],"fail":"Unknown argument: 1e3"}
+{"args":["---","--version","-h","x"],"other":"help"}
+{"args":["--verbose","--logTruthyChanges","--10"],"fail":"Unknown argument: 10"}
+{"args":["--no-include","--allow-comment-directives","--x.y"],"fail":"Unknown arguments: include, x"}
+{"args":["1e3","place","--usePolling","x"],"fail":"Unknown arguments: 1e3, place, x"}
+{"args":["--optimizedLoops","--writeTransformedFiles","--log-truthy-changes"],"ok":{"project":".","logTruthyChanges":true,"writeTransformedFiles":true,"optimizedLoops":true}}
+{"args":["--no-i"],"ok":{"project":".","includePath":false}}
+{"args":["x","x","x"],"fail":"Unknown arguments: x, x, x"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--no-type","-1","--no-no-include","-ip"],"fail":"Unknown argument: -1"}
+{"args":["-","--noInclude=0","-p","1e3"],"fail":"Unknown argument: -"}
+{"args":["-wv"],"other":"version"}
+{"args":["--no-watch","--writeOnlyChanged"],"ok":{"project":".","watch":false,"writeOnlyChanged":true}}
+{"args":["--use-polling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["place","-wv"],"other":"version"}
+{"args":["--no-no-include","-p=."],"ok":{"project":".","noInclude":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--luau=yes","-","-","--no-p"],"fail":"Unknown arguments: -, -"}
+{"args":["--version","--rojo='r'","-","--x.y"],"other":"version"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--noInclude=0","--verbose=true"],"ok":{"project":".","verbose":true,"noInclude":false}}
+{"args":["-v","1e3","--luau"],"other":"version"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--type","--no-i"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["--no-p","--verbose","-"],"fail":"Unknown argument: -"}
+{"args":["x","--luau=yes","--no-verbose","--optimizedLoops"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","","-"],"fail":"Unknown arguments: 1e3, \"\", -"}
+{"args":["--rojo","-1"],"ok":{"project":".","rojo":"-1"}}
+{"args":["-1","-x","-wv"],"other":"version"}
+{"args":["--no-p","--verbose=maybe","place"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-v","-x"],"other":"version"}
+{"args":["place","--verbose=maybe","--verbose=true"],"fail":"Unknown argument: place"}
+{"args":["--project.x"],"ok":{"project":{"x":true}}}
+{"args":["-","-1","-1"],"fail":"Unknown arguments: -, -1, -1"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["place","--no-verbose=true","-pw","-include"],"fail":"Unknown arguments: no-verbose, noVerbose, n, c, l, u, d, e, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-no-include"],"ok":{"project":".","noInclude":false}}
+{"args":["--type"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["place","--type","-","place"],"fail":"Unknown arguments: place, -, place"}
+{"args":["--usePolling","--allow-comment-directives"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["--writeOnlyChanged","--allowCommentDirectives","x"],"fail":"Unknown argument: x"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--help=false","x"],"fail":"Unknown argument: x"}
+{"args":["--no-watch","1e3","--type=\"game\"","-pi"],"fail":"Unknown argument: 1e3"}
+{"args":["-x","-1","--10"],"fail":"Unknown arguments: 10, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--luau=yes","--no-rojo"],"ok":{"project":".","rojo":false,"luau":false}}
+{"args":["-1","--x.y","x"],"fail":"Unknown arguments: x, -1"}
+{"args":["--no-no-include"],"ok":{"project":".","noInclude":false}}
+{"args":["-pi","--allowCommentDirectives","--writeTransformedFiles"],"ok":{"project":".","writeTransformedFiles":true,"includePath":"","allowCommentDirectives":true}}
+{"args":["-","-","--luau","-1"],"fail":"Unknown arguments: -, -, -1"}
+{"args":["--no-noInclude","-1","--bogus","--noInclude=0"],"fail":"Unknown arguments: bogus, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--verbose"],"ok":{"project":".","verbose":true}}
+{"args":["-h","--noInclude=0","--no-include","-1"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-watch","--project","x"],"ok":{"project":"x","watch":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","place","-p"],"fail":"Unknown arguments: -1, place"}
+{"args":["--verbose=true","x","-","place"],"fail":"Unknown arguments: x, -, place"}
+{"args":["--NO-INCLUDE","place","-"],"fail":"Unknown arguments: noInclude, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":["--rojo"],"ok":{"project":".","rojo":""}}
+{"args":["--luau=yes"],"ok":{"project":".","luau":false}}
+{"args":["--foo-bar","--no-rojo","--project.x"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","--no-type","--no-i","--noInclude=0"],"fail":"Unknown argument: x"}
+{"args":["--no-i","--10","--no-"],"fail":"Unknown arguments: 10, no-, no"}
+{"args":["--luau","--verbose=true","--no-luau","--watch"],"ok":{"project":".","watch":true,"verbose":true,"luau":false}}
+{"args":["--verbose","-pi","1e3","-"],"fail":"Unknown argument: -"}
+{"args":["--INCLUDE-PATH","-x","--includePath"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--verbose=maybe","--INCLUDE-PATH","--help=false","-x.y"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-p=.","--rojo='r'"],"ok":{"project":".","rojo":"r"}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--x.y","-v","place"],"other":"version"}
+{"args":["--no-verbose","--verbose=true","-","--no-i"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--=x","-i","-","--LUAU"],"fail":"Unknown arguments: =x, LUAU"}
+{"args":["--version=false"],"ok":{"project":"."}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--rojo","--10","--no-verbose=true","place"],"fail":"Unknown arguments: 10, no-verbose, noVerbose, place"}
+{"args":["1e3","--allowCommentDirectives","--no-i"],"fail":"Unknown argument: 1e3"}
+{"args":["--no-rojo","-1"],"fail":"Unknown argument: -1"}
+{"args":["-x.y","---x"],"fail":"Unknown arguments: x, -x"}
+{"args":["1e3","--no-verbose","--INCLUDE-PATH"],"fail":"Unknown argument: 1e3"}
+{"args":["-","--no-i","--x.y"],"fail":"Unknown arguments: x, -"}
+{"args":["--help","place","x","---x"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--no-watch"],"ok":{"project":".","watch":false}}
+{"args":["--verbose=maybe","--allow-comment-directives","-"],"fail":"Unknown argument: -"}
+{"args":["--help=false","--no-luau","x","place"],"fail":"Unknown arguments: x, place"}
+{"args":["-p","-v","--no-include"],"other":"version"}
+{"args":["-","-1","---x"],"fail":"Unknown arguments: -x, x, -, -1"}
+{"args":["-i=inc","place","-1","--noInclude"],"fail":"Unknown arguments: place, -1"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["place","x"],"fail":"Unknown arguments: place, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--use-polling","--allow-comment-directives","-wv"],"other":"version"}
+{"args":["--no-p","-p-","1e3","--allowCommentDirectives"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--help=false","-1","place","--verbose=true"],"fail":"Unknown arguments: -1, place"}
+{"args":["-1","--no-include"],"fail":"Unknown arguments: include, -1"}
+{"args":["place","--type=\"game\""],"fail":"Unknown argument: place"}
+{"args":["place","-p","--no-include","--LUAU"],"fail":"Unknown arguments: include, LUAU, place"}
+{"args":["--foo-bar","--5","-","x"],"fail":"Unknown arguments: 5, foo-bar, fooBar, -, x"}
+{"args":["1e3","-1"],"fail":"Unknown arguments: 1e3, -1"}
+{"args":["1e3","-","--noInclude"],"fail":"Unknown arguments: 1e3, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-verbose=true","place"],"fail":"Unknown arguments: no-verbose, noVerbose, place"}
+{"args":["-x","--optimizedLoops","1e3","--NO-INCLUDE"],"fail":"Unknown arguments: x, noInclude, 1e3"}
+{"args":["--writeTransformedFiles"],"ok":{"project":".","writeTransformedFiles":true}}
+{"args":["--5","--allow-comment-directives","-1","x"],"fail":"Unknown arguments: 5, -1, x"}
+{"args":["--type=game"],"ok":{"project":".","type":"game"}}
+{"args":["--Include-Path","-1","1e3","-w"],"fail":"Unknown arguments: Include-Path, IncludePath, 1e3"}
+{"args":["-x"],"fail":"Unknown argument: x"}
+{"args":["-w","--include-path=a","--luau"],"ok":{"project":".","watch":true,"includePath":"a","luau":true}}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["1e3","---x","--INCLUDE-PATH","--optimizedLoops"],"fail":"Unknown arguments: -x, x, 1e3"}
+{"args":["--no-verbose=true","--writeOnlyChanged"],"fail":"Unknown arguments: no-verbose, noVerbose"}
+{"args":["--optimizedLoops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["x","--project","-v"],"other":"version"}
+{"args":["-x","--project","--5"],"fail":"Unknown arguments: 5, x"}
+{"args":["--watch","-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","--no-p"],"fail":"Unknown argument: -"}
+{"args":["1e3","place"],"fail":"Unknown arguments: 1e3, place"}
+{"args":["--optimizedLoops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["--no-p","--noInclude=0","--no-"],"fail":"Unknown arguments: no-, no"}
+{"args":["--x.y","-include"],"fail":"Unknown arguments: x, n, c, l, u, d, e"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimizedLoops","1e3","--NO-INCLUDE","--version"],"other":"version"}
+{"args":["--noInclude"],"ok":{"project":".","noInclude":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-rojo","x","-"],"fail":"Unknown arguments: x, -"}
+{"args":["--usePolling","place"],"fail":"Unknown argument: place"}
+{"args":["--include-path=a","--type=game","--noInclude=0"],"ok":{"project":".","noInclude":false,"type":"game","includePath":"a"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--usePolling","x"],"fail":"Unknown argument: x"}
+{"args":["-w","-x.y","--10"],"fail":"Unknown arguments: 10, x"}
+{"args":["-wp","place","--no-include","--include-path"],"fail":"Unknown argument: include"}
+{"args":["--5"],"fail":"Unknown argument: 5"}
+{"args":["--writeTransformedFiles","-i","--type"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["x","--no-p","--usePolling","--optimizedLoops"],"fail":"Unknown argument: x"}
+{"args":["-1","1e3","-","-x.y"],"fail":"Unknown arguments: x, -1, 1e3, -"}
+{"args":["--help=false","x","place","-1"],"fail":"Unknown arguments: x, place, -1"}
+{"args":["-i","--allow-comment-directives","--help=false","--noInclude"],"ok":{"project":".","noInclude":true,"includePath":"","allowCommentDirectives":true}}
+{"args":["--help","--includePath"],"other":"help"}
+{"args":["--no-watch","-"],"fail":"Unknown argument: -"}
+{"args":["--rojo='r'","--Include-Path","x"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":["--noInclude"],"ok":{"project":".","noInclude":true}}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["-include","--foo-bar","-h","-ip"],"other":"help"}
+{"args":["1e3","--include-path=a"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","-pw"],"fail":"Unknown argument: 1e3"}
+{"args":["--no-include","place","1e3"],"fail":"Unknown arguments: include, place, 1e3"}
+{"args":["--use-polling","--INCLUDE-PATH","-","-v"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimizedLoops","--project"],"ok":{"project":".","optimizedLoops":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-include","x","--INCLUDE-PATH","--bogus"],"fail":"Unknown arguments: include, bogus, x"}
+{"args":["--use-polling","-1","--noInclude=0","--no-rojo"],"fail":"Unknown argument: -1"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["-x","-v","-x"],"other":"version"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["place","--project.x","--foo-bar","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar, place"}
+{"args":["--type","-i=inc"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["--NO-INCLUDE"],"fail":"Unknown argument: noInclude"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["x","-1","-include"],"fail":"Unknown arguments: n, c, l, u, d, e, x, -1"}
+{"args":["--NO-INCLUDE","-p","-1"],"fail":"Unknown argument: noInclude"}
+{"args":["--version=false","--project","-","1e3"],"fail":"Unknown arguments: -, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--rojo='r'","-h","-","--version"],"other":"help"}
+{"args":["--writeOnlyChanged","-p=.","1e3","-1"],"fail":"Unknown arguments: 1e3, -1"}
+{"args":["place","--x.y","--type=game","--=x"],"fail":"Unknown arguments: x, =x, place"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--bogus","-1","x"],"fail":"Unknown arguments: bogus, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-i=inc","--use-polling","--=x","--foo-bar"],"fail":"Unknown arguments: =x, foo-bar, fooBar"}
+{"args":["-1","--10"],"fail":"Unknown arguments: 10, -1"}
+{"args":["-h","---","-p"],"other":"help"}
+{"args":["x","--no-include","--bogus","x"],"fail":"Unknown arguments: include, bogus, x"}
+{"args":["--include-path","place","place","-h"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--NO-INCLUDE","--no-rojo","--no-i","--x.y"],"fail":"Unknown arguments: noInclude, x"}
+{"args":["-x.y","--10","-x","--luau"],"fail":"Unknown arguments: 10, x"}
+{"args":["--no-verbose=true","--rojo='r'"],"fail":"Unknown arguments: no-verbose, noVerbose"}
+{"args":["--no-verbose=true"],"fail":"Unknown arguments: no-verbose, noVerbose"}
+{"args":["-v","-w","--optimizedLoops"],"other":"version"}
+{"args":["place","-1"],"fail":"Unknown arguments: place, -1"}
+{"args":["1e3","--no-luau"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--include-path","--type","--no-verbose=true"],"fail":"Unknown arguments: no-verbose, noVerbose"}
+{"args":["--optimizedLoops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["--logTruthyChanges","--no-i","place","--INCLUDE-PATH"],"fail":"Unknown argument: place"}
+{"args":["--type"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["--rojo","--rojo='r'"],"ok":{"project":".","rojo":["","r"]}}
+{"args":["--usePolling","-1","-","--logTruthyChanges"],"fail":"Unknown arguments: -1, -"}
+{"args":["--rojo='r'","-"],"fail":"Unknown argument: -"}
+{"args":["-wv","--allowCommentDirectives","x","place"],"other":"version"}
+{"args":["--noInclude","-"],"fail":"Unknown argument: -"}
+{"args":["place","-"],"fail":"Unknown arguments: place, -"}
+{"args":["--help=false","--LUAU","--rojo","-p"],"fail":"Unknown argument: LUAU"}
+{"args":["-x","place","--usePolling","--logTruthyChanges"],"fail":"Unknown argument: x"}
+{"args":["1e3","--type","-1"],"fail":"Unknown argument: 1e3"}
+{"args":["--optimized-loops","x"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-i","1e3"],"ok":{"project":".","includePath":"1e3"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--project.x","-wv","--log-truthy-changes","--optimizedLoops"],"other":"version"}
+{"args":["--no-no-include","--verbose=true","place","place"],"fail":"Unknown arguments: place, place"}
+{"args":["--no-i"],"ok":{"project":".","includePath":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--rojo","1e3"],"ok":{"project":".","rojo":"1e3"}}
+{"args":["-1","place"],"fail":"Unknown arguments: -1, place"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["1e3","-p","--no-include","-"],"fail":"Unknown arguments: include, 1e3, -"}
+{"args":["--writeTransformedFiles","--include-path=a"],"ok":{"project":".","writeTransformedFiles":true,"includePath":"a"}}
+{"args":["--logTruthyChanges"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":["--LUAU","-1","--noInclude"],"fail":"Unknown argument: LUAU"}
+{"args":["-ip","-1"],"ok":{"project":"-1","includePath":""}}
+{"args":["--no-noInclude","--=x"],"fail":"Unknown argument: =x"}
+{"args":["-1","x","--luau=yes"],"fail":"Unknown arguments: -1, x"}
+{"args":["-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--include-path=a","--version","--x.y"],"other":"version"}
+{"args":["place","---"],"fail":"Unknown arguments: place, ---"}
+{"args":["--use-polling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["--include-path=a","-p","--no-rojo","--5"],"fail":"Unknown argument: 5"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-","---","--x.y"],"fail":"Unknown arguments: no-, no, x, ---"}
+{"args":["-h"],"other":"help"}
+{"args":["--no-rojo","1e3","--watch"],"fail":"Unknown argument: 1e3"}
+{"args":["1e3","-i=inc","-p-","--help=false"],"fail":"Unknown argument: 1e3"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-p=.","place","--no-type"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-p","--include-path"],"ok":{"project":false,"includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","--verbose=maybe","x","-p-"],"fail":"Unknown arguments: x, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-pw","-x","--version=false"],"fail":"Unknown argument: x"}
+{"args":["--project.x","--NO-INCLUDE","x","--no-rojo"],"fail":"Unknown argument: noInclude"}
+{"args":["-1","-","--no-i","-1"],"fail":"Unknown arguments: -1, -, -1"}
+{"args":["--include-path"],"ok":{"project":".","includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--type=\"game\"","--logTruthyChanges"],"ok":{"project":".","logTruthyChanges":true,"type":"game"}}
+{"args":["x","1e3","--no-noInclude"],"fail":"Unknown arguments: x, 1e3"}
+{"args":["-1","x","-","-pi"],"fail":"Unknown arguments: -1, x, -"}
+{"args":["-ip","--use-polling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["-p=.","-w","--no-luau","-"],"fail":"Unknown argument: -"}
+{"args":["--rojo"],"ok":{"project":".","rojo":""}}
+{"args":["--=x","-i"],"fail":"Unknown argument: =x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--includePath","--help"],"other":"help"}
+{"args":["-pw","-1","place","--type="],"fail":"Unknown arguments: -1, place"}
+{"args":["-ip"],"ok":{"project":".","includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","x"],"fail":"Unknown arguments: 1e3, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--rojo='r'","--logTruthyChanges","-w"],"ok":{"project":".","watch":true,"logTruthyChanges":true,"rojo":"r"}}
+{"args":["--foo-bar","--type=game"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--type","--writeTransformedFiles"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["--log-truthy-changes"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":["1e3","--project","-wp","--allow-comment-directives"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","--allowCommentDirectives","--help=false"],"fail":"Unknown argument: -1"}
+{"args":["-1","--include-path=a","--no-"],"fail":"Unknown arguments: no-, no, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","--allowCommentDirectives"],"fail":"Unknown argument: place"}
+{"args":["--rojo='r'"],"ok":{"project":".","rojo":"r"}}
+{"args":["-i","1e3","-h","--LUAU"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--type=","--5"],"fail":"Unknown argument: 5"}
+{"args":["--verbose=true","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-","place","1e3","---x"],"fail":"Unknown arguments: -x, x, -, place, 1e3"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["place","-"],"fail":"Unknown arguments: place, -"}
+{"args":["--noInclude","---x"],"fail":"Unknown arguments: -x, x"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["1e3","-pw"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-noInclude","place","--version=false"],"fail":"Unknown argument: place"}
+{"args":["x","--no-luau","1e3"],"fail":"Unknown arguments: x, 1e3"}
+{"args":["--version","-1"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["---x","--project","-1"],"fail":"Unknown arguments: -x, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","-pi","-pi"],"fail":"Unknown argument: x"}
+{"args":["--verbose=true","--noInclude"],"ok":{"project":".","verbose":true,"noInclude":true}}
+{"args":["-pw","-i=inc","x","--use-polling"],"fail":"Unknown argument: x"}
+{"args":["--no-verbose","--10","---x"],"fail":"Unknown arguments: 10, -x, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-","-ip","--rojo"],"fail":"Unknown arguments: no-, no"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-ip","place","--x.y","--verbose=maybe"],"fail":"Unknown argument: x"}
+{"args":["place","-","x"],"fail":"Unknown arguments: place, -, x"}
+{"args":["-p-"],"ok":{"project":"-"}}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","--verbose=true"],"fail":"Unknown argument: -"}
+{"args":["--=x","-1","--verbose","place"],"fail":"Unknown arguments: =x, place"}
+{"args":["-w"],"ok":{"project":".","watch":true}}
+{"args":["-pw","-pw"],"ok":{"project":[".","."],"watch":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-i=inc"],"ok":{"project":".","includePath":"inc"}}
+{"args":["-wv","-x.y","--no-i"],"other":"version"}
+{"args":["x","1e3","--version"],"other":"version"}
+{"args":["--no-watch","--writeOnlyChanged","-"],"fail":"Unknown argument: -"}
+{"args":["--version","--verbose=maybe","--no-no-include","--Include-Path"],"other":"version"}
+{"args":["--no-i","--project","--rojo","--optimizedLoops"],"ok":{"project":".","optimizedLoops":true,"includePath":false,"rojo":""}}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["--no-verbose"],"ok":{"project":".","verbose":false}}
+{"args":["--no-type","-p-","-p","-1"],"fail":"Invalid values:\n  Argument: type, Given: false, Choices: \"game\", \"model\", \"package\""}
+{"args":["--no-include","--project.x","-","--5"],"fail":"Unknown arguments: 5, include, -"}
+{"args":["place","--include-path","1e3"],"fail":"Unknown argument: place"}
+{"args":["--verbose=true","-pi","-v"],"other":"version"}
+{"args":["--log-truthy-changes","--=x","-i=inc"],"fail":"Unknown argument: =x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-pw"],"ok":{"project":".","watch":true}}
+{"args":["-p-","-ip"],"ok":{"project":["-","."],"includePath":""}}
+{"args":["1e3","--verbose","--usePolling"],"fail":"Unknown argument: 1e3"}
+{"args":["1e3","--watch","--type","-p=."],"fail":"Unknown argument: 1e3"}
+{"args":["--no-noInclude","--type=\"game\"","--writeTransformedFiles"],"ok":{"project":".","noInclude":false,"writeTransformedFiles":true,"type":"game"}}
+{"args":["1e3","---","-1"],"fail":"Unknown arguments: 1e3, ---, -1"}
+{"args":["--Include-Path","place","--watch","-1"],"fail":"Unknown arguments: Include-Path, IncludePath, -1"}
+{"args":["-","--no-luau"],"fail":"Unknown argument: -"}
+{"args":["1.50","-i=inc","--10"],"fail":"Unknown arguments: 10, 1.50"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["--no-verbose","--watch","-h","--version=false"],"other":"help"}
+{"args":["-p"],"ok":{"project":"."}}
+{"args":["-x.y"],"fail":"Unknown argument: x"}
+{"args":["x","place"],"fail":"Unknown arguments: x, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","---x","--optimized-loops","--verbose"],"fail":"Unknown arguments: -x, x, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","place","--usePolling"],"fail":"Unknown arguments: 1e3, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-x"],"fail":"Unknown argument: x"}
+{"args":["-1","--writeOnlyChanged","--no-watch","--include-path"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--NO-INCLUDE","--watch","-1"],"fail":"Unknown arguments: noInclude, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--logTruthyChanges"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":["1e3","--log-truthy-changes","-i"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","x"],"fail":"Unknown arguments: -1, x"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-i","x"],"ok":{"project":".","includePath":"x"}}
+{"args":["--include-path=a"],"ok":{"project":".","includePath":"a"}}
+{"args":["x","-1","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar, x, -1"}
+{"args":["1e3","x","1e3","--type=game"],"fail":"Unknown arguments: 1e3, x, 1e3"}
+{"args":["--no-watch","--writeTransformedFiles","-1","x"],"fail":"Unknown arguments: -1, x"}
+{"args":["-x.y","-h"],"other":"help"}
+{"args":["--project.x","--type","--help","--project.x"],"other":"help"}
+{"args":["--NO-INCLUDE","-1"],"fail":"Unknown argument: noInclude"}
+{"args":["--allow-comment-directives"],"ok":{"project":".","allowCommentDirectives":true}}
+{"args":["--usePolling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-x","--project.x"],"fail":"Unknown argument: x"}
+{"args":["--use-polling","-1"],"fail":"Unknown argument: -1"}
+{"args":["place","--luau","--verbose=true","--type"],"fail":"Unknown argument: place"}
+{"args":["--rojo='r'"],"ok":{"project":".","rojo":"r"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-h","--no-rojo","place","-include"],"other":"help"}
+{"args":["-p=.","---x","-","-include"],"fail":"Unknown arguments: -x, x, n, c, l, u, d, e, -"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["-h"],"other":"help"}
+{"args":["-1","--optimizedLoops"],"fail":"Unknown argument: -1"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["--INCLUDE-PATH","--luau=yes","-","--project.x"],"fail":"Unknown argument: -"}
+{"args":["--no-verbose","-1","--verbose=true","--noInclude=0"],"fail":"Unknown argument: -1"}
+{"args":["1e3","--watch"],"fail":"Unknown argument: 1e3"}
+{"args":["--no-verbose","-v","--bogus"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","1e3","--=x"],"fail":"Unknown arguments: =x, -1, 1e3"}
+{"args":["--use-polling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimizedLoops","place","place"],"fail":"Unknown arguments: place, place"}
+{"args":["--optimizedLoops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["-1","-"],"fail":"Unknown arguments: -1, -"}
+{"args":["-i=inc","-1"],"fail":"Unknown argument: -1"}
+{"args":["--no-","x","1e3"],"fail":"Unknown arguments: no-, no, 1e3"}
+{"args":["--verbose=true","--Include-Path","-"],"fail":"Unknown arguments: Include-Path, IncludePath, -"}
+{"args":["-p"],"ok":{"project":"."}}
+{"args":["-x"],"fail":"Unknown argument: x"}
+{"args":["--verbose=maybe","--foo-bar","--verbose=true","--watch"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["-pw","--no-"],"fail":"Unknown arguments: no-, no"}
+{"args":["x","--no-include","--no-include","-"],"fail":"Unknown arguments: include, x, -"}
+{"args":["1e3","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":["--type=\"game\"","-1","--no-watch","-"],"fail":"Unknown arguments: -1, -"}
+{"args":["--version=false","-"],"fail":"Unknown argument: -"}
+{"args":["--bogus","--verbose=true","x"],"fail":"Unknown arguments: bogus, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","-"],"fail":"Unknown arguments: x, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimized-loops","--INCLUDE-PATH","-x","--writeOnlyChanged"],"fail":"Unknown argument: x"}
+{"args":["place","--x.y","--no-","-i=inc"],"fail":"Unknown arguments: x, no-, no, place"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--allowCommentDirectives","1e3","--optimized-loops"],"fail":"Unknown argument: 1e3"}
+{"args":["--type="],"fail":"Invalid values:\n  Argument: type, Given: \"\", Choices: \"game\", \"model\", \"package\""}
+{"args":["-","--no-verbose","--writeTransformedFiles","--allow-comment-directives"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-watch","--no-verbose"],"ok":{"project":".","watch":false,"verbose":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-rojo","-v"],"other":"version"}
+{"args":["--type=\"game\"","--use-polling","--no-no-include","--no-rojo"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["--bogus","--includePath","-wp","-"],"fail":"Unknown argument: bogus"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","-","--Include-Path"],"fail":"Unknown arguments: Include-Path, IncludePath, 1e3, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-h","--no-verbose=true","-1","--no-no-include"],"other":"help"}
+{"args":["1e3","--type=game"],"fail":"Unknown argument: 1e3"}
+{"args":["-wp","x"],"ok":{"project":"x","watch":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","-h","-p","-"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--include-path","--no-p"],"ok":{"project":false,"includePath":""}}
+{"args":["x","-","--project.x","--x.y"],"fail":"Unknown arguments: x, x, -"}
+{"args":["--rojo='r'","-x.y","-","-"],"fail":"Unknown arguments: x, -, -"}
+{"args":["--luau=yes","--no-","--version=false"],"fail":"Unknown arguments: no-, no"}
+{"args":["-i=inc","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-pw","--log-truthy-changes","--no-watch","-ip"],"ok":{"project":[".","."],"watch":false,"logTruthyChanges":true,"includePath":""}}
+{"args":["place","--no-type","-","--include-path"],"fail":"Unknown arguments: place, -"}
+{"args":["--Include-Path","-1"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--no-noInclude"],"fail":"Unknown argument: 1e3"}
+{"args":["--rojo","1e3","x"],"fail":"Unknown argument: x"}
+{"args":["--no-no-include","x"],"fail":"Unknown argument: x"}
+{"args":["--type=\"game\"","-wv"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-luau"],"ok":{"project":".","luau":false}}
+{"args":["--rojo","x","-pw","--allow-comment-directives"],"ok":{"project":".","watch":true,"rojo":"x","allowCommentDirectives":true}}
+{"args":["1e3","--version=false","--optimized-loops","x"],"fail":"Unknown arguments: 1e3, x"}
+{"args":["-ip","-","-include","1e3"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["place","-include","--includePath","--writeOnlyChanged"],"fail":"Unknown arguments: n, c, l, u, d, e, place"}
+{"args":["x","place","--no-rojo","--help=false"],"fail":"Unknown arguments: x, place"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--optimizedLoops","--type=game","--include-path=a","-1"],"fail":"Unknown argument: -1"}
+{"args":["--optimized-loops","1e3","-1"],"fail":"Unknown arguments: 1e3, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["---","-","place"],"fail":"Unknown arguments: ---, -, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-wp","-1","-"],"fail":"Unknown argument: -"}
+{"args":["1e3","--includePath"],"fail":"Unknown argument: 1e3"}
+{"args":["--includePath","-p-","-"],"fail":"Unknown argument: -"}
+{"args":["1e3","--type=game"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","-","--optimizedLoops","--help=false"],"fail":"Unknown arguments: -1, -"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-p","--NO-INCLUDE","--foo-bar","-x"],"fail":"Unknown arguments: noInclude, foo-bar, fooBar, x"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["x","--include-path=a"],"fail":"Unknown argument: x"}
+{"args":["-wv","-i","-","--optimizedLoops"],"other":"version"}
+{"args":["place","--type=\"game\"","--include-path=a","--verbose"],"fail":"Unknown argument: place"}
+{"args":["-ip"],"ok":{"project":".","includePath":""}}
+{"args":["--help"],"other":"help"}
+{"args":["--version","1e3","--no-noInclude"],"other":"version"}
+{"args":["--verbose","-w","-p-","place"],"fail":"Unknown argument: place"}
+{"args":["place","--no-noInclude","-include","x"],"fail":"Unknown arguments: n, c, l, u, d, e, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","--type=game"],"fail":"Unknown argument: -"}
+{"args":["--no-rojo","--version=false"],"ok":{"project":".","rojo":false}}
+{"args":["--project.x"],"ok":{"project":{"x":true}}}
+{"args":["--watch"],"ok":{"project":".","watch":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimized-loops","--x.y","--foo-bar"],"fail":"Unknown arguments: x, foo-bar, fooBar"}
+{"args":["-","--include-path"],"fail":"Unknown argument: -"}
+{"args":["-","x","-v","--LUAU"],"other":"version"}
+{"args":["--no-type","--include-path=a","-i=inc","-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--verbose"],"ok":{"project":".","verbose":true}}
+{"args":["-pw"],"ok":{"project":".","watch":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--log-truthy-changes","--no-watch"],"ok":{"project":".","watch":false,"logTruthyChanges":true}}
+{"args":["-p","---x","--no-luau","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--verbose=maybe","-v","-1"],"other":"version"}
+{"args":["--noInclude"],"ok":{"project":".","noInclude":true}}
+{"args":["-pw","--type=game","--version=false","-"],"fail":"Unknown argument: -"}
+{"args":["--no-","--verbose=true","1e3"],"fail":"Unknown arguments: no-, no, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","-1","--10"],"fail":"Unknown arguments: 10, -, -1"}
+{"args":["--luau=yes"],"ok":{"project":".","luau":false}}
+{"args":["--no-noInclude","-i"],"ok":{"project":".","noInclude":false,"includePath":""}}
+{"args":["--no-verbose=true","--help=false","--=x","-w"],"fail":"Unknown arguments: no-verbose, noVerbose, =x"}
+{"args":["x","place","--optimized-loops"],"fail":"Unknown arguments: x, place"}
+{"args":["--no-no-include","--INCLUDE-PATH","-1"],"ok":{"project":".","noInclude":false,"includePath":"-1"}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--include-path","--no-"],"fail":"Unknown arguments: no-, no"}
+{"args":["-wv","place"],"other":"version"}
+{"args":["--type=\"game\"","--logTruthyChanges","--verbose=maybe","--5"],"fail":"Unknown argument: 5"}
+{"args":["-p-","--help=false","place"],"fail":"Unknown argument: place"}
+{"args":["--x.y","-x","--no-luau","--noInclude"],"fail":"Unknown argument: x"}
+{"args":["-w","place","--luau=yes"],"fail":"Unknown argument: place"}
+{"args":["-1","x","--no-rojo","place"],"fail":"Unknown arguments: -1, x, place"}
+{"args":["place","-v","place","-1"],"other":"version"}
+{"args":["--5"],"fail":"Unknown argument: 5"}
+{"args":["--no-watch","--no-no-include","-1"],"fail":"Unknown argument: -1"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--x.y","--help","--rojo='r'"],"other":"help"}
+{"args":["-1","--help","-1"],"other":"help"}
+{"args":["--no-noInclude"],"ok":{"project":".","noInclude":false}}
+{"args":["-pi","-1"],"ok":{"project":".","includePath":"-1"}}
+{"args":["--version"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","-h","--no-no-include"],"other":"help"}
+{"args":["--10","1e3"],"fail":"Unknown argument: 10"}
+{"args":["-x.y"],"fail":"Unknown argument: x"}
+{"args":["place","--no-type","--10","--allow-comment-directives"],"fail":"Unknown arguments: 10, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--bogus"],"fail":"Unknown arguments: bogus, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--noInclude=0"],"ok":{"project":".","noInclude":false}}
+{"args":["--Include-Path","x","--LUAU","--no-no-include"],"fail":"Unknown arguments: Include-Path, IncludePath, LUAU"}
+{"args":["-pw","--project","--no-","--writeOnlyChanged"],"fail":"Unknown arguments: no-, no"}
+{"args":[],"ok":{"project":"."}}
+{"args":["---x","-p","--luau"],"fail":"Unknown arguments: -x, x"}
+{"args":["-wp","--no-luau","-wv","place"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--usePolling","1e3","--includePath"],"fail":"Unknown argument: 1e3"}
+{"args":["--luau=yes","--no-noInclude","-"],"fail":"Unknown argument: -"}
+{"args":["-i=inc","--verbose=maybe"],"ok":{"project":".","verbose":false,"includePath":"inc"}}
+{"args":["-","--type=game","--noInclude","1e3"],"fail":"Unknown arguments: -, 1e3"}
+{"args":["---x","--log-truthy-changes"],"fail":"Unknown arguments: -x, x"}
+{"args":["-wp","--project.x","-i"],"ok":{"project":[".",{"x":true}],"watch":true,"includePath":""}}
+{"args":["-v"],"other":"version"}
+{"args":["place","x"],"fail":"Unknown arguments: place, x"}
+{"args":["--no-rojo"],"ok":{"project":".","rojo":false}}
+{"args":["--rojo='r'","x","-"],"fail":"Unknown arguments: x, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-p","--INCLUDE-PATH","--allow-comment-directives","--no-no-include"],"ok":{"project":false,"noInclude":false,"includePath":true,"allowCommentDirectives":true}}
+{"args":["--version","-"],"other":"version"}
+{"args":["--rojo='r'"],"ok":{"project":".","rojo":"r"}}
+{"args":["-wv","-1","--logTruthyChanges","--help"],"other":"help"}
+{"args":["--no-noInclude","--luau"],"ok":{"project":".","noInclude":false,"luau":true}}
+{"args":["-pi","place","--include-path"],"ok":{"project":".","includePath":["place",""]}}
+{"args":["-p-","--no-i","--writeOnlyChanged"],"ok":{"project":"-","writeOnlyChanged":true,"includePath":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--luau","-w"],"ok":{"project":".","watch":true,"luau":true}}
+{"args":["--logTruthyChanges","-ip"],"ok":{"project":".","logTruthyChanges":true,"includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--x.y","--optimizedLoops"],"fail":"Unknown argument: x"}
+{"args":["--verbose","--no-luau","--logTruthyChanges","--no-noInclude"],"ok":{"project":".","verbose":true,"noInclude":false,"logTruthyChanges":true,"luau":false}}
+{"args":["--no-p","-i=inc"],"ok":{"project":false,"includePath":"inc"}}
+{"args":["x","x","place"],"fail":"Unknown arguments: x, x, place"}
+{"args":["---","x"],"fail":"Unknown arguments: ---, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--usePolling","1e3","-1","--x.y"],"fail":"Unknown arguments: x, 1e3, -1"}
+{"args":["-p","--verbose","--no-rojo","-x"],"fail":"Unknown argument: x"}
+{"args":["x","--no-no-include"],"fail":"Unknown argument: x"}
+{"args":["place","x","--NO-INCLUDE","--allowCommentDirectives"],"fail":"Unknown arguments: noInclude, place, x"}
+{"args":["--optimizedLoops","-1","--no-rojo","-w"],"fail":"Unknown argument: -1"}
+{"args":["1e3","1e3","--no-luau"],"fail":"Unknown arguments: 1e3, 1e3"}
+{"args":["--=x"],"fail":"Unknown argument: =x"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--usePolling","--allowCommentDirectives","--project.x"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["-1","-1","--usePolling","--type="],"fail":"Unknown arguments: -1, -1"}
+{"args":["1e3","--include-path=a","--type=\"game\"","-1"],"fail":"Unknown arguments: 1e3, -1"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--verbose","-wv","-pi","-"],"other":"version"}
+{"args":["--LUAU","--allowCommentDirectives","-p-"],"fail":"Unknown argument: LUAU"}
+{"args":["-wp","-wv","--includePath"],"other":"version"}
+{"args":["place","-v","---x"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-wv","--luau","-v","-1"],"other":"version"}
+{"args":["-","-","--verbose=maybe"],"fail":"Unknown arguments: -, -"}
+{"args":["--use-polling","-1","--LUAU"],"fail":"Unknown arguments: LUAU, -1"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--LUAU","-v","place","--luau=yes"],"other":"version"}
+{"args":["--no-noInclude"],"ok":{"project":".","noInclude":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--allow-comment-directives","-include","1e3"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["-1","--verbose=true","1e3","--bogus"],"fail":"Unknown arguments: bogus, -1, 1e3"}
+{"args":["1e3","--no-include"],"fail":"Unknown arguments: include, 1e3"}
+{"args":["-1","--=x"],"fail":"Unknown arguments: =x, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--rojo","--no-","1e3"],"fail":"Unknown arguments: no-, no"}
+{"args":["--include-path","--version"],"other":"version"}
+{"args":["--luau","--type=","x"],"fail":"Unknown argument: x"}
+{"args":["--no-"],"fail":"Unknown arguments: no-, no"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-include","--no-no-include","--allowCommentDirectives","1e3"],"fail":"Unknown arguments: n, c, l, u, d, e, 1e3"}
+{"args":["-","-pw","--help","-wv"],"other":"help"}
+{"args":["-1","-","--no-verbose","--LUAU"],"fail":"Unknown arguments: LUAU, -1, -"}
+{"args":["-1","--use-polling","--no-luau"],"fail":"Unknown argument: -1"}
+{"args":["--5"],"fail":"Unknown argument: 5"}
+{"args":["--project","-1"],"ok":{"project":"-1"}}
+{"args":["--optimizedLoops","-i=inc","--x.y","x"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","1e3"],"fail":"Unknown arguments: -1, 1e3"}
+{"args":["place","-p","--no-noInclude","-ip"],"fail":"Unknown argument: place"}
+{"args":["-pi","--watch"],"ok":{"project":".","watch":true,"includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--use-polling","-1","--type="],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--verbose=true","---"],"fail":"Unknown argument: ---"}
+{"args":["--no-verbose=true"],"fail":"Unknown arguments: no-verbose, noVerbose"}
+{"args":["place","--writeOnlyChanged"],"fail":"Unknown argument: place"}
+{"args":["--include-path"],"ok":{"project":".","includePath":""}}
+{"args":["1e3","-x.y"],"fail":"Unknown arguments: x, 1e3"}
+{"args":["-wv","x","--watch","1e3"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--usePolling","1e3","1e3"],"fail":"Unknown arguments: 1e3, 1e3, 1e3"}
+{"args":["--no-rojo","1e3","--Include-Path","--allowCommentDirectives"],"fail":"Unknown arguments: Include-Path, IncludePath, 1e3"}
+{"args":["--luau=yes","--verbose=maybe","-1","--5"],"fail":"Unknown arguments: 5, -1"}
+{"args":["-h","--verbose"],"other":"help"}
+{"args":["-i=inc","--no-rojo","--type=\"game\"","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["1e3","-include","--optimized-loops","-w"],"fail":"Unknown arguments: n, c, l, u, d, e, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--use-polling","-p=."],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["--watch","x","1e3"],"fail":"Unknown arguments: x, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","--writeTransformedFiles","--no-type"],"fail":"Unknown argument: place"}
+{"args":["--no-include"],"fail":"Unknown argument: include"}
+{"args":["--verbose=maybe","-","--INCLUDE-PATH"],"fail":"Unknown argument: -"}
+{"args":["--INCLUDE-PATH","x"],"ok":{"project":".","includePath":"x"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimizedLoops","-wv","-p"],"other":"version"}
+{"args":["--no-include"],"fail":"Unknown argument: include"}
+{"args":["place","--NO-INCLUDE"],"fail":"Unknown arguments: noInclude, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","--no-no-include","--type=","--no-luau"],"fail":"Unknown argument: -1"}
+{"args":["--rojo","--noInclude","-","--project"],"fail":"Unknown argument: -"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["1e3","-v"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--usePolling","---","--project","--no-"],"fail":"Unknown arguments: no-, no, ---"}
+{"args":["--foo-bar","1e3"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--version","-1","--no-verbose=true"],"other":"version"}
+{"args":["--writeOnlyChanged","--include-path=a","--optimizedLoops"],"ok":{"project":".","writeOnlyChanged":true,"optimizedLoops":true,"includePath":"a"}}
+{"args":["--type="],"fail":"Invalid values:\n  Argument: type, Given: \"\", Choices: \"game\", \"model\", \"package\""}
+{"args":[],"ok":{"project":"."}}
+{"args":["--logTruthyChanges"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":["--10"],"fail":"Unknown argument: 10"}
+{"args":["--luau=yes","--include-path=a","1e3","--version=false"],"fail":"Unknown argument: 1e3"}
+{"args":["--version=false","--=x","1e3"],"fail":"Unknown argument: =x"}
+{"args":["x","x","--x.y","---x"],"fail":"Unknown arguments: x, -x, x, x"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--watch","1e3","-1"],"fail":"Unknown arguments: 1e3, -1"}
+{"args":["--luau=yes","-v","--type=\"game\"","--Include-Path"],"other":"version"}
+{"args":["-ip","--no-rojo","--Include-Path","--project"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":["--5","-v","place"],"other":"version"}
+{"args":["x","-i","1e3"],"fail":"Unknown argument: x"}
+{"args":["-pw","--verbose=true","-v"],"other":"version"}
+{"args":["--no-rojo"],"ok":{"project":".","rojo":false}}
+{"args":["-1","--LUAU","--watch","-p=."],"fail":"Unknown arguments: LUAU, -1"}
+{"args":["--type=","--no-verbose","-x.y"],"fail":"Unknown argument: x"}
+{"args":["--project.x","-"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--help=false","--10"],"fail":"Unknown argument: 10"}
+{"args":["--no-include"],"fail":"Unknown argument: include"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--project.x"],"ok":{"project":{"x":true}}}
+{"args":["-","-"],"fail":"Unknown arguments: -, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--Include-Path","--optimized-loops","-wp"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":["--version","---x"],"other":"version"}
+{"args":["--rojo='r'","--logTruthyChanges"],"ok":{"project":".","logTruthyChanges":true,"rojo":"r"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimizedLoops","1e3","-v"],"other":"version"}
+{"args":["--allowCommentDirectives","-pw"],"ok":{"project":".","watch":true,"allowCommentDirectives":true}}
+{"args":["--watch","--INCLUDE-PATH"],"ok":{"project":".","watch":true,"includePath":true}}
+{"args":["-","-1","-p-"],"fail":"Unknown arguments: -, -1"}
+{"args":["--verbose","--no-noInclude","1e3","1e3"],"fail":"Unknown arguments: 1e3, 1e3"}
+{"args":["--no-include","--version=false","--writeOnlyChanged"],"fail":"Unknown argument: include"}
+{"args":["-","--no-no-include"],"fail":"Unknown argument: -"}
+{"args":["--no-include","-1","-"],"fail":"Unknown arguments: include, -1, -"}
+{"args":["place","--x.y","x"],"fail":"Unknown arguments: x, place"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--no-no-include","-","-i=inc","---x"],"fail":"Unknown arguments: -x, x, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","x"],"fail":"Unknown arguments: -1, x"}
+{"args":["--no-rojo","place","--version=false","--logTruthyChanges"],"fail":"Unknown argument: place"}
+{"args":["--no-noInclude","--allowCommentDirectives"],"ok":{"project":".","noInclude":false,"allowCommentDirectives":true}}
+{"args":["--no-watch","--INCLUDE-PATH","x"],"ok":{"project":".","watch":false,"includePath":"x"}}
+{"args":["place","--no-rojo"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-type","x","--verbose=maybe","-1"],"fail":"Unknown arguments: x, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","-pw","-ip","--10"],"fail":"Unknown arguments: 10, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-noInclude","--rojo","--no-verbose=true"],"fail":"Unknown arguments: no-verbose, noVerbose"}
+{"args":["--INCLUDE-PATH","1e3","--no-type","place"],"fail":"Unknown argument: place"}
+{"args":["--writeOnlyChanged","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--allow-comment-directives","--usePolling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["--no-rojo","-","x"],"fail":"Unknown arguments: -, x"}
+{"args":["--10"],"fail":"Unknown argument: 10"}
+{"args":["-include","-","1e3"],"fail":"Unknown arguments: n, c, l, u, d, e, 1e3"}
+{"args":["--allow-comment-directives"],"ok":{"project":".","allowCommentDirectives":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","-i","--type"],"fail":"Unknown argument: -1"}
+{"args":["--allow-comment-directives","--no-no-include","place"],"fail":"Unknown argument: place"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","--optimizedLoops","--type=game"],"fail":"Unknown argument: -1"}
+{"args":["--help=false","--include-path=a","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--logTruthyChanges","--project.x","-w"],"ok":{"project":{"x":true},"watch":true,"logTruthyChanges":true}}
+{"args":["place","x"],"fail":"Unknown arguments: place, x"}
+{"args":["--no-include"],"fail":"Unknown argument: include"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--type=\"game\""],"fail":"Unknown argument: 1e3"}
+{"args":["-i=inc","--no-watch"],"ok":{"project":".","watch":false,"includePath":"inc"}}
+{"args":["--optimizedLoops","--include-path=a"],"ok":{"project":".","optimizedLoops":true,"includePath":"a"}}
+{"args":["place","-","--type"],"fail":"Unknown arguments: place, -"}
+{"args":["--optimized-loops","--no-noInclude","place","place"],"fail":"Unknown arguments: place, place"}
+{"args":["place","--include-path=a"],"fail":"Unknown argument: place"}
+{"args":["--optimizedLoops","1e3","--no-include"],"fail":"Unknown arguments: include, 1e3"}
+{"args":["--LUAU","--NO-INCLUDE"],"fail":"Unknown arguments: LUAU, noInclude"}
+{"args":["-pw"],"ok":{"project":".","watch":true}}
+{"args":["-pi","--no-include","--includePath"],"fail":"Unknown argument: include"}
+{"args":["1e3","-1","-1","x"],"fail":"Unknown arguments: 1e3, -1, -1, x"}
+{"args":["x","--luau=yes","--type=","--noInclude=0"],"fail":"Unknown argument: x"}
+{"args":["--verbose=maybe","--NO-INCLUDE","--optimizedLoops"],"fail":"Unknown argument: noInclude"}
+{"args":["--no-rojo","-p","-h"],"other":"help"}
+{"args":["--use-polling","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-p","-","--NO-INCLUDE","x"],"fail":"Unknown argument: noInclude"}
+{"args":["--type"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["--no-","x","-"],"fail":"Unknown arguments: no-, no, -"}
+{"args":["--type=","-pw","-1"],"fail":"Unknown argument: -1"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--writeTransformedFiles"],"fail":"Unknown argument: 1e3"}
+{"args":["--NO-INCLUDE","-","-include","--allowCommentDirectives"],"fail":"Unknown arguments: noInclude, n, c, l, u, d, e, -"}
+{"args":["-include","--=x","place"],"fail":"Unknown arguments: n, c, l, u, d, e, =x"}
+{"args":["-1","x","1e3"],"fail":"Unknown arguments: -1, x, 1e3"}
+{"args":["-pw","-","--optimizedLoops","--log-truthy-changes"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-i=inc","--allow-comment-directives"],"ok":{"project":".","includePath":"inc","allowCommentDirectives":true}}
+{"args":["-w","--allowCommentDirectives","-wv","--help=false"],"other":"version"}
+{"args":["-","--type"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-verbose=true","-v","-1","place"],"other":"version"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--=x","--bogus"],"fail":"Unknown arguments: =x, bogus"}
+{"args":["--version","-wp","--no-luau"],"other":"version"}
+{"args":["--=x","--verbose=maybe","-"],"fail":"Unknown arguments: =x, -"}
+{"args":["--INCLUDE-PATH"],"ok":{"project":".","includePath":true}}
+{"args":["--optimized-loops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["--project"],"ok":{"project":"."}}
+{"args":["--writeOnlyChanged","--include-path"],"ok":{"project":".","writeOnlyChanged":true,"includePath":""}}
+{"args":["--no-include","-h","-"],"other":"help"}
+{"args":["-1","--include-path=a"],"fail":"Unknown argument: -1"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","-h","-wv"],"other":"help"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["--no-rojo"],"ok":{"project":".","rojo":false}}
+{"args":["--version=false","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--noInclude=0"],"ok":{"project":".","noInclude":false}}
+{"args":["--help"],"other":"help"}
+{"args":["--luau=yes","-p=.","-ip"],"ok":{"project":[".","."],"includePath":"","luau":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--rojo","x","--noInclude=0"],"ok":{"project":".","noInclude":false,"rojo":"x"}}
+{"args":["--luau=yes"],"ok":{"project":".","luau":false}}
+{"args":["--help","--no-rojo","1e3","-include"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--=x"],"fail":"Unknown arguments: =x, 1e3"}
+{"args":["--include-path=a","1e3","--watch"],"fail":"Unknown argument: 1e3"}
+{"args":["--allow-comment-directives"],"ok":{"project":".","allowCommentDirectives":true}}
+{"args":["place","--no-luau"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--type=\"game\"","-","--optimizedLoops"],"fail":"Unknown arguments: 1e3, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["--foo-bar","--rojo='r'"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["1e3","--bogus","-w","place"],"fail":"Unknown arguments: bogus, 1e3, place"}
+{"args":["--version","--10","place","place"],"other":"version"}
+{"args":["-pw","place"],"fail":"Unknown argument: place"}
+{"args":["--no-watch"],"ok":{"project":".","watch":false}}
+{"args":["--logTruthyChanges"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":["-","place","-ip"],"fail":"Unknown arguments: -, place"}
+{"args":["-i","-x.y","--Include-Path","-1"],"fail":"Unknown arguments: x, Include-Path, IncludePath"}
+{"args":["--writeTransformedFiles","--no-i"],"ok":{"project":".","writeTransformedFiles":true,"includePath":false}}
+{"args":["--help=false","--use-polling","--NO-INCLUDE"],"fail":"Unknown argument: noInclude"}
+{"args":["--noInclude","--allow-comment-directives","--watch"],"ok":{"project":".","watch":true,"noInclude":true,"allowCommentDirectives":true}}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--watch"],"ok":{"project":".","watch":true}}
+{"args":["x","--project","x"],"fail":"Unknown argument: x"}
+{"args":["--no-verbose=true","-x.y","--no-rojo"],"fail":"Unknown arguments: no-verbose, noVerbose, x"}
+{"args":["-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--no-type","-wv","--watch","--include-path"],"other":"version"}
+{"args":["place","---x","-"],"fail":"Unknown arguments: -x, x, place, -"}
+{"args":["-x","--no-i","-pw","--log-truthy-changes"],"fail":"Unknown argument: x"}
+{"args":["-","1e3","--include-path","---"],"fail":"Unknown arguments: -, 1e3, ---"}
+{"args":["--type","-i"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","place","--writeOnlyChanged"],"fail":"Unknown arguments: -, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","-1","--LUAU","--writeTransformedFiles"],"fail":"Unknown arguments: LUAU, -, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--writeOnlyChanged","-1"],"fail":"Unknown argument: -1"}
+{"args":["-pw","-"],"fail":"Unknown argument: -"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["1e3","x","place"],"fail":"Unknown arguments: 1e3, x, place"}
+{"args":["--optimized-loops","--luau=yes","--no-","-"],"fail":"Unknown arguments: no-, no, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--foo-bar","-ip","-1","place"],"fail":"Unknown arguments: foo-bar, fooBar, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-v","x","--no-","--use-polling"],"other":"version"}
+{"args":["-pw"],"ok":{"project":".","watch":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","place"],"fail":"Unknown arguments: x, place"}
+{"args":["--INCLUDE-PATH","--no-include"],"fail":"Unknown argument: include"}
+{"args":["--luau","x","--no-noInclude"],"fail":"Unknown argument: x"}
+{"args":["--optimized-loops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--noInclude=0"],"ok":{"project":".","noInclude":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-p=."],"ok":{"project":"."}}
+{"args":["-","place"],"fail":"Unknown arguments: -, place"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimizedLoops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["--no-i"],"ok":{"project":".","includePath":false}}
+{"args":["-p=.","-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--type"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["-x"],"fail":"Unknown argument: x"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--x.y"],"fail":"Unknown argument: x"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["-","-wp","--no-type","place"],"fail":"Unknown arguments: -, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","--log-truthy-changes","--no-verbose","1e3"],"fail":"Unknown arguments: -1, 1e3"}
+{"args":["--version","-1","-p=."],"other":"version"}
+{"args":["1e3","-wv","--type=","-1"],"other":"version"}
+{"args":["-i=inc","--includePath","-","--luau"],"fail":"Unknown argument: -"}
+{"args":["-1","--bogus"],"fail":"Unknown arguments: bogus, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","-wv","--luau","--LUAU"],"other":"version"}
+{"args":["1e3","-p","--include-path=a"],"fail":"Unknown argument: 1e3"}
+{"args":["--luau=yes","--10","--rojo","--10"],"fail":"Unknown argument: 10"}
+{"args":["--rojo","--allow-comment-directives","-ip"],"ok":{"project":".","includePath":"","rojo":"","allowCommentDirectives":true}}
+{"args":["-","--verbose=true"],"fail":"Unknown argument: -"}
+{"args":["--noInclude=0","--include-path"],"ok":{"project":".","noInclude":false,"includePath":""}}
+{"args":["--no-watch","place","--writeTransformedFiles"],"fail":"Unknown argument: place"}
+{"args":["--no-include","--no-"],"fail":"Unknown arguments: include, no-, no"}
+{"args":["--includePath","-w","-1","x"],"fail":"Unknown arguments: -1, x"}
+{"args":["--foo-bar","-x.y"],"fail":"Unknown arguments: foo-bar, fooBar, x"}
+{"args":["x","--writeOnlyChanged"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--help","--includePath",""],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimizedLoops","--help=false","--help=false","--include-path=a"],"ok":{"project":".","optimizedLoops":true,"includePath":"a"}}
+{"args":["-w"],"ok":{"project":".","watch":true}}
+{"args":["1e3","--version=false","place"],"fail":"Unknown arguments: 1e3, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--help"],"other":"help"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-h","--writeOnlyChanged","--verbose"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-pw","-1","--no-include"],"fail":"Unknown arguments: include, -1"}
+{"args":["--LUAU"],"fail":"Unknown argument: LUAU"}
+{"args":["--allowCommentDirectives","--noInclude=0"],"ok":{"project":".","noInclude":false,"allowCommentDirectives":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","place"],"fail":"Unknown arguments: 1e3, place"}
+{"args":["--optimizedLoops","--version=false","--project.x"],"ok":{"project":{"x":true},"optimizedLoops":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-p=."],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-rojo"],"ok":{"project":".","rojo":false}}
+{"args":["--no-i","--verbose"],"ok":{"project":".","verbose":true,"includePath":false}}
+{"args":["--verbose=maybe","--allow-comment-directives","---","--=x"],"fail":"Unknown arguments: =x, ---"}
+{"args":["-1","x","--help=false"],"fail":"Unknown arguments: -1, x"}
+{"args":["--verbose=maybe","-1"],"fail":"Unknown argument: -1"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["--verbose=maybe","x"],"fail":"Unknown argument: x"}
+{"args":["---","--writeTransformedFiles","--Include-Path"],"fail":"Unknown arguments: Include-Path, IncludePath, ---"}
+{"args":["--verbose","-x","--help=false","x"],"fail":"Unknown arguments: x, x"}
+{"args":["--x.y"],"fail":"Unknown argument: x"}
+{"args":["--logTruthyChanges","--no-verbose","--noInclude","--type=game"],"ok":{"project":".","verbose":false,"noInclude":true,"logTruthyChanges":true,"type":"game"}}
+{"args":["--10","place"],"fail":"Unknown argument: 10"}
+{"args":["-ip"],"ok":{"project":".","includePath":""}}
+{"args":["--usePolling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","--verbose=true","-1"],"fail":"Unknown arguments: -1, -1"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["1e3","place","--no-luau"],"fail":"Unknown arguments: 1e3, place"}
+{"args":["--help","--no-luau","x"],"other":"help"}
+{"args":["place","--include-path=a"],"fail":"Unknown argument: place"}
+{"args":["1e3","place"],"fail":"Unknown arguments: 1e3, place"}
+{"args":["--includePath","-","game"],"fail":"Unknown arguments: -, game"}
+{"args":["--type","-1","--Include-Path","1e3"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":["--watch","place","-p","--writeOnlyChanged"],"fail":"Unknown argument: place"}
+{"args":["--use-polling","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["--optimizedLoops","place","--10","-h"],"other":"help"}
+{"args":["--writeTransformedFiles","--5"],"fail":"Unknown argument: 5"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--include-path","place","-wv","-x"],"other":"version"}
+{"args":["--help"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","x","--no-noInclude"],"fail":"Unknown arguments: 1e3, x"}
+{"args":["--10","--no-","--watch","-"],"fail":"Unknown arguments: 10, no-, no, -"}
+{"args":["x","--no-include"],"fail":"Unknown arguments: include, x"}
+{"args":["place","--noInclude=0","-x","x"],"fail":"Unknown arguments: x, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-i=inc","-1"],"fail":"Unknown argument: -1"}
+{"args":["--writeTransformedFiles","--x.y","--includePath","-"],"fail":"Unknown arguments: x, -"}
+{"args":["--no-noInclude"],"ok":{"project":".","noInclude":false}}
+{"args":["-p","-1","--allow-comment-directives","-pw"],"ok":{"project":["-1","."],"watch":true,"allowCommentDirectives":true}}
+{"args":["-","--bogus"],"fail":"Unknown arguments: bogus, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-v","1e3","-"],"other":"version"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["--luau","--5","1e3","--include-path"],"fail":"Unknown argument: 5"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-no-include"],"ok":{"project":".","noInclude":false}}
+{"args":["-","place"],"fail":"Unknown arguments: -, place"}
+{"args":["--use-polling","--LUAU","--no-verbose","-w"],"fail":"Unknown argument: LUAU"}
+{"args":["-x.y"],"fail":"Unknown argument: x"}
+{"args":["--rojo","--no-verbose","--x.y","-1"],"fail":"Unknown argument: x"}
+{"args":["-p-","-1","--writeTransformedFiles"],"fail":"Unknown argument: -1"}
+{"args":["-p-","x","1e3","--log-truthy-changes"],"fail":"Unknown arguments: x, 1e3"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["x","--no-luau","x"],"fail":"Unknown arguments: x, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","-ip","--NO-INCLUDE","x"],"fail":"Unknown arguments: noInclude, -1"}
+{"args":["-pi"],"ok":{"project":".","includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimized-loops","--type="],"fail":"Invalid values:\n  Argument: type, Given: \"\", Choices: \"game\", \"model\", \"package\""}
+{"args":["--no-rojo","--no-noInclude","---x","-v"],"other":"version"}
+{"args":["-1","--verbose=true","--verbose=maybe","--help=false"],"fail":"Unknown argument: -1"}
+{"args":["--no-verbose","x","--no-noInclude"],"fail":"Unknown argument: x"}
+{"args":["--includePath"],"ok":{"project":".","includePath":""}}
+{"args":["place","1e3"],"fail":"Unknown arguments: place, 1e3"}
+{"args":["---x","--version=false","-"],"fail":"Unknown arguments: -x, x, -"}
+{"args":["--writeOnlyChanged"],"ok":{"project":".","writeOnlyChanged":true}}
+{"args":["--no-type","--logTruthyChanges","--type=\"game\"","--10"],"fail":"Unknown argument: 10"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--watch","-wp","-1","--verbose=true"],"ok":{"project":"-1","watch":true,"verbose":true}}
+{"args":["--INCLUDE-PATH","--noInclude"],"ok":{"project":".","noInclude":true,"includePath":true}}
+{"args":["-x"],"fail":"Unknown argument: x"}
+{"args":["--project.x"],"ok":{"project":{"x":true}}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-i","-pw"],"ok":{"project":".","watch":true,"includePath":""}}
+{"args":["1e3","--no-watch","--no-no-include"],"fail":"Unknown argument: 1e3"}
+{"args":["--no-p","-v"],"other":"version"}
+{"args":["--optimizedLoops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["--allowCommentDirectives"],"ok":{"project":".","allowCommentDirectives":true}}
+{"args":["--include-path","--LUAU"],"fail":"Unknown argument: LUAU"}
+{"args":["--log-truthy-changes","-1","--project","-"],"fail":"Unknown arguments: -1, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--use-polling","place","-w","--no-p"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--include-path"],"ok":{"project":".","includePath":""}}
+{"args":["--verbose","-wv","-p=."],"other":"version"}
+{"args":["--writeTransformedFiles","--type=game","1e3","--verbose=maybe"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","-p-"],"fail":"Unknown argument: -1"}
+{"args":["x","--Include-Path"],"fail":"Unknown arguments: Include-Path, IncludePath, x"}
+{"args":["--rojo='r'"],"ok":{"project":".","rojo":"r"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","--type=game"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","--project","--logTruthyChanges"],"fail":"Unknown argument: -"}
+{"args":["--include-path=a","--include-path=a"],"ok":{"project":".","includePath":["a","a"]}}
+{"args":["--include-path=a","--help=false","-","--type=\"game\""],"fail":"Unknown argument: -"}
+{"args":["-include","--5","---"],"fail":"Unknown arguments: 5, n, c, l, u, d, e, ---"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--allowCommentDirectives","--x.y","x","--log-truthy-changes"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","place","--optimizedLoops"],"fail":"Unknown arguments: x, place"}
+{"args":["--x.y","x","--no-watch"],"fail":"Unknown argument: x"}
+{"args":["--help","x","--no-type","place"],"other":"help"}
+{"args":["--includePath","--project","-"],"fail":"Unknown argument: -"}
+{"args":["place","-1","--noInclude"],"fail":"Unknown arguments: place, -1"}
+{"args":["--project.x","-v","--=x","--watch"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--allowCommentDirectives","--noInclude=0","--noInclude","--10"],"fail":"Unknown argument: 10"}
+{"args":["--bogus","--bogus"],"fail":"Unknown argument: bogus"}
+{"args":["--help","--allow-comment-directives","--writeOnlyChanged","--no-type"],"other":"help"}
+{"args":["--NO-INCLUDE"],"fail":"Unknown argument: noInclude"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimizedLoops","--no-i","-","--no-include"],"fail":"Unknown arguments: include, -"}
+{"args":["1e3","--no-"],"fail":"Unknown arguments: no-, no, 1e3"}
+{"args":["--optimized-loops","--type","-pw"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["--no-verbose=true","--NO-INCLUDE"],"fail":"Unknown arguments: no-verbose, noVerbose, noInclude"}
+{"args":["-h"],"other":"help"}
+{"args":["--x.y","--usePolling","-pi"],"fail":"Unknown argument: x"}
+{"args":["--rojo='r'","-ip","-pi"],"ok":{"project":[".","."],"includePath":["",""],"rojo":"r"}}
+{"args":["-1","-wp"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-verbose","--type=\"game\"","--no-verbose","--no-luau"],"ok":{"project":".","verbose":false,"type":"game","luau":false}}
+{"args":["--optimizedLoops","--usePolling","-1"],"fail":"Unknown argument: -1"}
+{"args":["-pi","1e3"],"ok":{"project":".","includePath":"1e3"}}
+{"args":["--no-luau","place","place","-"],"fail":"Unknown arguments: place, place, -"}
+{"args":["-h"],"other":"help"}
+{"args":["-","--logTruthyChanges","1e3","--LUAU"],"fail":"Unknown arguments: LUAU, -, 1e3"}
+{"args":["--Include-Path","--5","--optimized-loops","-"],"fail":"Unknown arguments: 5, Include-Path, IncludePath, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--writeOnlyChanged","--project"],"ok":{"project":".","writeOnlyChanged":true}}
+{"args":["--no-p","-pw"],"ok":{"project":[false,"."],"watch":true}}
+{"args":["--usePolling","-p","--rojo='r'","--5"],"fail":"Unknown argument: 5"}
+{"args":["x","-p-"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-ip"],"ok":{"project":".","includePath":""}}
+{"args":["--optimizedLoops","--noInclude=0","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["-x.y","--version=false","--log-truthy-changes","x"],"fail":"Unknown arguments: x, x"}
+{"args":["--include-path","-1","place"],"fail":"Unknown argument: place"}
+{"args":["-pi","--no-no-include"],"ok":{"project":".","noInclude":false,"includePath":""}}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--logTruthyChanges","-p=.","-include","--no-include"],"fail":"Unknown arguments: n, c, l, u, d, e, include"}
+{"args":["--no-verbose"],"ok":{"project":".","verbose":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","--noInclude=0"],"fail":"Unknown argument: place"}
+{"args":["-x.y","-1","-p"],"fail":"Unknown arguments: x, -1"}
+{"args":["--watch","--type","place"],"fail":"Invalid values:\n  Argument: type, Given: \"place\", Choices: \"game\", \"model\", \"package\""}
+{"args":["--type=\"game\"","place"],"fail":"Unknown argument: place"}
+{"args":["place","x","--type"],"fail":"Unknown arguments: place, x"}
+{"args":["x","--optimizedLoops"],"fail":"Unknown argument: x"}
+{"args":["--version"],"other":"version"}
+{"args":["-pi","-","place","-wv"],"other":"version"}
+{"args":["--logTruthyChanges","--no-include","--usePolling","--type"],"fail":"Unknown argument: include"}
+{"args":["-i=inc","x","-"],"fail":"Unknown arguments: x, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["--5","--verbose=maybe","--no-","1e3"],"fail":"Unknown arguments: 5, no-, no"}
+{"args":["-1","--optimized-loops","--no-noInclude","x"],"fail":"Unknown arguments: -1, x"}
+{"args":["--Include-Path","--type"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":["--version=false","--writeTransformedFiles"],"ok":{"project":".","writeTransformedFiles":true}}
+{"args":["1e3","-p-","--no-verbose=true","--bogus"],"fail":"Unknown arguments: no-verbose, noVerbose, bogus, 1e3"}
+{"args":["--=x","--version"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","--writeTransformedFiles","--=x"],"fail":"Unknown arguments: =x, -1"}
+{"args":["-1","--include-path"],"fail":"Unknown argument: -1"}
+{"args":["-x"],"fail":"Unknown argument: x"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["-x","--no-luau"],"fail":"Unknown argument: x"}
+{"args":["-i"],"ok":{"project":".","includePath":""}}
+{"args":["--noInclude=0","--no-i","-1","-i=inc"],"fail":"Unknown argument: -1"}
+{"args":["--verbose=maybe","-","-1","-pw"],"fail":"Unknown arguments: -, -1"}
+{"args":["-i"],"ok":{"project":".","includePath":""}}
+{"args":["x","-wp","x","--allowCommentDirectives"],"fail":"Unknown argument: x"}
+{"args":["--include-path=a","--10","--version=false","--INCLUDE-PATH"],"fail":"Unknown argument: 10"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--project.x","--Include-Path","--writeOnlyChanged","-1"],"fail":"Unknown arguments: Include-Path, IncludePath, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-pi","--include-path","-","place"],"fail":"Unknown arguments: -, place"}
+{"args":["-1","--include-path=a"],"fail":"Unknown argument: -1"}
+{"args":["-pw","-pi"],"ok":{"project":[".","."],"watch":true,"includePath":""}}
+{"args":["--luau","-"],"fail":"Unknown argument: -"}
+{"args":["--LUAU","--no-verbose","--type"],"fail":"Unknown argument: LUAU"}
+{"args":["--INCLUDE-PATH","--optimized-loops"],"ok":{"project":".","optimizedLoops":true,"includePath":true}}
+{"args":["--no-no-include","-v","--include-path"],"other":"version"}
+{"args":["x","-p=.","--no-noInclude"],"fail":"Unknown argument: x"}
+{"args":["--project.x","--foo-bar","--no-rojo"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["--no-verbose","x","--x.y","-"],"fail":"Unknown arguments: x, x, -"}
+{"args":["--noInclude=0","-1"],"fail":"Unknown argument: -1"}
+{"args":["x","place"],"fail":"Unknown arguments: x, place"}
+{"args":["---x","-1"],"fail":"Unknown arguments: -x, x"}
+{"args":["--foo-bar","-1"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["-wp"],"ok":{"project":".","watch":true}}
+{"args":["--use-polling","-i=inc","--luau=yes","--type="],"fail":"Invalid values:\n  Argument: type, Given: \"\", Choices: \"game\", \"model\", \"package\""}
+{"args":["--no-luau","place","--optimizedLoops"],"fail":"Unknown argument: place"}
+{"args":["-w"],"ok":{"project":".","watch":true}}
+{"args":["--verbose","--project"],"ok":{"project":".","verbose":true}}
+{"args":["1e3","--verbose=true","--writeTransformedFiles"],"fail":"Unknown argument: 1e3"}
+{"args":["-","--type=game","--noInclude=0"],"fail":"Unknown argument: -"}
+{"args":["--type=game"],"ok":{"project":".","type":"game"}}
+{"args":["--foo-bar","--no-verbose"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["--x.y","-i","1e3","-"],"fail":"Unknown arguments: x, -"}
+{"args":["-1","-wv","-"],"other":"version"}
+{"args":["--include-path=a","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","--writeTransformedFiles","--verbose","--no-verbose"],"fail":"Unknown argument: -1"}
+{"args":["--no-type","---x","---x"],"fail":"Unknown arguments: -x, x"}
+{"args":["--NO-INCLUDE","-1","---","place"],"fail":"Unknown arguments: noInclude, ---, place"}
+{"args":["-pw","-1","-x","--no-i"],"fail":"Unknown arguments: x, -1"}
+{"args":["-ip","place","-"],"fail":"Unknown argument: -"}
+{"args":["place","-x.y","--include-path=a"],"fail":"Unknown arguments: x, place"}
+{"args":["1.50","--use-polling"],"fail":"Unknown argument: 1.50"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-wp","place"],"ok":{"project":"place","watch":true}}
+{"args":["--use-polling","-"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","--rojo"],"fail":"Unknown argument: -1"}
+{"args":["--type","1e3","--foo-bar","--includePath"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["--type=\"game\"","--help=false"],"ok":{"project":".","type":"game"}}
+{"args":["place","x"],"fail":"Unknown arguments: place, x"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["--use-polling","--log-truthy-changes","-1","--no-verbose"],"fail":"Unknown argument: -1"}
+{"args":["--=x","--no-luau","-1"],"fail":"Unknown arguments: =x, -1"}
+{"args":["-i","--NO-INCLUDE"],"fail":"Unknown argument: noInclude"}
+{"args":["--noInclude","-pw","--no-verbose=true","x"],"fail":"Unknown arguments: no-verbose, noVerbose, x"}
+{"args":["-x","-h","--luau","--luau"],"other":"help"}
+{"args":["-h"],"other":"help"}
+{"args":["--noInclude","place","x","1e3"],"fail":"Unknown arguments: place, x, 1e3"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["-v","--include-path=a","-wv"],"other":"version"}
+{"args":["--project","--writeOnlyChanged"],"ok":{"project":".","writeOnlyChanged":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--usePolling","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","1e3"],"fail":"Unknown arguments: -, 1e3"}
+{"args":["place","-p=.","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--x.y","--no-i"],"fail":"Unknown argument: x"}
+{"args":["-include","-p"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["place","--includePath","--no-type","--watch"],"fail":"Unknown argument: place"}
+{"args":["-pi","--verbose=true","-x"],"fail":"Unknown argument: x"}
+{"args":["-x.y","--project.x","--=x","--type=game"],"fail":"Unknown arguments: x, =x"}
+{"args":["--luau=yes","1e3","x","--writeTransformedFiles"],"fail":"Unknown arguments: 1e3, x"}
+{"args":["--use-polling","--no-luau","--verbose=maybe"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","--=x"],"fail":"Unknown arguments: =x, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-w","--writeOnlyChanged"],"ok":{"project":".","watch":true,"writeOnlyChanged":true}}
+{"args":["-pw","-1","1e3","--verbose=true"],"fail":"Unknown arguments: -1, 1e3"}
+{"args":["--rojo","-"],"fail":"Unknown argument: -"}
+{"args":["--LUAU","--no-verbose","place","1e3"],"fail":"Unknown arguments: LUAU, place, 1e3"}
+{"args":["--noInclude=0","-","-v"],"other":"version"}
+{"args":["place","x","place","x"],"fail":"Unknown arguments: place, x, place, x"}
+{"args":["place","--version=false","-","-1"],"fail":"Unknown arguments: place, -, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimizedLoops","--type"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["-","--optimizedLoops"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","--no-","-p-"],"fail":"Unknown arguments: no-, no, -"}
+{"args":["-","--log-truthy-changes"],"fail":"Unknown argument: -"}
+{"args":["-","--watch","--rojo"],"fail":"Unknown argument: -"}
+{"args":["-1","--no-i","--NO-INCLUDE","-"],"fail":"Unknown arguments: noInclude, -1, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-luau","-p=."],"ok":{"project":".","luau":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","-wp","1e3","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":["-i","-i=inc"],"ok":{"project":".","includePath":["","inc"]}}
+{"args":["--type=","1e3","--optimizedLoops","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--use-polling","-h","-v","---"],"other":"help"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--rojo","-p-","place"],"fail":"Unknown argument: place"}
+{"args":["--no-verbose=true","-1"],"fail":"Unknown arguments: no-verbose, noVerbose, -1"}
+{"args":["--type=\"game\"","--type=game","---x","-p-"],"fail":"Unknown arguments: -x, x"}
+{"args":["-x","-","---","--include-path"],"fail":"Unknown arguments: x, ---"}
+{"args":["1e3","--project.x","-1","-h"],"other":"help"}
+{"args":["--no-i","-","--logTruthyChanges","--writeOnlyChanged"],"fail":"Unknown argument: -"}
+{"args":["--type=game","--no-include","-","1e3"],"fail":"Unknown arguments: include, -, 1e3"}
+{"args":["--=x","--INCLUDE-PATH"],"fail":"Unknown argument: =x"}
+{"args":["--help","-pw","1e3"],"other":"help"}
+{"args":["--logTruthyChanges","--help","--no-type","--NO-INCLUDE"],"other":"help"}
+{"args":["--5"],"fail":"Unknown argument: 5"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-wp","x"],"ok":{"project":"x","watch":true}}
+{"args":["-1","--includePath","--use-polling"],"fail":"Unknown argument: -1"}
+{"args":["--allowCommentDirectives","--no-watch","x","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar, x"}
+{"args":["-1","1e3"],"fail":"Unknown arguments: -1, 1e3"}
+{"args":["-wv"],"other":"version"}
+{"args":["--NO-INCLUDE","--verbose=true","--type=","-i=inc"],"fail":"Unknown argument: noInclude"}
+{"args":["--help","--Include-Path","--no-verbose=true"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--bogus","-pi","--help","--include-path"],"other":"help"}
+{"args":["--noInclude=0"],"ok":{"project":".","noInclude":false}}
+{"args":["--no-noInclude","-","-wp","-wp"],"fail":"Unknown argument: -"}
+{"args":["-1","--writeTransformedFiles"],"fail":"Unknown argument: -1"}
+{"args":["--foo-bar","-1","--no-no-include"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["--allowCommentDirectives","-","1e3"],"fail":"Unknown arguments: -, 1e3"}
+{"args":["-ip","--type=\"game\""],"ok":{"project":".","type":"game","includePath":""}}
+{"args":["--no-noInclude","1e3","-1"],"fail":"Unknown arguments: 1e3, -1"}
+{"args":["--no-include","--verbose=true","--5"],"fail":"Unknown arguments: 5, include"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","place","--logTruthyChanges"],"fail":"Unknown arguments: x, place"}
+{"args":["place","place"],"fail":"Unknown arguments: place, place"}
+{"args":["--Include-Path"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":["place","--no-p"],"fail":"Unknown argument: place"}
+{"args":["--rojo='r'"],"ok":{"project":".","rojo":"r"}}
+{"args":["--rojo","1e3"],"ok":{"project":".","rojo":"1e3"}}
+{"args":["x","--no-p","--INCLUDE-PATH","--allowCommentDirectives"],"fail":"Unknown argument: x"}
+{"args":["-p-","--noInclude=0","place"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--type","-1"],"fail":"Invalid values:\n  Argument: type, Given: -1, Choices: \"game\", \"model\", \"package\""}
+{"args":["--project","--type=game","-"],"fail":"Unknown argument: -"}
+{"args":["-1","--INCLUDE-PATH","1e3"],"fail":"Unknown argument: -1"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--=x","--bogus","-wp","--project"],"fail":"Unknown arguments: =x, bogus"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","--no-include"],"fail":"Unknown arguments: include, -"}
+{"args":["--luau=yes","---"],"fail":"Unknown argument: ---"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--rojo='r'"],"ok":{"project":".","rojo":"r"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","x","--no-i","-"],"fail":"Unknown arguments: x, x, -"}
+{"args":["-","--usePolling","-ip","--type"],"fail":"Unknown argument: -"}
+{"args":["-p=.","-i=inc"],"ok":{"project":".","includePath":"inc"}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--writeTransformedFiles"],"ok":{"project":".","writeTransformedFiles":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-rojo","-p-"],"ok":{"project":"-","rojo":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--allowCommentDirectives","x","--luau"],"fail":"Unknown argument: x"}
+{"args":["-p"],"ok":{"project":"."}}
+{"args":["-wv"],"other":"version"}
+{"args":["place","-i","-1","x"],"fail":"Unknown arguments: place, x"}
+{"args":["--help=false","--no-watch","--log-truthy-changes"],"ok":{"project":".","watch":false,"logTruthyChanges":true}}
+{"args":["-ip"],"ok":{"project":".","includePath":""}}
+{"args":["--project.x","--project"],"ok":{"project":[{"x":true},"."]}}
+{"args":["--no-noInclude","place","--noInclude"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","--no-noInclude","--no-include","---"],"fail":"Unknown arguments: include, -1, ---"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","--optimized-loops","-p"],"fail":"Unknown argument: -"}
+{"args":["--no-type","--type"],"fail":"Invalid values:\n  Argument: type, Given: false, true, Choices: \"game\", \"model\", \"package\""}
+{"args":["--optimizedLoops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-i","1e3","place"],"fail":"Unknown arguments: 1e3, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-rojo","--optimized-loops"],"ok":{"project":".","optimizedLoops":true,"rojo":false}}
+{"args":["--use-polling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--x.y"],"fail":"Unknown argument: x"}
+{"args":["--writeOnlyChanged","-pw","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","--project","1e3"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--allow-comment-directives","1e3","--watch"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","1e3"],"fail":"Unknown arguments: -1, 1e3"}
+{"args":["--NO-INCLUDE","--help=false","--includePath"],"fail":"Unknown argument: noInclude"}
+{"args":["-","--bogus","-1"],"fail":"Unknown arguments: bogus, -"}
+{"args":["--log-truthy-changes","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--no-i","-"],"fail":"Unknown argument: -"}
+{"args":["--no-type","-x.y","-i","--10"],"fail":"Unknown arguments: 10, x"}
+{"args":["--logTruthyChanges"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":["--type=","-1"],"fail":"Unknown argument: -1"}
+{"args":["--type=game","-1","place","--writeTransformedFiles"],"fail":"Unknown arguments: -1, place"}
+{"args":["--x.y","-wv","--no-p","--rojo='r'"],"other":"version"}
+{"args":["-1","x","place"],"fail":"Unknown arguments: -1, x, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","--LUAU","1e3","-"],"fail":"Unknown arguments: LUAU, x, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--include-path=a"],"ok":{"project":".","includePath":"a"}}
+{"args":["--writeOnlyChanged","-p-","-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--noInclude","-","-i=inc","--no-rojo"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-type","---x","--type="],"fail":"Unknown arguments: -x, x"}
+{"args":["--no-verbose"],"ok":{"project":".","verbose":false}}
+{"args":["--project","1e3","--help"],"other":"help"}
+{"args":["--use-polling","x","1e3","x"],"fail":"Unknown arguments: x, 1e3, x"}
+{"args":["1e3","-v"],"other":"version"}
+{"args":["-","--no-noInclude","-","-p=."],"fail":"Unknown arguments: -, -"}
+{"args":["--no-verbose=true","-","--noInclude","--verbose"],"fail":"Unknown arguments: no-verbose, noVerbose, -"}
+{"args":["--project.x","-i"],"ok":{"project":{"x":true},"includePath":""}}
+{"args":["--noInclude=0","--no-include"],"fail":"Unknown argument: include"}
+{"args":["-","-1","-include","--INCLUDE-PATH"],"fail":"Unknown arguments: n, c, l, u, d, e, -, -1"}
+{"args":["--writeTransformedFiles","--luau","-pw"],"ok":{"project":".","watch":true,"writeTransformedFiles":true,"luau":true}}
+{"args":["1e3","--help"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-i"],"ok":{"project":".","includePath":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","place"],"fail":"Unknown arguments: x, place"}
+{"args":["-","--allowCommentDirectives","--use-polling"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--watch","--Include-Path","--no-type"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":["-p-","-","--no-verbose","--rojo"],"fail":"Unknown argument: -"}
+{"args":["--LUAU","--allow-comment-directives"],"fail":"Unknown argument: LUAU"}
+{"args":["-i=inc","--log-truthy-changes","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-","--project"],"fail":"Unknown argument: -"}
+{"args":["---"],"fail":"Unknown argument: ---"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--type=","---x"],"fail":"Unknown arguments: -x, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--verbose","-p=."],"fail":"Unknown argument: 1e3"}
+{"args":["--type=\"game\"","--no-verbose","-v","-"],"other":"version"}
+{"args":["-pw","--version","1e3"],"other":"version"}
+{"args":["--usePolling","-v"],"other":"version"}
+{"args":["--no-watch","--allowCommentDirectives"],"ok":{"project":".","watch":false,"allowCommentDirectives":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimized-loops","--project.x","x"],"ok":{"project":{"x":"x"},"optimizedLoops":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-p"],"ok":{"project":false}}
+{"args":["--verbose=maybe","-","-w"],"fail":"Unknown argument: -"}
+{"args":["--type","---","-wv"],"other":"version"}
+{"args":["--no-noInclude"],"ok":{"project":".","noInclude":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--verbose","-"],"fail":"Unknown argument: -"}
+{"args":["-","--log-truthy-changes","x","--noInclude=0"],"fail":"Unknown arguments: -, x"}
+{"args":["--bogus","-h","-h"],"other":"help"}
+{"args":["--no-include","--log-truthy-changes","-include"],"fail":"Unknown arguments: include, n, c, l, u, d, e"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--include-path","-","---x"],"fail":"Unknown arguments: -x, x, -"}
+{"args":["x","--x.y","--no-luau"],"fail":"Unknown arguments: x, x"}
+{"args":["--optimizedLoops","-i=inc"],"ok":{"project":".","optimizedLoops":true,"includePath":"inc"}}
+{"args":["--help=false","--bogus","--no-include"],"fail":"Unknown arguments: bogus, include"}
+{"args":["--project","--type=","-p"],"fail":"Invalid values:\n  Argument: type, Given: \"\", Choices: \"game\", \"model\", \"package\""}
+{"args":["--no-verbose=true","--no-no-include","--include-path=a","-1"],"fail":"Unknown arguments: no-verbose, noVerbose, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--LUAU","-ip"],"fail":"Unknown argument: LUAU"}
+{"args":["x","--writeTransformedFiles"],"fail":"Unknown argument: x"}
+{"args":["1e3","1e3","--verbose","-ip"],"fail":"Unknown arguments: 1e3, 1e3"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--logTruthyChanges"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":["--noInclude=0"],"ok":{"project":".","noInclude":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--type=\"game\"","place","--type=\"game\"","-1"],"fail":"Unknown arguments: place, -1"}
+{"args":["--version","-x"],"other":"version"}
+{"args":["--version=false","--5"],"fail":"Unknown argument: 5"}
+{"args":["--no-verbose=true","--writeOnlyChanged","1e3"],"fail":"Unknown arguments: no-verbose, noVerbose, 1e3"}
+{"args":["-1","--watch","x"],"fail":"Unknown arguments: -1, x"}
+{"args":["--includePath","-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--allowCommentDirectives","-x.y","--foo-bar"],"fail":"Unknown arguments: x, foo-bar, fooBar"}
+{"args":["--type=game"],"ok":{"project":".","type":"game"}}
+{"args":["-pi","-x","--use-polling","-1"],"fail":"Unknown arguments: x, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","--type="],"fail":"Unknown argument: place"}
+{"args":["--rojo"],"ok":{"project":".","rojo":""}}
+{"args":["-","--optimized-loops"],"fail":"Unknown argument: -"}
+{"args":["--version","-","--verbose"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","-h"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--allowCommentDirectives","place"],"fail":"Unknown argument: place"}
+{"args":["-wv","--logTruthyChanges","-i","1e3"],"other":"version"}
+{"args":["--no-p","1e3","--rojo","place"],"fail":"Unknown argument: 1e3"}
+{"args":["--foo-bar","1e3","-p=."],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["-i=inc","place"],"fail":"Unknown argument: place"}
+{"args":["-x.y","x","--INCLUDE-PATH","--rojo='r'"],"fail":"Unknown argument: x"}
+{"args":["--writeOnlyChanged","--version=false","x","-1"],"fail":"Unknown arguments: x, -1"}
+{"args":["--allowCommentDirectives"],"ok":{"project":".","allowCommentDirectives":true}}
+{"args":["---x","-","--allowCommentDirectives"],"fail":"Unknown arguments: -x, x, -"}
+{"args":["-1","-","--help","-"],"other":"help"}
+{"args":["--no-noInclude","--no-luau","x","place"],"fail":"Unknown arguments: x, place"}
+{"args":["--writeTransformedFiles","-p","--watch"],"ok":{"project":".","watch":true,"writeTransformedFiles":true}}
+{"args":["--usePolling","--10","--type=","--no-verbose=true"],"fail":"Unknown arguments: 10, no-verbose, noVerbose"}
+{"args":["--log-truthy-changes","1e3","-wp","--luau=yes"],"fail":"Unknown argument: 1e3"}
+{"args":["--luau","--rojo","--includePath"],"ok":{"project":".","includePath":"","rojo":"","luau":true}}
+{"args":["--no-include","--10","--allow-comment-directives"],"fail":"Unknown arguments: 10, include"}
+{"args":["-","--usePolling","x"],"fail":"Unknown arguments: -, x"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--no-verbose","-"],"fail":"Unknown argument: -"}
+{"args":["--allowCommentDirectives"],"ok":{"project":".","allowCommentDirectives":true}}
+{"args":["--includePath"],"ok":{"project":".","includePath":""}}
+{"args":["--NO-INCLUDE","--foo-bar"],"fail":"Unknown arguments: noInclude, foo-bar, fooBar"}
+{"args":["--include-path","--type"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","1e3"],"fail":"Unknown arguments: 1e3, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","x","-x.y","-pi"],"fail":"Unknown arguments: x, -, x"}
+{"args":["-pw","-1","--noInclude"],"fail":"Unknown argument: -1"}
+{"args":["-p=.","-i","-w"],"ok":{"project":".","watch":true,"includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--help=false","x","-1","--logTruthyChanges"],"fail":"Unknown arguments: x, -1"}
+{"args":["--INCLUDE-PATH","--project"],"ok":{"project":".","includePath":true}}
+{"args":["--watch","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["place","--no-"],"fail":"Unknown arguments: no-, no, place"}
+{"args":["place","-p","--log-truthy-changes"],"fail":"Unknown argument: place"}
+{"args":["x","--no-type","-1","-i=inc"],"fail":"Unknown arguments: x, -1"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--writeOnlyChanged","--bogus"],"fail":"Unknown argument: bogus"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-include"],"fail":"Unknown argument: include"}
+{"args":["x","--allowCommentDirectives","--use-polling","--noInclude=0"],"fail":"Unknown argument: x"}
+{"args":["--no-p","--noInclude=0"],"ok":{"project":false,"noInclude":false}}
+{"args":["-","---","--noInclude=0","x"],"fail":"Unknown arguments: -, ---, x"}
+{"args":["--noInclude=0"],"ok":{"project":".","noInclude":false}}
+{"args":["-1","-i"],"fail":"Unknown argument: -1"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--bogus"],"fail":"Unknown argument: bogus"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","-1","--help","---"],"other":"help"}
+{"args":["---","-wp"],"fail":"Unknown argument: ---"}
+{"args":["--rojo='r'","--rojo='r'","--rojo"],"ok":{"project":".","rojo":["r","r",""]}}
+{"args":["1e3","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":["-p=."],"ok":{"project":"."}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","-","place","-"],"fail":"Unknown arguments: -1, -, place, -"}
+{"args":["--include-path=a"],"ok":{"project":".","includePath":"a"}}
+{"args":["--usePolling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["--no-verbose=true"],"fail":"Unknown arguments: no-verbose, noVerbose"}
+{"args":["--usePolling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["--help","x","--no-verbose=true"],"other":"help"}
+{"args":["x","-1","-","-1"],"fail":"Unknown arguments: x, -1, -, -1"}
+{"args":["--includePath","x"],"ok":{"project":".","includePath":"x"}}
+{"args":["x","--luau=yes"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","1e3"],"fail":"Unknown arguments: x, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--include-path","--version","x","-x.y"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--no-include","--INCLUDE-PATH"],"fail":"Unknown arguments: include, 1e3"}
+{"args":["--verbose","-wp"],"ok":{"project":".","watch":true,"verbose":true}}
+{"args":["-1","x"],"fail":"Unknown arguments: -1, x"}
+{"args":["--INCLUDE-PATH","--rojo='r'","place","--NO-INCLUDE"],"fail":"Unknown arguments: noInclude, place"}
+{"args":["--type"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["--rojo","-p=."],"ok":{"project":".","rojo":""}}
+{"args":["-1","1e3","--no-watch"],"fail":"Unknown arguments: -1, 1e3"}
+{"args":["-","x","-ip"],"fail":"Unknown arguments: -, x"}
+{"args":["-i","--optimized-loops","--no-p","-wp"],"ok":{"project":[false,"."],"watch":true,"optimizedLoops":true,"includePath":""}}
+{"args":["place","--NO-INCLUDE","1e3","--no-noInclude"],"fail":"Unknown arguments: noInclude, no-include, place"}
+{"args":["--no-luau","--usePolling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","1e3"],"fail":"Unknown arguments: 1e3, 1e3"}
+{"args":["--no-","--no-i","--include-path","-1"],"fail":"Unknown arguments: no-, no"}
+{"args":["-wv","--=x","--type=\"game\""],"other":"version"}
+{"args":["-v"],"other":"version"}
+{"args":["place","x","-1","1e3"],"fail":"Unknown arguments: place, x, -1, 1e3"}
+{"args":["--no-luau","1e3","1e3","place"],"fail":"Unknown arguments: 1e3, 1e3, place"}
+{"args":["--include-path","--verbose=true","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--includePath","--writeOnlyChanged"],"ok":{"project":".","writeOnlyChanged":true,"includePath":""}}
+{"args":["-","x"],"fail":"Unknown arguments: -, x"}
+{"args":["--no-include","-p=.","place"],"fail":"Unknown arguments: include, place"}
+{"args":["1e3","--watch"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["---x","-"],"fail":"Unknown arguments: -x, x, -"}
+{"args":["-i","x","--no-rojo"],"ok":{"project":".","includePath":"x","rojo":false}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","-w"],"fail":"Unknown argument: -1"}
+{"args":["-","-"],"fail":"Unknown arguments: -, -"}
+{"args":["place","--noInclude=0"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--x.y","x","-1"],"fail":"Unknown arguments: x, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","--no-verbose","--version","x"],"other":"version"}
+{"args":["--project.x","--type","--project.x","--help"],"other":"help"}
+{"args":["--writeTransformedFiles","--type=\"game\""],"ok":{"project":".","writeTransformedFiles":true,"type":"game"}}
+{"args":["-1","--type=","--version","--no-"],"other":"version"}
+{"args":["-wv"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--type=","-1","--writeOnlyChanged","-include"],"fail":"Unknown arguments: n, c, l, u, d, e, -1"}
+{"args":["--version"],"other":"version"}
+{"args":["-p-","--no-i","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-i=inc","place","--version","--writeTransformedFiles"],"other":"version"}
+{"args":["-wp","-wp","-wv","x"],"other":"version"}
+{"args":["--INCLUDE-PATH"],"ok":{"project":".","includePath":true}}
+{"args":["--no-type","--optimized-loops","--5"],"fail":"Unknown argument: 5"}
+{"args":["--verbose=true"],"ok":{"project":".","verbose":true}}
+{"args":["--no-p","--no-include","--no-p","--type"],"fail":"Unknown argument: include"}
+{"args":["--optimizedLoops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["--noInclude"],"ok":{"project":".","noInclude":true}}
+{"args":["-1","--no-noInclude"],"fail":"Unknown argument: -1"}
+{"args":["--log-truthy-changes","--LUAU","---x"],"fail":"Unknown arguments: LUAU, -x, x"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["place","-p-","1e3"],"fail":"Unknown arguments: place, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-p"],"ok":{"project":false}}
+{"args":["-","x","place","--usePolling"],"fail":"Unknown arguments: -, x, place"}
+{"args":["-p","1e3","-include","--type=\"game\""],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--version","-"],"other":"version"}
+{"args":["-1","--project.x","--no-verbose"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--allowCommentDirectives","--=x","---x"],"fail":"Unknown arguments: =x, -x, x"}
+{"args":["--optimizedLoops","-pw","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-i","-pw","-x","--includePath"],"fail":"Unknown argument: x"}
+{"args":["--log-truthy-changes","1e3","--foo-bar","--5"],"fail":"Unknown arguments: 5, foo-bar, fooBar, 1e3"}
+{"args":["-pw","--no-verbose"],"ok":{"project":".","watch":true,"verbose":false}}
+{"args":["--allowCommentDirectives","x","-wp"],"fail":"Unknown argument: x"}
+{"args":["--INCLUDE-PATH","-1"],"ok":{"project":".","includePath":"-1"}}
+{"args":["--no-i","--no-rojo"],"ok":{"project":".","includePath":false,"rojo":false}}
+{"args":["--no-type","--allow-comment-directives","-1","--allowCommentDirectives"],"fail":"Unknown argument: -1"}
+{"args":["-wv","--no-no-include","--allow-comment-directives"],"other":"version"}
+{"args":["--rojo='r'","-1"],"fail":"Unknown argument: -1"}
+{"args":["-i","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["--help=false","x","--type=","x"],"fail":"Unknown arguments: x, x"}
+{"args":["1e3","x"],"fail":"Unknown arguments: 1e3, x"}
+{"args":["--usePolling","--no-verbose","--includePath"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["-h","--no-include","--logTruthyChanges"],"other":"help"}
+{"args":["--optimized-loops","--no-watch","-p-","--5"],"fail":"Unknown argument: 5"}
+{"args":["1e3","-v"],"other":"version"}
+{"args":["x","--version","--type=\"game\""],"other":"version"}
+{"args":["--bogus","x","--no-rojo"],"fail":"Unknown argument: bogus"}
+{"args":["--no-","-wv","x"],"other":"version"}
+{"args":["-","-w","-x","--LUAU"],"fail":"Unknown arguments: x, LUAU, -"}
+{"args":["--help"],"other":"help"}
+{"args":["--bogus"],"fail":"Unknown argument: bogus"}
+{"args":["1e3","-wv","--luau=yes"],"other":"version"}
+{"args":["--luau"],"ok":{"project":".","luau":true}}
+{"args":["--x.y","--project.x","--no-watch","--noInclude=0"],"fail":"Unknown argument: x"}
+{"args":["--no-p"],"ok":{"project":false}}
+{"args":["-i=inc","--version=false","--x.y"],"fail":"Unknown argument: x"}
+{"args":["--log-truthy-changes","-p=.","--optimized-loops","-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--noInclude","--verbose","--project.x"],"ok":{"project":{"x":true},"verbose":true,"noInclude":true}}
+{"args":["--project.x"],"ok":{"project":{"x":true}}}
+{"args":["--luau"],"ok":{"project":".","luau":true}}
+{"args":["--no-no-include","-wv","--project.x"],"other":"version"}
+{"args":["-i=inc","--x.y"],"fail":"Unknown argument: x"}
+{"args":["--watch","place","1e3"],"fail":"Unknown arguments: place, 1e3"}
+{"args":["1e3","--no-luau","--verbose=maybe"],"fail":"Unknown argument: 1e3"}
+{"args":["--allowCommentDirectives","place"],"fail":"Unknown argument: place"}
+{"args":["-i=inc"],"ok":{"project":".","includePath":"inc"}}
+{"args":["--","--help=false"],"ok":{"project":"."}}
+{"args":["--rojo='r'"],"ok":{"project":".","rojo":"r"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--no-include","place"],"fail":"Unknown arguments: include, 1e3, place"}
+{"args":["--log-truthy-changes"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["place","1e3"],"fail":"Unknown arguments: place, 1e3"}
+{"args":["x","--bogus","1e3","--type=\"game\""],"fail":"Unknown arguments: bogus, x"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--no-i","-"],"fail":"Unknown argument: -"}
+{"args":["--LUAU","--project","--allow-comment-directives","--5"],"fail":"Unknown arguments: 5, LUAU"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--allowCommentDirectives","--10","-w","--watch"],"fail":"Unknown argument: 10"}
+{"args":["--watch"],"ok":{"project":".","watch":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":["--x.y","-p","--INCLUDE-PATH","--version"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","--no-noInclude","--10"],"fail":"Unknown arguments: 10, -"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["---"],"fail":"Unknown argument: ---"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-verbose=true","--usePolling","-","---x"],"fail":"Unknown arguments: no-verbose, noVerbose, -x, x, -"}
+{"args":["-x","-wp","--include-path=a","x"],"fail":"Unknown arguments: x, x"}
+{"args":["x","--no-include","-","1e3"],"fail":"Unknown arguments: include, x, -, 1e3"}
+{"args":["--no-rojo"],"ok":{"project":".","rojo":false}}
+{"args":["place","x","-"],"fail":"Unknown arguments: place, x, -"}
+{"args":["--INCLUDE-PATH","-p=.","--help","--optimizedLoops"],"other":"help"}
+{"args":["--rojo","-wp","-pi"],"ok":{"project":[".","."],"watch":true,"includePath":"","rojo":""}}
+{"args":["--logTruthyChanges","-","1e3"],"fail":"Unknown arguments: -, 1e3"}
+{"args":["-i","1e3","1e3","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--LUAU","-pw","--no-","-i=inc"],"fail":"Unknown arguments: LUAU, no-, no"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--watch","--no-type","--no-verbose=true"],"fail":"Unknown arguments: no-verbose, noVerbose"}
+{"args":["-p","x"],"ok":{"project":"x"}}
+{"args":["--luau","place","--include-path=a"],"fail":"Unknown argument: place"}
+{"args":["1e3","place"],"fail":"Unknown arguments: 1e3, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-ip","--verbose"],"ok":{"project":".","verbose":true,"includePath":""}}
+{"args":["--verbose=maybe","-wp","-1","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-pi","--type="],"fail":"Invalid values:\n  Argument: type, Given: \"\", Choices: \"game\", \"model\", \"package\""}
+{"args":["-p=.","--includePath","x","x"],"fail":"Unknown argument: x"}
+{"args":["--type","--no-no-include"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["place","--no-noInclude"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--writeOnlyChanged"],"ok":{"project":".","writeOnlyChanged":true}}
+{"args":["--use-polling","--foo-bar","-x"],"fail":"Unknown arguments: foo-bar, fooBar, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--LUAU"],"fail":"Unknown argument: LUAU"}
+{"args":["-x.y","--no-rojo","place"],"fail":"Unknown arguments: x, place"}
+{"args":["--no-p"],"ok":{"project":false}}
+{"args":["place","-1","--allowCommentDirectives"],"fail":"Unknown arguments: place, -1"}
+{"args":["---x"],"fail":"Unknown arguments: -x, x"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["-wp"],"ok":{"project":".","watch":true}}
+{"args":["--no-i","--no-verbose=true"],"fail":"Unknown arguments: no-verbose, noVerbose"}
+{"args":["-p-"],"ok":{"project":"-"}}
+{"args":["--no-p","---x","---x"],"fail":"Unknown arguments: -x, x"}
+{"args":["--type","--watch"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["--10","--NO-INCLUDE","x"],"fail":"Unknown arguments: 10, noInclude"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-pi","-ip","--5"],"fail":"Unknown argument: 5"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","--5","-wp","1e3"],"fail":"Unknown arguments: 5, x"}
+{"args":["1e3","--no-noInclude","place"],"fail":"Unknown arguments: 1e3, place"}
+{"args":["--INCLUDE-PATH","--foo-bar","1e3","--optimized-loops"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["1e3","-h"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--luau"],"ok":{"project":".","luau":true}}
+{"args":["-","-v","--use-polling"],"other":"version"}
+{"args":["-1","--no-include"],"fail":"Unknown arguments: include, -1"}
+{"args":["--help","-"],"other":"help"}
+{"args":["-i=inc","-wp","-pi","--luau=yes"],"ok":{"project":[".","."],"watch":true,"includePath":["inc",""],"luau":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-verbose","--INCLUDE-PATH","--type=game"],"ok":{"project":".","verbose":false,"type":"game","includePath":true}}
+{"args":["--help=false","x","-x"],"fail":"Unknown arguments: x, x"}
+{"args":["--no-watch","-pi","-i=inc","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--noInclude=0","--luau","-i=inc"],"ok":{"project":".","noInclude":false,"includePath":"inc","luau":true}}
+{"args":["place","1e3","--version=false","--verbose"],"fail":"Unknown arguments: place, 1e3"}
+{"args":["place","-"],"fail":"Unknown arguments: place, -"}
+{"args":["--noInclude","--project"],"ok":{"project":".","noInclude":true}}
+{"args":["--type=game"],"ok":{"project":".","type":"game"}}
+{"args":["-i=inc","--no-rojo"],"ok":{"project":".","includePath":"inc","rojo":false}}
+{"args":["--LUAU","-1","-1"],"fail":"Unknown arguments: LUAU, -1"}
+{"args":["--type=game"],"ok":{"project":".","type":"game"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","-pi","place"],"fail":"Unknown argument: place"}
+{"args":["--10","--type","--include-path"],"fail":"Unknown argument: 10"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--no-no-include","--help","--project"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--10","-p=."],"fail":"Unknown argument: 10"}
+{"args":["--10"],"fail":"Unknown argument: 10"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","--writeOnlyChanged","-x.y"],"fail":"Unknown arguments: x, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","--version=false"],"fail":"Unknown argument: -1"}
+{"args":["--include-path=a","1e3","-h"],"other":"help"}
+{"args":["--NO-INCLUDE"],"fail":"Unknown argument: noInclude"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","-pw","1e3"],"fail":"Unknown arguments: place, 1e3"}
+{"args":["--writeOnlyChanged"],"ok":{"project":".","writeOnlyChanged":true}}
+{"args":["-1","--luau=yes"],"fail":"Unknown argument: -1"}
+{"args":["1e3","-ip","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--x.y","--type=\"game\"","-"],"fail":"Unknown arguments: x, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--help=false","--type=\"game\"","--INCLUDE-PATH","--rojo"],"ok":{"project":".","type":"game","includePath":true,"rojo":""}}
+{"args":["--project.x","--writeTransformedFiles","-i=inc"],"ok":{"project":{"x":true},"writeTransformedFiles":true,"includePath":"inc"}}
+{"args":["1e3","-","--LUAU"],"fail":"Unknown arguments: LUAU, 1e3, -"}
+{"args":["--includePath","--=x","--version","-"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimized-loops","--rojo='r'","--type="],"fail":"Invalid values:\n  Argument: type, Given: \"\", Choices: \"game\", \"model\", \"package\""}
+{"args":["--no-watch","-1","-wv","-1"],"other":"version"}
+{"args":["-i=inc","-1","-ip","--optimizedLoops"],"fail":"Unknown argument: -1"}
+{"args":["-wp","--NO-INCLUDE","1e3"],"fail":"Unknown argument: noInclude"}
+{"args":["--no-watch"],"ok":{"project":".","watch":false}}
+{"args":["--NO-INCLUDE","-v","x"],"other":"version"}
+{"args":["--no-noInclude","place","--type=game","-wp"],"fail":"Unknown argument: place"}
+{"args":["--no-include","--optimizedLoops","-h"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","place","--bogus","x"],"fail":"Unknown arguments: bogus, 1e3, place"}
+{"args":["---","1e3","--include-path"],"fail":"Unknown arguments: ---, 1e3"}
+{"args":["--writeTransformedFiles","-1"],"fail":"Unknown argument: -1"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--5"],"fail":"Unknown argument: 5"}
+{"args":["place","--x.y","x"],"fail":"Unknown arguments: x, place"}
+{"args":["-h"],"other":"help"}
+{"args":["--type=\"game\"","-x.y"],"fail":"Unknown argument: x"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--rojo='r'"],"ok":{"project":".","rojo":"r"}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-wp"],"ok":{"project":".","watch":true}}
+{"args":["-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--rojo='r'","-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--5"],"fail":"Unknown argument: 5"}
+{"args":["-","--rojo='r'","--Include-Path"],"fail":"Unknown arguments: Include-Path, IncludePath, -"}
+{"args":["x","--no-","--Include-Path","-v"],"other":"version"}
+{"args":["1e3","-p","-1"],"fail":"Unknown argument: 1e3"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--writeTransformedFiles","--bogus","1e3"],"fail":"Unknown argument: bogus"}
+{"args":["-pi","place","--writeOnlyChanged","x"],"fail":"Unknown argument: x"}
+{"args":["1e3","--foo-bar","--usePolling"],"fail":"Unknown arguments: foo-bar, fooBar, 1e3"}
+{"args":["--LUAU","--no-p","-p-"],"fail":"Unknown argument: LUAU"}
+{"args":["--rojo='r'","--optimizedLoops","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-w","---x"],"fail":"Unknown arguments: -x, x"}
+{"args":["1e3","--verbose=maybe","-i=inc"],"fail":"Unknown argument: 1e3"}
+{"args":["--type","--logTruthyChanges","--includePath"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["-wv","-pi","--type=","-p"],"other":"version"}
+{"args":["--no-verbose=true","--foo-bar"],"fail":"Unknown arguments: no-verbose, noVerbose, foo-bar, fooBar"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--no-noInclude","--include-path","1e3","-x.y"],"fail":"Unknown argument: x"}
+{"args":["--type=\"game\"","--INCLUDE-PATH","-include","1e3"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--type=\"game\"","x","-w"],"fail":"Unknown argument: x"}
+{"args":["--no-luau","-","1e3","-i"],"fail":"Unknown arguments: -, 1e3"}
+{"args":["--no-luau","--type","--no-i"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["--verbose=true","--noInclude=0"],"ok":{"project":".","verbose":true,"noInclude":false}}
+{"args":["--watch"],"ok":{"project":".","watch":true}}
+{"args":["--watch","x"],"fail":"Unknown argument: x"}
+{"args":["x","--LUAU"],"fail":"Unknown arguments: LUAU, x"}
+{"args":["--rojo","-h","x","--verbose=maybe"],"other":"help"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--includePath","-1","--rojo"],"ok":{"project":".","includePath":"-1","rojo":""}}
+{"args":["-include","--no-include","place"],"fail":"Unknown arguments: n, c, l, u, d, e, include, place"}
+{"args":["1e3","place","--project.x"],"fail":"Unknown arguments: 1e3, place"}
+{"args":["--allow-comment-directives"],"ok":{"project":".","allowCommentDirectives":true}}
+{"args":["--NO-INCLUDE","x","--NO-INCLUDE"],"fail":"Unknown argument: noInclude"}
+{"args":["x","x"],"fail":"Unknown arguments: x, x"}
+{"args":["--use-polling","x","x","--allowCommentDirectives"],"fail":"Unknown arguments: x, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","-p-"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-1","--noInclude=0"],"fail":"Unknown argument: -1"}
+{"args":["1e3","1e3","--help=false","--luau=yes"],"fail":"Unknown arguments: 1e3, 1e3"}
+{"args":["--project.x","--no-watch","-1"],"fail":"Unknown argument: -1"}
+{"args":["-wv","-1"],"other":"version"}
+{"args":["--no-include","1e3","--verbose=maybe","-1"],"fail":"Unknown arguments: include, 1e3, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-p","--type=game"],"ok":{"project":false,"type":"game"}}
+{"args":["--no-noInclude","--no-type","--no-type"],"fail":"Invalid values:\n  Argument: type, Given: false, false, Choices: \"game\", \"model\", \"package\""}
+{"args":["-1","--include-path=a","-"],"fail":"Unknown arguments: -1, -"}
+{"args":["place","-","x","--bogus"],"fail":"Unknown arguments: bogus, place, -, x"}
+{"args":["-i","--verbose=maybe","x","--include-path"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--allow-comment-directives"],"ok":{"project":".","allowCommentDirectives":true}}
+{"args":["--LUAU","--type=game"],"fail":"Unknown argument: LUAU"}
+{"args":["-h","--allow-comment-directives","--type","--help=false"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":["--no-rojo","--version","-1","--project"],"other":"version"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","--no-noInclude"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--allow-comment-directives","-","1e3","--=x"],"fail":"Unknown arguments: =x, -, 1e3"}
+{"args":["--type=\"game\"","-","--no-include"],"fail":"Unknown arguments: include, -"}
+{"args":["-i"],"ok":{"project":".","includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--version=false","--rojo='r'"],"ok":{"project":".","rojo":"r"}}
+{"args":["--INCLUDE-PATH","--noInclude"],"ok":{"project":".","noInclude":true,"includePath":true}}
+{"args":["--foo-bar","place","1e3","-1"],"fail":"Unknown arguments: foo-bar, fooBar, 1e3, -1"}
+{"args":["--writeTransformedFiles"],"ok":{"project":".","writeTransformedFiles":true}}
+{"args":["--includePath","-i","-1"],"ok":{"project":".","includePath":["","-1"]}}
+{"args":["1e3","-","-p","-include"],"fail":"Unknown arguments: n, c, l, u, d, e, 1e3, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","--type=\"game\""],"fail":"Unknown argument: x"}
+{"args":["-1","-pi","x","--no-verbose=true"],"fail":"Unknown arguments: no-verbose, noVerbose, -1"}
+{"args":["-1","1e3","-i=inc","x"],"fail":"Unknown arguments: -1, 1e3, x"}
+{"args":["--usePolling","--optimizedLoops","x","--INCLUDE-PATH"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-i","--watch","--verbose","place"],"fail":"Unknown argument: place"}
+{"args":["place","-w"],"fail":"Unknown argument: place"}
+{"args":["--5","--writeOnlyChanged","--log-truthy-changes","--logTruthyChanges"],"fail":"Unknown argument: 5"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["place","--no-include","place","--rojo='r'"],"fail":"Unknown arguments: include, place, place"}
+{"args":["--logTruthyChanges"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-pw"],"ok":{"project":".","watch":true}}
+{"args":["--rojo='r'","--noInclude","--no-i"],"ok":{"project":".","noInclude":true,"includePath":false,"rojo":"r"}}
+{"args":["--no-noInclude","--no-luau"],"ok":{"project":".","noInclude":false,"luau":false}}
+{"args":["--10","place"],"fail":"Unknown argument: 10"}
+{"args":["--allow-comment-directives"],"ok":{"project":".","allowCommentDirectives":true}}
+{"args":["-","--type=\"game\"","---x"],"fail":"Unknown arguments: -x, x, -"}
+{"args":["--optimized-loops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["-1","-p-"],"fail":"Unknown argument: -1"}
+{"args":["--optimized-loops","--10","--type=\"game\""],"fail":"Unknown argument: 10"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-v","-","-1"],"other":"version"}
+{"args":["-i=inc","--help=false","---x"],"fail":"Unknown arguments: -x, x"}
+{"args":["-1","-1","-ip"],"fail":"Unknown arguments: -1, -1"}
+{"args":["--type=","-wp","--x.y"],"fail":"Unknown argument: x"}
+{"args":["1e3","-1"],"fail":"Unknown arguments: 1e3, -1"}
+{"args":["1e3","--rojo='r'","--10"],"fail":"Unknown arguments: 10, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--logTruthyChanges","--no-verbose=true","--project"],"fail":"Unknown arguments: no-verbose, noVerbose"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--no-rojo"],"fail":"Unknown argument: 1e3"}
+{"args":["--no-rojo","1e3","-","--writeOnlyChanged"],"fail":"Unknown arguments: 1e3, -"}
+{"args":["--no-rojo"],"ok":{"project":".","rojo":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--log-truthy-changes","-p","--5","-"],"fail":"Unknown arguments: 5, -"}
+{"args":["-w","1e3","--optimizedLoops","---"],"fail":"Unknown arguments: 1e3, ---"}
+{"args":["-","--luau"],"fail":"Unknown argument: -"}
+{"args":["--no-include"],"fail":"Unknown argument: include"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar, -"}
+{"args":["--bogus","--optimizedLoops","--bogus","-"],"fail":"Unknown arguments: bogus, -"}
+{"args":["-v","-1","---x","-ip"],"other":"version"}
+{"args":["--10","-wv","--no-i"],"other":"version"}
+{"args":["-i=inc","--Include-Path","-wp"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":["-w"],"ok":{"project":".","watch":true}}
+{"args":["1e3","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":["1e3","--version=false","--type=game"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-luau"],"ok":{"project":".","luau":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","-1"],"fail":"Unknown arguments: 1e3, -1"}
+{"args":["--help","--logTruthyChanges","--use-polling","-v"],"other":"help"}
+{"args":["--allow-comment-directives"],"ok":{"project":".","allowCommentDirectives":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["---","--type=game","place","-include"],"fail":"Unknown arguments: n, c, l, u, d, e, ---, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--rojo","--verbose=true","--help"],"other":"help"}
+{"args":["--writeTransformedFiles","-","-i"],"fail":"Unknown argument: -"}
+{"args":["-1","--luau=yes","--project.x","-wv"],"other":"version"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["--help","place"],"other":"help"}
+{"args":["1e3","-i=inc","--no-luau"],"fail":"Unknown argument: 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","x"],"fail":"Unknown arguments: place, x"}
+{"args":["place","-p=.","--allow-comment-directives","-1"],"fail":"Unknown arguments: place, -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--noInclude"],"ok":{"project":".","noInclude":true}}
+{"args":["--type=","-i","1e3","--no-i"],"fail":"Invalid values:\n  Argument: type, Given: \"\", Choices: \"game\", \"model\", \"package\""}
+{"args":["-1","--noInclude","--INCLUDE-PATH"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-","-ip"],"fail":"Unknown arguments: no-, no"}
+{"args":["1e3","--includePath"],"fail":"Unknown argument: 1e3"}
+{"args":["-pi","--verbose=maybe"],"ok":{"project":".","verbose":false,"includePath":""}}
+{"args":["place","-wv","-p"],"other":"version"}
+{"args":["--writeTransformedFiles"],"ok":{"project":".","writeTransformedFiles":true}}
+{"args":["-wp","--luau","--help=false","-wv"],"other":"version"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["place","---x"],"fail":"Unknown arguments: -x, x, place"}
+{"args":["--bogus","--includePath"],"fail":"Unknown argument: bogus"}
+{"args":["--luau=yes","-x","x","--no-include"],"fail":"Unknown arguments: x, include"}
+{"args":["-w","-"],"fail":"Unknown argument: -"}
+{"args":["--LUAU","--NO-INCLUDE","--no-watch","place"],"fail":"Unknown arguments: LUAU, noInclude, place"}
+{"args":["--Include-Path"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":["--noInclude","-","--rojo='r'"],"fail":"Unknown argument: -"}
+{"args":["--LUAU","--no-verbose"],"fail":"Unknown argument: LUAU"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--project","--optimizedLoops"],"ok":{"project":".","optimizedLoops":true}}
+{"args":["-1","place","--allowCommentDirectives"],"fail":"Unknown arguments: -1, place"}
+{"args":["-h","-1"],"other":"help"}
+{"args":["--INCLUDE-PATH","--project","--luau=yes"],"ok":{"project":".","includePath":true,"luau":false}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-ip","--no-type"],"fail":"Invalid values:\n  Argument: type, Given: false, Choices: \"game\", \"model\", \"package\""}
+{"args":["--project.x","--no-watch","x"],"fail":"Unknown argument: x"}
+{"args":["--no-i","place"],"fail":"Unknown argument: place"}
+{"args":["x","-1","x"],"fail":"Unknown arguments: x, -1, x"}
+{"args":["--LUAU","place"],"fail":"Unknown argument: LUAU"}
+{"args":["-","--no-noInclude","-include"],"fail":"Unknown arguments: n, c, l, u, d, e, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--version","--no-p"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--INCLUDE-PATH","-p"],"ok":{"project":".","includePath":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--optimized-loops","--allowCommentDirectives","1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["x","x"],"fail":"Unknown arguments: x, x"}
+{"args":["--optimized-loops","x","x","-1"],"fail":"Unknown arguments: x, x, -1"}
+{"args":["-","-"],"fail":"Unknown arguments: -, -"}
+{"args":["--include-path=a","--usePolling","--optimized-loops"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["--allowCommentDirectives"],"ok":{"project":".","allowCommentDirectives":true}}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","--luau"],"fail":"Unknown argument: -1"}
+{"args":["--optimizedLoops","1e3","--allowCommentDirectives","-x.y"],"fail":"Unknown arguments: x, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-noInclude"],"ok":{"project":".","noInclude":false}}
+{"args":["--optimizedLoops","-pw"],"ok":{"project":".","watch":true,"optimizedLoops":true}}
+{"args":["1e3","--allowCommentDirectives","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":["-w"],"ok":{"project":".","watch":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--use-polling","-p","-1","--usePolling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["-v"],"other":"version"}
+{"args":["-","--allow-comment-directives","--version"],"other":"version"}
+{"args":["-wv","--no-i","-x.y","--no-type"],"other":"version"}
+{"args":["--include-path","--luau","--no-no-include"],"ok":{"project":".","noInclude":false,"includePath":"","luau":true}}
+{"args":["--bogus"],"fail":"Unknown argument: bogus"}
+{"args":["-1","--no-verbose","place"],"fail":"Unknown arguments: -1, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-i=inc"],"ok":{"project":".","includePath":"inc"}}
+{"args":["--verbose=true"],"ok":{"project":".","verbose":true}}
+{"args":["1e3","--writeOnlyChanged","--no-watch","--project.x"],"fail":"Unknown argument: 1e3"}
+{"args":["-i"],"ok":{"project":".","includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--LUAU","--noInclude"],"fail":"Unknown argument: LUAU"}
+{"args":["x","place","--type=\"game\""],"fail":"Unknown arguments: x, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--luau=yes"],"ok":{"project":".","luau":false}}
+{"args":["-","--no-type","place","place"],"fail":"Unknown arguments: -, place, place"}
+{"args":["-p=.","-x.y","--optimizedLoops"],"fail":"Unknown argument: x"}
+{"args":["--optimizedLoops","-i=inc"],"ok":{"project":".","optimizedLoops":true,"includePath":"inc"}}
+{"args":["--Include-Path"],"fail":"Unknown arguments: Include-Path, IncludePath"}
+{"args":["-wp","-1"],"ok":{"project":"-1","watch":true}}
+{"args":["x","-i=inc","-","--include-path=a"],"fail":"Unknown arguments: x, -"}
+{"args":["--verbose=maybe","--no-watch","--no-i"],"ok":{"project":".","watch":false,"verbose":false,"includePath":false}}
+{"args":["-","--include-path"],"fail":"Unknown argument: -"}
+{"args":["-pi"],"ok":{"project":".","includePath":""}}
+{"args":["--writeTransformedFiles"],"ok":{"project":".","writeTransformedFiles":true}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","place","--verbose=maybe"],"fail":"Unknown arguments: -, place"}
+{"args":["--type=","-wp","-x.y"],"fail":"Unknown argument: x"}
+{"args":["-p","-1"],"ok":{"project":"-1"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--type=game","--version=false","--includePath","place"],"ok":{"project":".","type":"game","includePath":"place"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-p","-wv","place","x"],"other":"version"}
+{"args":["1e3","--usePolling"],"fail":"Unknown argument: 1e3"}
+{"args":["-v","--writeTransformedFiles","-"],"other":"version"}
+{"args":["--help"],"other":"help"}
+{"args":["-p=.","--rojo='r'","-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--allow-comment-directives","-1","1e3","place"],"fail":"Unknown arguments: -1, 1e3, place"}
+{"args":["-","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar, -"}
+{"args":["--include-path","--no-watch","--log-truthy-changes","-h"],"other":"help"}
+{"args":["--no-noInclude"],"ok":{"project":".","noInclude":false}}
+{"args":["--optimizedLoops","-p-","--verbose=true","x"],"fail":"Unknown argument: x"}
+{"args":["--verbose"],"ok":{"project":".","verbose":true}}
+{"args":["1e3","place"],"fail":"Unknown arguments: 1e3, place"}
+{"args":["-","-1","--no-noInclude","--NO-INCLUDE"],"fail":"Unknown arguments: noInclude, no-include, -, -1"}
+{"args":["--no-no-include","-p-","-1","place"],"fail":"Unknown arguments: -1, place"}
+{"args":["x","--project.x","--watch"],"fail":"Unknown argument: x"}
+{"args":["--project"],"ok":{"project":"."}}
+{"args":["--log-truthy-changes","---x","--allowCommentDirectives","--use-polling"],"fail":"Unknown arguments: -x, x"}
+{"args":["--version","--project","--rojo='r'"],"other":"version"}
+{"args":["--luau=yes"],"ok":{"project":".","luau":false}}
+{"args":["--type=\"game\"","--type=game","--no-noInclude","--10"],"fail":"Unknown argument: 10"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["-p-"],"ok":{"project":"-"}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--bogus"],"fail":"Unknown argument: bogus"}
+{"args":["--type=","-include","--LUAU"],"fail":"Unknown arguments: n, c, l, u, d, e, LUAU"}
+{"args":["place","1e3","--type=game"],"fail":"Unknown arguments: place, 1e3"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--include-path"],"ok":{"project":".","includePath":""}}
+{"args":["1e3","--usePolling","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":["--verbose=maybe","-v","--allowCommentDirectives","--writeOnlyChanged"],"other":"version"}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["--no-watch"],"ok":{"project":".","watch":false}}
+{"args":["--NO-INCLUDE","--INCLUDE-PATH","--allow-comment-directives"],"fail":"Unknown argument: noInclude"}
+{"args":["-","--no-type","--bogus"],"fail":"Unknown arguments: bogus, -"}
+{"args":["--INCLUDE-PATH"],"ok":{"project":".","includePath":true}}
+{"args":["x","place","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar, x, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-verbose=true","--luau"],"fail":"Unknown arguments: no-verbose, noVerbose"}
+{"args":["--type=game"],"ok":{"project":".","type":"game"}}
+{"args":["--foo-bar","--rojo"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["--include-path","--no-include","--no-i"],"fail":"Unknown argument: include"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["--help=false","x"],"fail":"Unknown argument: x"}
+{"args":["-","--no-verbose=true","x"],"fail":"Unknown arguments: no-verbose, noVerbose, -, x"}
+{"args":["-","1e3","x","-i"],"fail":"Unknown arguments: -, 1e3, x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","--help","--5","-"],"other":"help"}
+{"args":["--no-rojo","-i"],"ok":{"project":".","includePath":"","rojo":false}}
+{"args":["---x"],"fail":"Unknown arguments: -x, x"}
+{"args":["--no-rojo","--type=","x","--verbose"],"fail":"Unknown argument: x"}
+{"args":["--NO-INCLUDE"],"fail":"Unknown argument: noInclude"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":["--NO-INCLUDE","--Include-Path","--no-verbose=true"],"fail":"Unknown arguments: noInclude, Include-Path, IncludePath, no-verbose, noVerbose"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--x.y"],"fail":"Unknown argument: x"}
+{"args":["-","--verbose=maybe","--10","--help=false"],"fail":"Unknown arguments: 10, -"}
+{"args":["x","--no-verbose=true","-","-h"],"other":"help"}
+{"args":["--include-path=a"],"ok":{"project":".","includePath":"a"}}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-include","--verbose=true","-"],"fail":"Unknown arguments: n, c, l, u, d, e, -"}
+{"args":["x","--foo-bar","-","-1"],"fail":"Unknown arguments: foo-bar, fooBar, x, -, -1"}
+{"args":["--no-","--noInclude","-ip"],"fail":"Unknown arguments: no-, no"}
+{"args":["--log-truthy-changes","--rojo","1e3","--no-include"],"fail":"Unknown argument: include"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","place","--no-i"],"fail":"Unknown arguments: 1e3, place"}
+{"args":["-p=."],"ok":{"project":"."}}
+{"args":["--rojo='r'"],"ok":{"project":".","rojo":"r"}}
+{"args":["-ip","-p-","-1","--optimizedLoops"],"fail":"Unknown argument: -1"}
+{"args":["-","--version"],"other":"version"}
+{"args":["--include-path","--include-path=a","-p=."],"ok":{"project":".","includePath":["","a"]}}
+{"args":["-ip","--=x"],"fail":"Unknown argument: =x"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--noInclude","-1","x","-i=inc"],"fail":"Unknown arguments: -1, x"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--verbose","place","-x"],"fail":"Unknown arguments: x, place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--no-rojo","-x.y","--allowCommentDirectives","--type=game"],"fail":"Unknown argument: x"}
+{"args":["--use-polling","--version=false","--noInclude"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["--luau","--type=\"game\"","x"],"fail":"Unknown argument: x"}
+{"args":["--no-noInclude","--usePolling"],"fail":"Missing dependent arguments:\n usePolling -> watch"}
+{"args":["--INCLUDE-PATH","-1","--no-rojo"],"ok":{"project":".","includePath":"-1","rojo":false}}
+{"args":["x"],"fail":"Unknown argument: x"}
+{"args":["-","place"],"fail":"Unknown arguments: -, place"}
+{"args":["x","--x.y","x"],"fail":"Unknown arguments: x, x"}
+{"args":["-pw","place","-1"],"fail":"Unknown arguments: place, -1"}
+{"args":["x","-1","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar, x, -1"}
+{"args":["--optimized-loops","-include","--no-watch"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--no-verbose=true","--LUAU","-1","--type=\"game\""],"fail":"Unknown arguments: no-verbose, noVerbose, LUAU"}
+{"args":["--no-watch"],"ok":{"project":".","watch":false}}
+{"args":["-pw","1e3","--type","--includePath"],"fail":"Unknown argument: 1e3"}
+{"args":["place","--rojo='r'","--include-path=a","--watch"],"fail":"Unknown argument: place"}
+{"args":["-pi","x","-"],"fail":"Unknown argument: -"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":["-1","-1","--noInclude=0"],"fail":"Unknown arguments: -1, -1"}
+{"args":["--10","-p-","-wv","-x"],"other":"version"}
+{"args":["-w","-h"],"other":"help"}
+{"args":["---x","-x","-1","--usePolling"],"fail":"Unknown arguments: -x, x"}
+{"args":["--x.y","--Include-Path","--5"],"fail":"Unknown arguments: 5, x, Include-Path, IncludePath"}
+{"args":["-h"],"other":"help"}
+{"args":["-ip"],"ok":{"project":".","includePath":""}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--noInclude","place","1e3","--type=\"game\""],"fail":"Unknown arguments: place, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":["--no-","--project"],"fail":"Unknown arguments: no-, no"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-x"],"fail":"Unknown argument: x"}
+{"args":["-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--log-truthy-changes"],"ok":{"project":".","logTruthyChanges":true}}
+{"args":["x","--writeOnlyChanged","x"],"fail":"Unknown arguments: x, x"}
+{"args":["1e3","--allowCommentDirectives"],"fail":"Unknown argument: 1e3"}
+{"args":["--usePolling","--no-no-include","--no-p","-1"],"fail":"Unknown argument: -1"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["--=x","--rojo"],"fail":"Unknown argument: =x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--type","--rojo"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["--foo-bar","--project","--foo-bar"],"fail":"Unknown arguments: foo-bar, fooBar"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--NO-INCLUDE","-1"],"fail":"Unknown argument: noInclude"}
+{"args":["--verbose=true","--LUAU","-pw","--includePath"],"fail":"Unknown argument: LUAU"}
+{"args":["-x"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["x","--allowCommentDirectives"],"fail":"Unknown argument: x"}
+{"args":["-p-","1e3","-"],"fail":"Unknown arguments: 1e3, -"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--include-path","-i=inc","--verbose=true","x"],"fail":"Unknown argument: x"}
+{"args":["--type=","--no-include"],"fail":"Unknown argument: include"}
+{"args":["-p","x","x","--optimized-loops"],"fail":"Unknown argument: x"}
+{"args":["-","1e3","--luau=yes","-i"],"fail":"Unknown arguments: -, 1e3"}
+{"args":["place","-x.y"],"fail":"Unknown arguments: x, place"}
+{"args":["--luau=yes","-x","-","--luau=yes"],"fail":"Unknown argument: x"}
+{"args":["-","--no-verbose","--no-no-include","--allowCommentDirectives"],"fail":"Unknown argument: -"}
+{"args":["--version=false"],"ok":{"project":"."}}
+{"args":["-1","1e3","--project.x"],"fail":"Unknown arguments: -1, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--noInclude=0","-1"],"fail":"Unknown arguments: 1e3, -1"}
+{"args":["-include"],"fail":"Unknown arguments: n, c, l, u, d, e"}
+{"args":["--rojo='r'","place","--NO-INCLUDE","--verbose=maybe"],"fail":"Unknown arguments: noInclude, place"}
+{"args":["place"],"fail":"Unknown argument: place"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--10","-p=."],"fail":"Unknown argument: 10"}
+{"args":["--verbose=true","--type"],"fail":"Invalid values:\n  Argument: type, Given: true, Choices: \"game\", \"model\", \"package\""}
+{"args":[],"ok":{"project":"."}}
+{"args":["1e3","--includePath"],"fail":"Unknown argument: 1e3"}
+{"args":["-1","-x.y","-1"],"fail":"Unknown arguments: x, -1, -1"}
+{"args":["--verbose","place"],"fail":"Unknown argument: place"}
+{"args":["-h","--logTruthyChanges","--no-verbose=true","-ip"],"other":"help"}
+{"args":["--noInclude","-x"],"fail":"Unknown argument: x"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--NO-INCLUDE","1e3","-p=.","--no-i"],"fail":"Unknown argument: noInclude"}
+{"args":["--no-watch","-x","-1"],"fail":"Unknown argument: x"}
+{"args":["place","--no-i"],"fail":"Unknown argument: place"}
+{"args":["-","1e3"],"fail":"Unknown arguments: -, 1e3"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--type=game","---","-h","--watch"],"other":"help"}
+{"args":["--project","---x","--writeTransformedFiles"],"fail":"Unknown arguments: -x, x"}
+{"args":["x","place","--luau"],"fail":"Unknown arguments: x, place"}
+{"args":["---","--no-watch","--NO-INCLUDE","-"],"fail":"Unknown arguments: noInclude, ---, -"}
+{"args":["x","---x","--type=\"game\"","-i"],"fail":"Unknown arguments: -x, x, x"}
+{"args":["--version","--allow-comment-directives"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-pw","--allowCommentDirectives","--use-polling"],"ok":{"project":".","watch":true,"usePolling":true,"allowCommentDirectives":true}}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":[],"ok":{"project":"."}}
+{"args":["-h","-pi"],"other":"help"}
+{"args":["--5","-wv","--optimized-loops"],"other":"version"}
+{"args":["-"],"fail":"Unknown argument: -"}
+{"args":["-1","--no-watch","--no-watch"],"fail":"Unknown argument: -1"}
+{"args":["--no-type","-h"],"other":"help"}
+{"args":["-1","--no-i","x"],"fail":"Unknown arguments: -1, x"}
+{"args":["-v","-1","1e3","--version"],"other":"version"}
+{"args":[],"ok":{"project":"."}}
+{"args":["-","--luau","--noInclude=0"],"fail":"Unknown argument: -"}
+{"args":["1e3"],"fail":"Unknown argument: 1e3"}
+{"args":["--help=false","--version","--no-","1e3"],"other":"version"}
+{"args":["-1"],"fail":"Unknown argument: -1"}
+{"args":[],"ok":{"project":"."}}
+{"args":["--project","-","-pw"],"fail":"Unknown argument: -"}
+{"args":[],"ok":{"project":"."}}

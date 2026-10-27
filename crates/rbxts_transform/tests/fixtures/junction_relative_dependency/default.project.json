@@ -1,0 +1,24 @@
+{
+	"name": "junction-relative-dependency-fixture",
+	"tree": {
+		"$className": "DataModel",
+		"ReplicatedStorage": {
+			"$className": "ReplicatedStorage",
+			"shared": {
+				"$path": "out/shared"
+			},
+			"packages": {
+				"$path": "packages"
+			},
+			"include": {
+				"$path": "include",
+				"node_modules": {
+					"$className": "Folder",
+					"@rbxts": {
+						"$path": "node_modules/@rbxts"
+					}
+				}
+			}
+		}
+	}
+}

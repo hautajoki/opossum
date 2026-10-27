@@ -1,0 +1,27 @@
+{
+	"name": "stockfix-fixture",
+	"tree": {
+		"$className": "DataModel",
+		"ReplicatedStorage": {
+			"$className": "ReplicatedStorage",
+			"shared": {
+				"$path": "out/shared"
+			},
+			"include": {
+				"$path": "include",
+				"node_modules": {
+					"$className": "Folder",
+					"@rbxts": {
+						"$path": "node_modules/@rbxts"
+					}
+				}
+			}
+		},
+		"ServerScriptService": {
+			"$className": "ServerScriptService",
+			"server": {
+				"$path": "out/server"
+			}
+		}
+	}
+}

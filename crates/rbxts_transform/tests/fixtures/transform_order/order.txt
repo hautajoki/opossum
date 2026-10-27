@@ -1,0 +1,14 @@
+src/shared/d.ts
+src/shared/b.ts
+src/shared/a.ts
+src/shared/e.ts
+src/shared/g.ts
+src/shared/c.ts
+src/shared/aug.ts
+src/shared/a_augamb.ts
+src/shared/f.ts
+src/shared/a_pat1.ts
+src/shared/z_h.ts
+src/shared/a_plain.ts
+src/shared/z_i.ts
+src/shared/zz_shadowed.ts

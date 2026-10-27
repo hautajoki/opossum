@@ -1,0 +1,106 @@
+--- a/crates/tsrs_checker/src/checker_11.rs
++++ b/crates/tsrs_checker/src/checker_11.rs
+@@ -3662,7 +3662,7 @@
+     }
+ 
+     // checker.go:23946
+-    pub(crate) fn is_readonly_array_type(&self, t: P<Type>) -> bool {
++    pub fn is_readonly_array_type(&self, t: P<Type>) -> bool {
+         t.object_flags().intersects(ObjectFlags::Reference)
+             && t.target() == Some(self.global_readonly_array_type)
+     }
+--- a/crates/tsrs_checker/src/checker_05.rs
++++ b/crates/tsrs_checker/src/checker_05.rs
+@@ -2960,7 +2960,7 @@
+     // all identical ignoring their return type, the result is same signature but with return type as
+     // union type of return types from these signatures
+     // checker.go:10461
+-    pub(crate) fn get_contextual_signature(&mut self, node: P<Node>) -> Option<P<Signature>> {
++    pub fn get_contextual_signature(&mut self, node: P<Node>) -> Option<P<Signature>> {
+         let t = self.get_apparent_type_of_contextual_type(node, ContextFlags::Signature)?;
+         if !t.flags().intersects(TypeFlags::Union) {
+             return self.get_contextual_call_signature(t, node);
+--- a/crates/tsrs_checker/src/checker_13.rs
++++ b/crates/tsrs_checker/src/checker_13.rs
+@@ -2075,7 +2075,7 @@
+     }
+ 
+     // checker.go:27216
+-    pub(crate) fn get_literal_type_from_property(
++    pub fn get_literal_type_from_property(
+         &mut self,
+         prop: P<Symbol>,
+         include: TypeFlags,
+--- a/crates/tsrs_checker/src/services.rs
++++ b/crates/tsrs_checker/src/services.rs
+@@ -1397,7 +1397,7 @@
+     // [ a ] from
+     //
+     //	[a] = [ some array ...]
+-    fn get_type_of_assignment_pattern(&mut self, expr: P<Node>) -> Option<P<Type>> {
++    pub fn get_type_of_assignment_pattern(&mut self, expr: P<Node>) -> Option<P<Type>> {
+         let parent = expr.parent().unwrap();
+         // If this is from "for of"
+         //     for ( { a } of elems) {
+--- a/crates/tsrs_checker/src/checker_12.rs
++++ b/crates/tsrs_checker/src/checker_12.rs
+@@ -1944,7 +1944,7 @@
+     }
+ 
+     // checker.go:25171
+-    pub(crate) fn create_array_type(&mut self, element_type: P<Type>) -> P<Type> {
++    pub fn create_array_type(&mut self, element_type: P<Type>) -> P<Type> {
+         self.create_array_type_ex(element_type, false /*readonly*/)
+     }
+ 
+@@ -2912,7 +2912,7 @@
+ 
+ impl Checker {
+     // checker.go:25775
+-    pub(crate) fn get_string_literal_type(&mut self, value: &str) -> P<Type> {
++    pub fn get_string_literal_type(&mut self, value: &str) -> P<Type> {
+         let mut t = self.string_literal_types.get(value);
+         if t.is_none() {
+             let literal = self.new_literal_type(
+@@ -2927,7 +2927,7 @@
+     }
+ 
+     // checker.go:25784
+-    pub(crate) fn get_number_literal_type(&mut self, value: Number) -> P<Type> {
++    pub fn get_number_literal_type(&mut self, value: Number) -> P<Type> {
+         // NaN cannot be used as a Go map key because NaN != NaN in IEEE 754,
+         // so Go map lookups for NaN always miss. Cache NaN type separately.
+         if value.is_nan() {
+--- a/crates/tsrs_checker/src/utilities.rs
++++ b/crates/tsrs_checker/src/utilities.rs
+@@ -1260,7 +1260,7 @@
+ }
+ 
+ // utilities.go:871
+-pub(crate) fn is_declaration_readonly(declaration: P<Node>) -> bool {
++pub fn is_declaration_readonly(declaration: P<Node>) -> bool {
+     ast::get_combined_modifier_flags(declaration).intersects(ModifierFlags::Readonly)
+         && !ast::is_parameter_property_declaration(declaration, declaration.parent().unwrap())
+ }
+--- a/crates/tsrs_checker/src/lib.rs
++++ b/crates/tsrs_checker/src/lib.rs
+@@ -155,7 +155,7 @@
+ pub(crate) mod grammarchecks;
+ pub(crate) use grammarchecks::*;
+ pub mod utilities;
+-pub use utilities::new_diagnostic_for_node;
++pub use utilities::{is_declaration_readonly, new_diagnostic_for_node};
+ pub(crate) use utilities::*;
+ mod exports;
+ mod jsdoc;
+--- a/crates/tsrs_compiler/src/program.rs
++++ b/crates/tsrs_compiler/src/program.rs
+@@ -2641,7 +2641,7 @@
+     }
+ 
+     // program.go:1488
+-    fn get_semantic_diagnostics_with_checker(
++    pub fn get_semantic_diagnostics_with_checker(
+         &'static self,
+         ctx: &Context,
+         c: &mut Checker,

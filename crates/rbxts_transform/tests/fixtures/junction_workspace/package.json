@@ -1,0 +1,5 @@
+{
+	"name": "junction-workspace-fixture",
+	"private": true,
+	"workspaces": ["packages/*"]
+}

@@ -1,0 +1,30 @@
+// The stmts area's fixture: enums, namespaces, switch, try / throw, break / continue (T2).
+//
+// - Run: `cargo test -p rbxts_transform --test fixtures stmts` (tests/fixtures.rs links in a `node_modules` with types,
+//   compiler-types and testez). `allowCommentDirectives` is on below, since enums.ts uses `@ts-expect-error`.
+// - `expected/`: roblox-ts master with the tsrs checker (`probe/rbxts-driver.cjs --backend tsrs`), TypeScript 7
+//   semantics, except `enumNonFinite.luau`: rbxts-rs writes `math.huge` where roblox-ts writes `Infinity` (an
+//   accepted deviation), and `expected/` holds what rbxts-rs must write.
+// - `expected-ts5/` (not checked): stock roblox-ts (TypeScript 5.9) where it differs, only in the order of the export
+//   tables, which TypeScript 7 gives in declaration order.
+{
+	"rbxts": { "allowCommentDirectives": true },
+	"include": ["src", "node_modules/@rbxts/testez/globals.d.ts"],
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"noLib": true,
+		"resolveJsonModule": true,
+		"forceConsistentCasingInFileNames": true,
+		"moduleDetection": "force",
+		"strict": true,
+		"target": "ESNext",
+		"typeRoots": ["node_modules/@rbxts"],
+		"types": ["types", "compiler-types"],
+		"experimentalDecorators": true,
+		"rootDir": "src",
+		"outDir": "out",
+		"paths": { "*": ["./src/*"] }
+	}
+}

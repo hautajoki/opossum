@@ -1,0 +1,21 @@
+{
+	"include": ["src"],
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"noLib": true,
+		"resolveJsonModule": true,
+		"forceConsistentCasingInFileNames": true,
+		"moduleDetection": "force",
+		"strict": true,
+		"target": "ESNext",
+		"typeRoots": ["node_modules/@rbxts"],
+		"types": ["types", "compiler-types"],
+		"experimentalDecorators": true,
+		"rootDir": "src",
+		"outDir": "out",
+		"paths": { "*": ["./src/*"] },
+		"plugins": [{ "transform": "rbxts-transform-stamp", "prefix": "fixture " }]
+	}
+}

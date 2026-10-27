@@ -1,0 +1,9 @@
+[package]
+name = "rbxts_test_support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Shared helpers for rbxts-rs's tests: finding the roblox-ts tests project's node_modules, linking it into temporary projects, copies removed on drop."
+
+[dependencies]

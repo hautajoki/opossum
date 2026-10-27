@@ -1,0 +1,12 @@
+{
+	"name": "ModelProject",
+	"tree": {
+		"$path": "out",
+		"Extra": {
+			"$className": "Folder",
+			"Inner": {
+				"$path": "lib"
+			}
+		}
+	}
+}

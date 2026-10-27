@@ -1,0 +1,15 @@
+{
+	"project": "packages/game",
+	"layouts": {
+		"isolated": [
+			["node_modules/.store/@rbxts/types", "@shared/types"],
+			["node_modules/.store/@rbxts/compiler-types", "@shared/compiler-types"],
+			["node_modules/.store/@rbxts/services", "@shared/services"],
+			["packages/core/node_modules/@rbxts/services", "node_modules/.store/@rbxts/services"],
+			["packages/game/node_modules/@rbxts/types", "node_modules/.store/@rbxts/types"],
+			["packages/game/node_modules/@rbxts/compiler-types", "node_modules/.store/@rbxts/compiler-types"],
+			["packages/game/node_modules/@rbxts/services", "node_modules/.store/@rbxts/services"],
+			["packages/game/node_modules/@rbxts/core", "packages/core"]
+		]
+	}
+}

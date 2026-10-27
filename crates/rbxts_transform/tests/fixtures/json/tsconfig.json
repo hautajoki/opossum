@@ -1,0 +1,27 @@
+// JSON modules (`resolveJsonModule`): roblox-ts transforms no JSON. A JSON file under a root dir is an asset, copied
+// to the output as it is (Rojo makes it a ModuleScript), imported or not; an import names its output path. A JSON file
+// outside the root dirs is imported at its source path, which Rojo maps directly (`config` here).
+//
+// - Run: `cargo test -p rbxts_transform --test fixtures json`. This fixture compares the whole written output tree
+//   (Luau and the copied JSON assets), not only the Luau.
+// - `expected/`: stock roblox-ts's `rbxtsc build` output tree (`out/`); TypeScript 7 gives the same.
+{
+	"include": ["src"],
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"noLib": true,
+		"resolveJsonModule": true,
+		"forceConsistentCasingInFileNames": true,
+		"moduleDetection": "force",
+		"strict": true,
+		"target": "ESNext",
+		"typeRoots": ["node_modules/@rbxts"],
+		"types": ["types", "compiler-types"],
+		"experimentalDecorators": true,
+		"rootDir": "src",
+		"outDir": "out",
+		"paths": { "*": ["./src/*"] }
+	}
+}

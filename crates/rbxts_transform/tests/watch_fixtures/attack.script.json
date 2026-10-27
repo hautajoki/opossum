@@ -1,0 +1,252 @@
+{
+	"comment": "The c/s2-watch review's attack sequence on tests/watch_fixtures/attack (cargo test --test watch).",
+	"steps": [
+		{
+			"name": "A1b global .d.ts hop: a member renamed (clean build fails)",
+			"expect": "error",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/inner2.ts",
+						"find": "v: Array<string>",
+						"replace": "vv: Array<string>"
+					}
+				}
+			]
+		},
+		{
+			"name": "A1b back",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/inner2.ts",
+						"find": "vv: Array<string>",
+						"replace": "v: Array<string>"
+					}
+				}
+			]
+		},
+		{
+			"name": "A1 global .d.ts hop: import() type target edited",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/inner2.ts",
+						"find": "v: Array<string>",
+						"replace": "v: Map<string, string>"
+					}
+				}
+			]
+		},
+		{
+			"name": "A2 declare global hop: imported type edited",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/inner3.ts",
+						"find": "v: Array<string>",
+						"replace": "v: Map<string, string>"
+					}
+				}
+			]
+		},
+		{
+			"name": "A3 augmentation hop: augmenting file's import edited",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/t.ts",
+						"find": "w: Array<string>",
+						"replace": "w: Map<string, string>"
+					}
+				}
+			]
+		},
+		{
+			"name": "A4 export = type change",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/eq.ts",
+						"find": "new Array<string>()",
+						"replace": "new Map<string, string>()"
+					}
+				}
+			]
+		},
+		{
+			"name": "A5 type-only change in a hub",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/hub.ts",
+						"find": "export type H = Array<number>;",
+						"replace": "export type H = Map<number, number>;"
+					}
+				}
+			]
+		},
+		{
+			"name": "A6 3-hop export * chain end edited",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/e1.ts",
+						"find": "v: Array<string>",
+						"replace": "v: Set<string>"
+					}
+				}
+			]
+		},
+		{
+			"name": "A7 const enum value",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/ce.ts",
+						"find": "A = 1,",
+						"replace": "A = 5,"
+					}
+				}
+			]
+		},
+		{
+			"name": "A8 JSDoc macro mode in a module .d.ts",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/macros.d.ts",
+						"find": " * @stamp\n",
+						"replace": " * @stamp build\n"
+					}
+				}
+			]
+		},
+		{
+			"name": "A9 module .d.ts type edit",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/modd.d.ts",
+						"find": "a: Array<string>",
+						"replace": "a: Set<string>"
+					}
+				}
+			]
+		},
+		{
+			"name": "A10 rename keeping exports + importer updated",
+			"do": [
+				{
+					"rename": {
+						"from": "src/shared/e1.ts",
+						"to": "src/shared/e1r.ts"
+					}
+				},
+				{
+					"patch": {
+						"file": "src/shared/e2.ts",
+						"find": "./e1",
+						"replace": "./e1r"
+					}
+				}
+			]
+		},
+		{
+			"name": "A11 delete a file (importer breaks)",
+			"expect": "error",
+			"do": [
+				{
+					"delete": "src/shared/ce.ts"
+				}
+			]
+		},
+		{
+			"name": "A12 re-add it with other values",
+			"do": [
+				{
+					"write": {
+						"file": "src/shared/ce.ts",
+						"text": "export const enum CE {\n\tA = 9,\n\tB = 2,\n}\n"
+					}
+				}
+			]
+		},
+		{
+			"name": "A13 delete and re-add in one step",
+			"do": [
+				{
+					"delete": "src/shared/useHub.ts"
+				},
+				{
+					"write": {
+						"file": "src/shared/useHub.ts",
+						"text": "import type { H } from \"./hub\";\n\nexport function hubSize(h: H) {\n\treturn h.size() + 1;\n}\n"
+					}
+				}
+			]
+		},
+		{
+			"name": "A14 twin: delete twin.ts so twin.d.ts takes over",
+			"do": [
+				{
+					"delete": "src/shared/twin.ts"
+				}
+			]
+		},
+		{
+			"name": "A15 tsconfig exclude a file",
+			"do": [
+				{
+					"patch": {
+						"file": "tsconfig.json",
+						"find": "\"include\": [\"src\"],",
+						"replace": "\"include\": [\"src\"],\n\t\"exclude\": [\"src/shared/excluded.ts\"],"
+					}
+				}
+			]
+		},
+		{
+			"name": "A16 Rojo: move the include mapping",
+			"do": [
+				{
+					"patch": {
+						"file": "default.project.json",
+						"find": "\"include\": {",
+						"replace": "\"rbxts_include_moved\": {"
+					}
+				}
+			]
+		},
+		{
+			"name": "A17 Rojo: move shared under ServerScriptService",
+			"do": [
+				{
+					"patch": {
+						"file": "default.project.json",
+						"find": "\"shared\": {\n\t\t\t\t\"$path\": \"out/shared\"\n\t\t\t},",
+						"replace": ""
+					}
+				},
+				{
+					"patch": {
+						"file": "default.project.json",
+						"find": "\"tree\": {\n\t\t\"$className\": \"DataModel\",",
+						"replace": "\"tree\": {\n\t\t\"$className\": \"DataModel\",\n\t\t\"ServerScriptService\": { \"$className\": \"ServerScriptService\", \"shared\": { \"$path\": \"out/shared\" } },"
+					}
+				}
+			]
+		},
+		{
+			"name": "A18 case-only rename of a leaf",
+			"do": [
+				{
+					"rename": {
+						"from": "src/shared/useHub.ts",
+						"to": "src/shared/UseHub.ts"
+					}
+				}
+			]
+		}
+	]
+}

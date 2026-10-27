@@ -1,0 +1,5 @@
+-- Compiled with roblox-ts v3.0.0
+local TS = require(game:GetService("ReplicatedStorage"):WaitForChild("include"):WaitForChild("RuntimeLib"))
+local data = TS.import(script, game:GetService("ReplicatedStorage"), "shared", "data")
+local first = TS.import(script, game:GetService("ReplicatedStorage"), "shared", "a").first
+print(data.name, first)

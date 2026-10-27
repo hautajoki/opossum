@@ -1,0 +1,28 @@
+// `--writeTransformedFiles` (here the tsconfig's `rbxts.writeTransformedFiles`) with a TypeScript transformer: stock
+// roblox-ts writes each compiled file as the transformers left it, printed again by TypeScript's printer, beside its
+// Luau (`.transformed.ts`). `identity.cjs` is a transformer that changes nothing; in rbxts-rs the `transformer` test
+// plugin claims it (`plugins.json`), and the printed source is what it writes (rbxts-rs plugins do not change the
+// TypeScript).
+//
+// - Run: `cargo test -p rbxts_transform --test fixtures write_transformed`. Compares the whole written output tree.
+// - `expected/`: stock roblox-ts's `rbxtsc build` output tree (`out/`); TypeScript 7's printer gives the same.
+{
+	"include": ["src"],
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"noLib": true,
+		"moduleDetection": "force",
+		"strict": true,
+		"target": "ESNext",
+		"typeRoots": ["node_modules/@rbxts"],
+		"types": ["types", "compiler-types"],
+		"jsx": "react",
+		"jsxFactory": "Roact.jsx",
+		"rootDir": "src",
+		"outDir": "out",
+		"plugins": [{ "transform": "./identity.cjs" }]
+	},
+	"rbxts": { "writeTransformedFiles": true }
+}

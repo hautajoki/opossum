@@ -1,0 +1,12 @@
+{
+	"prepare": [{ "write": { "file": "src/shared/zw.ts", "text": "declare const n: number;\nexport const w = n ? 1 : 2;\n" } }],
+	"steps": [
+		{ "name": "S1a a3.ts check error (early file)", "do": [{ "append": { "file": "src/shared/a3.ts", "text": "export const bad: number = \"x\";\n" } }], "expect": "error" },
+		{ "name": "S1b seamdiag2.ts check error too (late file)", "do": [{ "append": { "file": "src/shared/seamdiag2.ts", "text": "export const bad2: number = \"y\";\n" } }], "expect": "error" },
+		{ "name": "S1c a3.ts fixed, late file still fails", "do": [{ "patch": { "file": "src/shared/a3.ts", "find": "export const bad: number = \"x\";\n", "replace": "" } }], "expect": "error" },
+		{ "name": "S1d a3.ts roblox-ts error, late check error", "do": [{ "append": { "file": "src/shared/a3.ts", "text": "export const nul = null;\n" } }], "expect": "error" },
+		{ "name": "S1e a3.ts fixed again", "do": [{ "patch": { "file": "src/shared/a3.ts", "find": "export const nul = null;\n", "replace": "" } }], "expect": "error" },
+		{ "name": "S1f late roblox-ts error instead of check error", "do": [{ "patch": { "file": "src/shared/seamdiag2.ts", "find": "export const bad2: number = \"y\";", "replace": "export const nul2 = null;" } }], "expect": "error" },
+		{ "name": "S1g all fixed", "do": [{ "patch": { "file": "src/shared/seamdiag2.ts", "find": "export const nul2 = null;\n", "replace": "" } }] }
+	]
+}

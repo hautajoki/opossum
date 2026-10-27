@@ -1,0 +1,23 @@
+// TypeScript project references under watch and incremental builds (`references.script.json`): the
+// `project_references` fixture, with a root file whose Luau depends on a referenced project's types (`+` or `..`).
+{
+	"include": ["src"],
+	"references": [{ "path": "projects/shared" }],
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"noLib": true,
+		"resolveJsonModule": true,
+		"forceConsistentCasingInFileNames": true,
+		"moduleDetection": "force",
+		"strict": true,
+		"target": "ESNext",
+		"typeRoots": ["node_modules/@rbxts"],
+		"types": ["types", "compiler-types"],
+		"experimentalDecorators": true,
+		"rootDir": "src",
+		"outDir": "out",
+		"paths": { "*": ["./src/*"] }
+	}
+}

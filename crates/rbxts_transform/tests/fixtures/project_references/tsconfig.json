@@ -1,0 +1,33 @@
+// TypeScript project references (roblox-ts's `ProjectGraph`): the root references `projects/shared`, which references
+// `projects/common`; both are `composite`, with their declarations in `out/types`. A build builds common, shared,
+// then the root, each with the root's Rojo file and include folder (one deployment). Imports of a referenced
+// project's files (its sources, through the `.d.ts` TypeScript reads, and a declaration file inside its root) name
+// that project's outputs; a declaration file outside every root (`projects/external`) names its own Luau.
+//
+// - Run: `cargo test -p rbxts_transform --test fixtures project_references`. Compares the written output trees of the
+//   three projects (`expected/out`, `expected/projects/*/out`), build infos left out (stock's
+//   `.rbxtsc.tsbuildinfo` and rbxts-rs's incremental state differ by design).
+// - `expected/`: stock roblox-ts's `rbxtsc build` output trees (TypeScript 5), but for the declaration maps, which are
+//   TypeScript 7's (tsrs's, with the mappings after a rewritten specifier moved); `expected-ts5/` (not checked) has
+//   stock's.
+{
+	"include": ["src"],
+	"references": [{ "path": "projects/shared" }],
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"noLib": true,
+		"resolveJsonModule": true,
+		"forceConsistentCasingInFileNames": true,
+		"moduleDetection": "force",
+		"strict": true,
+		"target": "ESNext",
+		"typeRoots": ["node_modules/@rbxts"],
+		"types": ["types", "compiler-types"],
+		"experimentalDecorators": true,
+		"rootDir": "src",
+		"outDir": "out",
+		"paths": { "*": ["./src/*"] }
+	}
+}

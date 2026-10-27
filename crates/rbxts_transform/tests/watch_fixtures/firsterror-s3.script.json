@@ -1,0 +1,10 @@
+{
+	"steps": [
+		{ "name": "S3a seamdiag2.ts plugin error (hoist of a later function), rf.ts warning cached after", "do": [{ "append": { "file": "src/shared/seamdiag2.ts", "text": "export const h = probeHoist(laterFn());\nexport function laterFn() {\n\treturn 1;\n}\n" } }], "expect": "error" },
+		{ "name": "S3b a3.ts roblox-ts error alongside", "do": [{ "append": { "file": "src/shared/a3.ts", "text": "export const nul = null;\n" } }], "expect": "error" },
+		{ "name": "S3c a3.ts check error instead", "do": [{ "patch": { "file": "src/shared/a3.ts", "find": "export const nul = null;", "replace": "export const bad: number = \"x\";" } }], "expect": "error" },
+		{ "name": "S3d a3.ts fixed, plugin error stays", "do": [{ "patch": { "file": "src/shared/a3.ts", "find": "export const bad: number = \"x\";\n", "replace": "" } }], "expect": "error" },
+		{ "name": "S3e rf.ts edited while the plugin error stays", "do": [{ "append": { "file": "src/zfirst/rf.ts", "text": "export const r2 = 1;\n" } }], "expect": "error" },
+		{ "name": "S3f all fixed", "do": [{ "patch": { "file": "src/shared/seamdiag2.ts", "find": "export const h = probeHoist(laterFn());\n", "replace": "" } }] }
+	]
+}

@@ -1,0 +1,6 @@
+{
+	"name": "@rbxts/greeter",
+	"version": "1.0.0",
+	"main": "init.lua",
+	"types": "index.d.ts"
+}

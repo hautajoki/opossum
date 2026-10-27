@@ -1,0 +1,13 @@
+{
+	"compilerOptions": {
+		"noLib": true,
+		"types": [],
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"target": "ESNext",
+		"strict": true,
+		"rootDir": "src",
+		"outDir": "out"
+	},
+	"include": ["src"]
+}

@@ -1,0 +1,45 @@
+[96msrc/index.ts[0m:[93m4[0m:[93m23[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m4[0m export const o: I = { a: "x" };
+[7m [0m [91m                      ~[0m
+
+  [96msrc/index.ts[0m:[93m2[0m:[93m2[0m
+    [7m2[0m  a: number;
+    [7m [0m [96m ~[0m
+    The expected type comes from property 'a' which is declared here on type 'I'
+
+[96msrc/index.ts[0m:[93m8[0m:[93m39[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m8[0m  f("tab" as unknown as number); const q: number = "x" as string;
+[7m [0m [91m                                      ~[0m
+
+[96msrc/index.ts[0m:[93m9[0m:[93m39[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'number'.
+
+[7m9[0m export const s = "😀😀"; export const r: number = "y" as string;
+[7m [0m [91m                                      ~[0m
+
+[96msrc/index.ts[0m:[93m10[0m:[93m14[0m - [91merror[0m[90m TS2322: [0mType 'string[]' is not assignable to type 'number[]'.
+  Type 'string' is not assignable to type 'number'.
+
+[7m10[0m export const n: Array<number> = ["a"] as Array<string>;
+[7m  [0m [91m             ~[0m
+
+[96msrc/index.ts[0m:[93m13[0m:[93m2[0m - [91merror[0m[90m TS7027: [0mUnreachable code detected.
+
+[7m 13[0m  print(1);
+[7m   [0m [91m ~~~~~~~~~[0m
+[7m 14[0m  print(2);
+[7m   [0m [91m~~~~~~~~~~[0m
+[7m...[0m 
+[7m 17[0m  print(5);
+[7m   [0m [91m~~~~~~~~~~[0m
+[7m 18[0m  print(6);
+[7m   [0m [91m~~~~~~~~~~[0m
+
+[96msrc/index.ts[0m:[93m22[0m:[93m2[0m - [91merror[0m[90m TS7027: [0mUnreachable code detected.
+
+[7m22[0m  print(1);
+[7m  [0m [91m ~~~~~~~~~[0m
+[7m23[0m  print(2);
+[7m  [0m [91m~~~~~~~~~~[0m
+

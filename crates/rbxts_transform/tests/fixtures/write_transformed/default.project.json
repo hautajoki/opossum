@@ -1,0 +1,1 @@
+{ "name": "wt", "tree": { "$className": "DataModel", "ReplicatedStorage": { "$className": "ReplicatedStorage", "include": { "$path": "include" }, "shared": { "$path": "out" } } } }

@@ -1,0 +1,9 @@
+{
+	"name": "FooProject",
+	"tree": {
+		"$path": "lib",
+		"Extra": {
+			"$path": "extra.luau"
+		}
+	}
+}

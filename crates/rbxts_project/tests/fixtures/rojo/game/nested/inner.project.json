@@ -1,0 +1,9 @@
+{
+	"name": "Inner",
+	"tree": {
+		"$path": "src",
+		"Child": {
+			"$path": "child.luau"
+		}
+	}
+}

@@ -1,0 +1,4 @@
+[91merror[0m[90m TS2688: [0mCannot find type definition file for 'nodts'.
+  The file is in the program because:
+    Entry point for implicit type library 'nodts'
+

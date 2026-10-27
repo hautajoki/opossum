@@ -1,0 +1,17 @@
+{
+	"extends": "../../base.json",
+	"include": [
+		"src"
+	],
+	"references": [
+		{
+			"path": "../common"
+		}
+	],
+	"compilerOptions": {
+		"composite": true,
+		"rootDir": "src",
+		"outDir": "../../out/left",
+		"tsBuildInfoFile": "../../cache/left.tsbuildinfo"
+	}
+}

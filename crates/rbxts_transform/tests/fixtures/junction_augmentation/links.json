@@ -1,0 +1,10 @@
+{
+	"layouts": {
+		"two-links": [
+			["node_modules/@rbxts/types", "@shared/types"],
+			["node_modules/@rbxts/compiler-types", "@shared/compiler-types"],
+			["node_modules/@rbxts/zeta", "vendor/greeter"],
+			["node_modules/@rbxts/alpha", "vendor/greeter"]
+		]
+	}
+}

@@ -1,0 +1,12 @@
+{
+	"steps": [
+		{ "name": "a3.ts reports with related info (tie on count with seamdiag2.ts)", "do": [{ "patch": { "file": "src/shared/a3.ts", "find": "probeDiagDecl()", "replace": "probeDiagDecl(true)" } }] },
+		{ "name": "seamdiag2.ts drops its related info", "do": [{ "patch": { "file": "src/shared/seamdiag2.ts", "find": "probeDiagDecl(true)", "replace": "probeDiagDecl()" } }] },
+		{ "name": "B.ts (upper case) reports with related info", "do": [{ "write": { "file": "src/shared/B.ts", "text": "// padding padding padding\nexport const bee = probeDiagDecl(true);\n" } }] },
+		{ "name": "a3.ts deleted", "do": [{ "delete": "src/shared/a3.ts" }] },
+		{ "name": "seamdiag.ts unrelated edit", "do": [{ "patch": { "file": "src/shared/seamdiag.ts", "find": "return 1;", "replace": "return 3;" } }] },
+		{ "name": "B.ts drops related info", "do": [{ "patch": { "file": "src/shared/B.ts", "find": "probeDiagDecl(true)", "replace": "probeDiagDecl()" } }] },
+		{ "name": "B.ts deleted", "do": [{ "delete": "src/shared/B.ts" }] },
+		{ "name": "seamdiag2.ts related again", "do": [{ "patch": { "file": "src/shared/seamdiag2.ts", "find": "probeDiagDecl()", "replace": "probeDiagDecl(true)" } }] }
+	]
+}

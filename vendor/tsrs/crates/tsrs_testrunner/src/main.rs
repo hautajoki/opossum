@@ -1,0 +1,550 @@
+#[global_allocator]
+static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
+
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+use regex::Regex;
+use rustc_hash::FxHashSet;
+use tsrs_core::tspath;
+
+use tsrs_testrunner::baseline::Class;
+use tsrs_testrunner::compiler_runner::{SUITES, TestItem};
+use tsrs_testrunner::harnessutil::OptionTable;
+use tsrs_testrunner::*;
+
+const USAGE: &str = "usage:
+  tsrs-test run [--suite compiler|conformance|all] [--filter <substr|regex>] [--list <file>]
+                [--jobs N] [--checkers N] [--timeout S] [--recycle N] [--mem-limit MB] [--json <path>] [--panic-summary]
+                                      --checkers: override the program's checker count (1..256), with parallel programs
+                [--baselines all|types,symbols,js,jsmap,sourcemap | --types --symbols --js]
+                                      all: compare errors, types, symbols, JavaScript/declarations and source maps
+                  (js: emit through Go's pre-/post-emit programs, docs/EMIT.md section 8)
+                  (results: <suite>/<name>.{types,symbols}.{actual,diff}, lists types-<class>.txt, symbols-<class>.txt)
+  tsrs-test show <name> [--full] [--types] [--symbols] [--js]
+                                      expected vs actual for one test (id, variant stem or file name); with
+                                      --types/--symbols: the first differing hunk of those baselines (--full: whole diff)
+  tsrs-test crashes [--top N] [--examples N] [--json <path>]
+  tsrs-test list [--suite ..] [--filter ..] [--list <file>]
+  tsrs-test materialize [--suite ..] [--filter ..] [--list <file>] --out <dir>
+                                      writes each case to disk as a tsc command line (<dir>/<n>_<id>/{root/,case.json});
+                                      the input of the WebAssembly differential (tools/wasm/diff.mjs)
+  tsrs-test types-dump -p <tsconfig|dir> --out <dir> [--mode types|symbols|both] [--text all|none|<list file>]
+                      [--sample <list file>]
+                                      the .types/.symbols walk over every non-node_modules, non-lib file of a project
+                                      (single-threaded, like tools/oracle/project-types): <out>/manifest.<kind>
+                                      (hash, lines, path per file) and <out>/<kind>/<path>.<kind>; --sample walks only
+                                      the listed files (e.g. from tools/project-types-sample.mjs), in program order";
+
+fn parse_baselines(v: &str) -> u8 {
+    let mut bits = 0;
+    bits = v.split(',').map(str::trim).filter(|p| !p.is_empty()).fold(bits, |mut bits, part| {
+        bits |= match part {
+            "errors" => 0,
+            "types" => EXTRA_TYPES,
+            "symbols" => EXTRA_SYMBOLS,
+            "all" => EXTRA_TYPES | EXTRA_SYMBOLS | EXTRA_JS | EXTRA_JSMAP | EXTRA_SOURCEMAP,
+            "js" => EXTRA_JS,
+            "jsmap" => EXTRA_JSMAP,
+            "sourcemap" => EXTRA_SOURCEMAP,
+            _ => {
+                eprintln!("--baselines: unknown baseline kind {part} (errors, types, symbols, js, jsmap, sourcemap, all)");
+                std::process::exit(2)
+            }
+        };
+
+        bits
+    });
+    bits
+}
+
+fn worker_args() -> Vec<String> {
+    let mut kinds = Vec::new();
+    kinds.extend(
+        ([
+            ("types", EXTRA_TYPES),
+            ("symbols", EXTRA_SYMBOLS),
+            ("js", EXTRA_JS),
+            ("jsmap", EXTRA_JSMAP),
+            ("sourcemap", EXTRA_SOURCEMAP),
+        ])
+        .into_iter()
+        .filter_map(
+            |(name, flag)| {
+                if extra_baselines() & flag != 0 { Some(name) } else { None }
+            },
+        ),
+    );
+    let mut args = if kinds.is_empty() {
+        Vec::new()
+    } else {
+        vec!["--baselines".to_string(), kinds.join(",")]
+    };
+    if let Some(count) = test_checkers() {
+        args.extend(["--checkers".to_string(), count.to_string()]);
+    }
+    args
+}
+
+struct Args {
+    rest: Vec<String>,
+}
+
+impl Args {
+    fn flag(&mut self, name: &str) -> bool {
+        if let Some(i) = self.rest.iter().position(|a| a == name) {
+            self.rest.remove(i);
+            return true;
+        }
+        false
+    }
+    fn value(&mut self, name: &str) -> Option<String> {
+        let i = self.rest.iter().position(|a| a == name)?;
+        if i + 1 >= self.rest.len() {
+            eprintln!("missing value for {name}");
+            std::process::exit(2);
+        }
+        let v = self.rest.remove(i + 1);
+        self.rest.remove(i);
+        Some(v)
+    }
+    fn num(&mut self, name: &str) -> Option<usize> {
+        self.value(name).map(|v| {
+            v.parse().unwrap_or_else(|_| {
+                eprintln!("{name}: expected a number");
+                std::process::exit(2)
+            })
+        })
+    }
+}
+
+struct Selection {
+    suites: Vec<&'static str>,
+    filter: Option<String>,
+    list: Option<FxHashSet<String>>,
+}
+
+impl Selection {
+    fn from_args(args: &mut Args) -> Selection {
+        let suites = match args.value("--suite").as_deref() {
+            None | Some("all") => SUITES.to_vec(),
+            Some("compiler") => vec!["compiler"],
+            Some("conformance") => vec!["conformance"],
+            Some(s) => {
+                eprintln!("unknown suite {s}");
+                std::process::exit(2)
+            }
+        };
+        let filter = args.value("--filter");
+        let list = args.value("--list").map(|p| {
+            tsrs_core::utf8::read_to_string(&p)
+                .unwrap_or_else(|e| panic!("--list {p}: {e}"))
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .collect()
+        });
+        Selection { suites, filter, list }
+    }
+
+    fn is_partial(&self) -> bool {
+        self.suites.len() != SUITES.len() || self.filter.is_some() || self.list.is_some()
+    }
+
+    fn select(&self, table: &OptionTable) -> Vec<TestItem> {
+        let re = self.filter.as_deref().and_then(|f| Regex::new(f).ok());
+        let mut items = Vec::new();
+        for suite in &self.suites {
+            let file_filter = compiler_test_filter::CompilerTestFileFilter::new(
+                suite,
+                self.filter.as_deref(),
+                self.list.as_ref(),
+            );
+            for path in compiler_runner::enumerate_test_files(suite) {
+                let basename = tspath::get_base_file_name(&path);
+                if !file_filter.includes(&basename) {
+                    continue;
+                }
+                let expanded = match compiler_runner::expand_test_file(suite, &path, table) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("{suite}/{basename}: {e}");
+                        vec![TestItem {
+                            suite: suite.to_string(),
+                            path: path.clone(),
+                            config: String::new(),
+                            name: compiler_runner::baseline_stem(&basename),
+                        }]
+                    }
+                };
+                items.extend(expanded.into_iter().filter_map(|item| {
+                    let id = item.id();
+                    if let Some(f) = &self.filter
+                        && !id.contains(f.as_str())
+                        && !re.as_ref().is_some_and(|r| r.is_match(&id))
+                    {
+                        return None;
+                    }
+                    if let Some(list) = &self.list
+                        && !list.contains(&id)
+                        && !list.contains(&item.name)
+                        && !list.contains(&basename)
+                    {
+                        return None;
+                    }
+                    Some(item)
+                }));
+            }
+        }
+        items
+    }
+}
+
+fn cmd_run(mut args: Args) {
+    let sel = Selection::from_args(&mut args);
+    let jobs = args
+        .num("--jobs")
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, std::num::NonZero::get));
+    let timeout = Duration::from_secs_f64(
+        args.value("--timeout").map_or(20.0, |v| v.parse().unwrap_or(20.0)),
+    );
+    let recycle = args.num("--recycle").unwrap_or(200);
+    let mem_limit_mb = args.num("--mem-limit").unwrap_or(6144) as u64;
+    let json_path = args.value("--json").map(PathBuf::from);
+    let panic_summary = args.flag("--panic-summary");
+    let quiet = args.flag("--quiet");
+    check_no_extra(&args);
+
+    let started = Instant::now();
+    let table = options::tsoptions_option_table();
+    let items = sel.select(&table);
+    if items.is_empty() {
+        println!("no tests selected");
+        std::process::exit(1);
+    }
+    if !quiet {
+        eprintln!("running {} test variants with {jobs} workers", items.len());
+    }
+    let opts = pool::PoolOptions {
+        jobs: jobs.min(items.len()),
+        timeout,
+        recycle,
+        worker_args: worker_args(),
+        progress: !quiet,
+        mem_limit_mb,
+    };
+    let results = pool::run_pool(&items, &opts);
+
+    let dir = worker::results_dir();
+    let json_path = json_path.unwrap_or_else(|| dir.join("summary.json"));
+    let previous = report::load_summary(&json_path);
+    let mut summary = if sel.is_partial() { previous.clone() } else { report::Summary::new() };
+    let mut this_run = report::Summary::new();
+    for (item, r) in items.iter().zip(&results) {
+        let mut r = r.clone().unwrap_or(pool::TestResult::harness(
+            Class::Crash,
+            0,
+            "no result from worker".to_string(),
+        ));
+        // A worker that died or timed out produced no `.types`/`.symbols` result: they share the item's fate.
+        if matches!(r.class, Class::Crash | Class::Timeout) {
+            if extra_baselines() & EXTRA_TYPES != 0 && r.types.is_none() {
+                r.types = Some((r.class, r.panic.clone()));
+            }
+            if extra_baselines() & EXTRA_SYMBOLS != 0 && r.symbols.is_none() {
+                r.symbols = Some((r.class, r.panic.clone()));
+            }
+            if extra_baselines() & EXTRA_JS != 0 && r.js.is_none() {
+                r.js = Some((r.class, r.panic.clone()));
+            }
+            if extra_baselines() & EXTRA_JSMAP != 0 && r.jsmap.is_none() {
+                r.jsmap = Some((r.class, r.panic.clone()));
+            }
+            if extra_baselines() & EXTRA_SOURCEMAP != 0 && r.sourcemap.is_none() {
+                r.sourcemap = Some((r.class, r.panic.clone()));
+            }
+        }
+        let mut entry = report::Entry::from(&r);
+        // An errors-only (or types-only) run keeps the other baselines' previous results.
+        if let Some(old) = previous.get(&item.id()) {
+            if entry.types.is_none() {
+                entry.types.clone_from(&old.types);
+            }
+            if entry.symbols.is_none() {
+                entry.symbols.clone_from(&old.symbols);
+            }
+            if entry.js.is_none() {
+                entry.js.clone_from(&old.js);
+            }
+            if entry.jsmap.is_none() {
+                entry.jsmap.clone_from(&old.jsmap);
+            }
+            if entry.sourcemap.is_none() {
+                entry.sourcemap.clone_from(&old.sourcemap);
+            }
+        }
+        summary.insert(item.id(), entry);
+        this_run.insert(item.id(), report::Entry::from(&r));
+    }
+    report::write_summary(&dir, &json_path, &summary);
+    report::print_table(&this_run);
+    println!("{:.1}s; results in {}", started.elapsed().as_secs_f64(), dir.display());
+    if panic_summary {
+        report::print_crashes(&this_run, 15, 2);
+    }
+    let failed = |class| !matches!(class, Class::Pass | Class::Skip);
+    if this_run.values().any(|entry| {
+        failed(entry.class)
+            || report::EXTRA_EXTS
+                .iter()
+                .any(|ext| entry.extra(ext).is_some_and(|(class, _)| failed(*class)))
+    }) {
+        std::process::exit(1);
+    }
+}
+
+fn check_no_extra(args: &Args) {
+    if !args.rest.is_empty() {
+        eprintln!("unexpected arguments: {}\n{USAGE}", args.rest.join(" "));
+        std::process::exit(2);
+    }
+}
+
+fn cmd_list(mut args: Args) {
+    let sel = Selection::from_args(&mut args);
+    check_no_extra(&args);
+    for item in sel.select(&options::tsoptions_option_table()) {
+        println!("{}", item.id());
+    }
+}
+
+fn cmd_materialize(mut args: Args) {
+    let sel = Selection::from_args(&mut args);
+    let Some(out) = args.value("--out").map(PathBuf::from) else {
+        eprintln!("{USAGE}");
+        std::process::exit(2);
+    };
+    check_no_extra(&args);
+    let table = options::tsoptions_option_table();
+    let (mut written, mut skipped, mut with_dropped, mut errors) = (0, 0, 0, 0);
+    let _ = std::fs::remove_dir_all(&out);
+    for (i, item) in sel.select(&table).iter().enumerate() {
+        match materialize::materialize(item, &table, &out.join(materialize::dir_name(i, item))) {
+            Ok(m) if m.skipped => skipped += 1,
+            Ok(m) => {
+                written += 1;
+                with_dropped += usize::from(!m.dropped.is_empty());
+            }
+            Err(e) => {
+                errors += 1;
+                eprintln!("{}: {e}", item.id());
+            }
+        }
+    }
+    println!(
+        "materialized {written} cases ({with_dropped} with a dropped option), {skipped} skipped, {errors} errors, in {}",
+        out.display()
+    );
+}
+
+fn cmd_show(mut args: Args) {
+    let full = args.flag("--full");
+    if args.rest.len() != 1 {
+        eprintln!("{USAGE}");
+        std::process::exit(2);
+    }
+    let name = args.rest.remove(0);
+    let table = options::tsoptions_option_table();
+    let sel = Selection { suites: SUITES.to_vec(), filter: None, list: None };
+    let all = sel.select(&table);
+    let exact: Vec<&TestItem> = all
+        .iter()
+        .filter(|i| {
+            i.id() == name
+                || i.name == name
+                || tspath::get_base_file_name(&i.path) == name
+                || compiler_runner::baseline_stem(&name) == i.name
+        })
+        .collect();
+    let matches: Vec<&TestItem> = if exact.is_empty() {
+        all.iter().filter(|i| i.id().contains(&name)).collect()
+    } else {
+        exact
+    };
+    if matches.is_empty() {
+        println!("no test matches '{name}'");
+        return;
+    }
+    if matches.len() > 1 && matches.iter().any(|m| m.path != matches[0].path) {
+        println!("'{name}' is ambiguous:");
+        for m in matches.iter().take(20) {
+            println!("  {}", m.id());
+        }
+        return;
+    }
+    worker::install_panic_hook(true);
+    let items: Vec<TestItem> = matches.into_iter().cloned().collect();
+    std::thread::Builder::new()
+        .stack_size(worker::WORKER_STACK_SIZE)
+        .spawn(move || {
+            let table = options::tsoptions_option_table();
+            for item in &items {
+                let r = worker::run_item(&table, item);
+                println!("== {}: {} ({} ms)", item.id(), r.class.as_str(), r.ms);
+                if let Some(p) = &r.panic {
+                    println!("panic: {}\n  at {}", p.message, p.location);
+                }
+                if !r.skip.is_empty() {
+                    println!("skipped: {}", r.skip);
+                }
+                if r.class != Class::Pass && r.actual.is_none() && !r.diff.is_empty() {
+                    println!("{}", r.diff);
+                }
+                for (ext, _) in worker::EXTRA_KINDS {
+                    let Some(e) = worker::extra_result(&r, ext) else {
+                        continue;
+                    };
+                    println!("-- .{ext}: {}", e.class.as_str());
+                    if let Some(actual) = &e.actual {
+                        if e.class != Class::Pass {
+                            let diff = baseline::unified_diff(
+                                e.expected.as_deref(),
+                                actual,
+                                &format!("{}.{ext}", item.name),
+                            );
+                            print!("{}", if full { diff } else { baseline::first_hunk(&diff) });
+                        }
+                    } else if !e.diff.is_empty() {
+                        println!("{}", e.diff);
+                    }
+                }
+                if extra_baselines() != 0 && !full {
+                    continue;
+                }
+                if let Some(actual) = &r.actual {
+                    if full {
+                        println!(
+                            "-- expected:\n{}",
+                            r.expected
+                                .as_deref()
+                                .unwrap_or(baseline::NO_CONTENT)
+                                .replace("\r\n", "\n")
+                        );
+                        println!("-- actual:\n{}", actual.replace("\r\n", "\n"));
+                    } else if r.class != Class::Pass {
+                        print!(
+                            "{}",
+                            baseline::unified_diff(
+                                r.expected.as_deref(),
+                                actual,
+                                &format!("{}.errors.txt", item.name)
+                            )
+                        );
+                    }
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+fn cmd_crashes(mut args: Args) {
+    let top = args.num("--top").unwrap_or(30);
+    let examples = args.num("--examples").unwrap_or(2);
+    let json_path = args
+        .value("--json")
+        .map_or_else(|| worker::results_dir().join("summary.json"), PathBuf::from);
+    check_no_extra(&args);
+    let summary = report::load_summary(&json_path);
+    if summary.is_empty() {
+        println!("no results in {}", json_path.display());
+        return;
+    }
+    report::print_crashes(&summary, top, examples);
+}
+
+fn cmd_types_dump(mut args: Args) {
+    let project =
+        args.value("-p").or_else(|| args.value("--project")).unwrap_or_else(|| ".".to_string());
+    let out = PathBuf::from(args.value("--out").unwrap_or_else(|| {
+        eprintln!("types-dump: --out <dir> is required");
+        std::process::exit(2)
+    }));
+    let mode = args.value("--mode").unwrap_or_else(|| "types".to_string());
+    let text = args.value("--text").unwrap_or_else(|| "all".to_string());
+    let sample = args.value("--sample");
+    check_no_extra(&args);
+    let dump = types_dump::DumpArgs { project, out, mode, text, sample };
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(move || types_dump::run(&dump))
+        .unwrap()
+        .join()
+        .unwrap_or_else(|_| std::process::exit(101));
+}
+
+fn main() {
+    #[cfg(all(target_os = "linux", not(miri)))]
+    tsrs_core::allocator::init_mimalloc();
+    // The baselines are tsgo's output (one checker in program order): keep Go's check history (tsrs_core::compat).
+    tsrs_core::compat::use_go_history_for_tsgo_baselines();
+    // tsrs-only (notes/mem-lazy-dts-members.md): `TSRS_LAZY_DTS=force` parses every declaration-file member list
+    // lazily, checked files included, to test that forcing gives the same output. Off by default.
+    if std::env::var_os("TSRS_LAZY_DTS").is_some_and(|v| v == "force") {
+        tsrs_compiler::enable_lazy_dts();
+    }
+    let mut argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.is_empty() {
+        eprintln!("{USAGE}");
+        std::process::exit(2);
+    }
+    let cmd = argv.remove(0);
+    let mut args = Args { rest: argv };
+    if let Some(count) = args.num("--checkers") {
+        let Ok(count @ 1..=256) = u16::try_from(count) else {
+            eprintln!("--checkers: expected a number from 1 to 256");
+            std::process::exit(2);
+        };
+        TEST_CHECKERS.set(i64::from(count)).unwrap();
+    }
+    for arg in &args.rest {
+        if matches!(arg.split('=').next(), Some("--oracle" | "--options" | "--syntax-only")) {
+            eprintln!(
+                "{arg}: removed porting option; tsrs-test always uses the Rust compiler and option tables"
+            );
+            std::process::exit(2);
+        }
+    }
+    let mut extra = args.value("--baselines").map_or(0, |v| parse_baselines(&v));
+    if args.flag("--types") {
+        extra |= EXTRA_TYPES;
+    }
+    if args.flag("--symbols") {
+        extra |= EXTRA_SYMBOLS;
+    }
+    if args.flag("--js") {
+        extra |= EXTRA_JS;
+    }
+    if args.flag("--jsmap") {
+        extra |= EXTRA_JSMAP;
+    }
+    if args.flag("--sourcemap") {
+        extra |= EXTRA_SOURCEMAP;
+    }
+    EXTRA_BASELINES.store(extra, std::sync::atomic::Ordering::Relaxed);
+    match cmd.as_str() {
+        "run" => cmd_run(args),
+        "show" => cmd_show(args),
+        "crashes" => cmd_crashes(args),
+        "list" => cmd_list(args),
+        "materialize" => cmd_materialize(args),
+        "types-dump" => cmd_types_dump(args),
+        "__worker" => worker::worker_main(),
+        "-h" | "--help" | "help" => println!("{USAGE}"),
+        _ => {
+            eprintln!("unknown command {cmd}\n{USAGE}");
+            std::process::exit(2);
+        }
+    }
+}

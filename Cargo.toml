@@ -1,0 +1,74 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["vendor"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+# tsrs, pinned: the tsrs clone on branch `rbxts-fork` (v0.18.0 plus visibility flips).
+# Cargo.lock started as a copy of tsrs's lock file so the transitive versions match what tsrs tests with.
+[workspace.dependencies]
+tsrs_core = { path = "vendor/tsrs/crates/tsrs_core" }
+tsrs_ast = { path = "vendor/tsrs/crates/tsrs_ast" }
+tsrs_vfs = { path = "vendor/tsrs/crates/tsrs_vfs" }
+tsrs_tsoptions = { path = "vendor/tsrs/crates/tsrs_tsoptions" }
+tsrs_compiler = { path = "vendor/tsrs/crates/tsrs_compiler" }
+tsrs_diagnostics = { path = "vendor/tsrs/crates/tsrs_diagnostics" }
+tsrs_checker = { path = "vendor/tsrs/crates/tsrs_checker" }
+tsrs_scanner = { path = "vendor/tsrs/crates/tsrs_scanner" }
+tsrs_parser = { path = "vendor/tsrs/crates/tsrs_parser" }
+tsrs_printer = { path = "vendor/tsrs/crates/tsrs_printer" }
+tsrs_sourcemap = { path = "vendor/tsrs/crates/tsrs_sourcemap" }
+mimalloc-safe = { version = "0.1.67", features = ["v3", "no_thp"] }
+rbxts_project = { path = "crates/rbxts_project" }
+rbxts_luau = { path = "crates/rbxts_luau" }
+rbxts_luau_check = { path = "crates/rbxts_luau_check" }
+# preserve_order: Rojo trees iterate children in file order, as JavaScript objects do.
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+tsrs_module = { path = "vendor/tsrs/crates/tsrs_module" }
+tsrs_contentmapper = { path = "vendor/tsrs/crates/tsrs_contentmapper" }
+rbxts_transform = { path = "crates/rbxts_transform" }
+rbxts_plugin = { path = "crates/rbxts_plugin" }
+rbxts_cli = { path = "crates/rbxts_cli" }
+rbxts_test_plugins = { path = "crates/rbxts_test_plugins" }
+rbxts_test_support = { path = "crates/rbxts_test_support" }
+flamework_rs = { path = "crates/flamework_rs" }
+# The versions in tsrs's lock file.
+rustc-hash = "2"
+# flamework_rs: JavaScript number formatting (Number#toString), already in the lock through tsrs_core.
+dragonbox_ecma = "0.1.12"
+# rbxts_cli watch mode: file system events (ReadDirectoryChangesW on Windows) and the process working set (the
+# restart past a memory limit).
+notify = { version = "8.2.0", default-features = false, features = ["macos_fsevent"] }
+memory-stats = "1.2.0"
+# rbxts_cli watch mode: the status line's local time (TypeScript's `toLocaleTimeString()`).
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+
+# A debug checker is unusably slow, so even dev builds are optimised (as in tsrs).
+[profile.dev]
+opt-level = 3
+lto = "off"
+codegen-units = 256
+incremental = true
+
+# Luau (rbxts_luau_check, built by luau0-src) without its asserts in every profile: luau0-src turns them on under
+# debug_assertions, and a failed one ends in __debugbreak (a crash) instead of an error. A build dependency, so this
+# package override (it wins over build-override) is what reaches it.
+[profile.dev.package.luau0-src]
+debug-assertions = false
+
+# Measurements: release optimisation without LTO, like tsrs's `ci` profile (the tsrs.exe we compare against).
+[profile.measure]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"

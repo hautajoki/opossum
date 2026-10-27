@@ -1,0 +1,27 @@
+{
+	"include": [
+		"src"
+	],
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"moduleDetection": "force",
+		"noLib": true,
+		"strict": true,
+		"target": "ESNext",
+		"resolveJsonModule": true,
+		"experimentalDecorators": true,
+		"forceConsistentCasingInFileNames": true,
+		"typeRoots": [
+			"node_modules/@rbxts"
+		],
+		"types": [
+			"types",
+			"compiler-types"
+		],
+		"rootDir": "src",
+		"outDir": "out",
+		"allowUnreachableCode": false
+	}
+}

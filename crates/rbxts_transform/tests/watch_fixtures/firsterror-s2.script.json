@@ -1,0 +1,10 @@
+{
+	"prepare": [{ "write": { "file": "src/shared/zw.ts", "text": "declare const n: number;\nexport const w = n ? 1 : 2;\n" } }],
+	"steps": [
+		{ "name": "S2a a3.ts roblox-ts error, zw.ts (warning) cached after it", "do": [{ "append": { "file": "src/shared/a3.ts", "text": "export const nul = null;\n" } }], "expect": "error" },
+		{ "name": "S2b zw.ts edited while a3.ts fails", "do": [{ "append": { "file": "src/shared/zw.ts", "text": "export const w2 = 1;\n" } }], "expect": "error" },
+		{ "name": "S2c a3.ts fixed", "do": [{ "patch": { "file": "src/shared/a3.ts", "find": "export const nul = null;\n", "replace": "" } }] },
+		{ "name": "S2d a3.ts check error, zw.ts cached after it", "do": [{ "append": { "file": "src/shared/a3.ts", "text": "export const bad: number = \"x\";\n" } }], "expect": "error" },
+		{ "name": "S2e a3.ts fixed", "do": [{ "patch": { "file": "src/shared/a3.ts", "find": "export const bad: number = \"x\";\n", "replace": "" } }] }
+	]
+}

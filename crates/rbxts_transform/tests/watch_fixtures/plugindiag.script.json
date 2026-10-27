@@ -1,0 +1,16 @@
+{
+	"steps": [
+		{ "name": "seamdiag.ts: an unrelated edit", "do": [{ "patch": { "file": "src/shared/seamdiag.ts", "find": "return 1;", "replace": "return 2;" } }] },
+		{ "name": "seamdiag2.ts: an unrelated edit", "do": [{ "append": { "file": "src/shared/seamdiag2.ts", "text": "export const extra2 = 1;\n" } }] },
+		{ "name": "seamdiag.ts stops reporting", "do": [{ "patch": { "file": "src/shared/seamdiag.ts", "find": "return probeDiagDecl();", "replace": "return undefined;" } }] },
+		{ "name": "seamdiag.ts reports again", "do": [{ "patch": { "file": "src/shared/seamdiag.ts", "find": "return undefined;", "replace": "return probeDiagDecl();" } }] },
+		{ "name": "seamdiag2.ts (the kept copy, with related information) stops reporting", "do": [{ "patch": { "file": "src/shared/seamdiag2.ts", "find": "export const again = probeDiagDecl(true);", "replace": "export const again = undefined;" } }] },
+		{ "name": "seamdiag2.ts reports again", "do": [{ "patch": { "file": "src/shared/seamdiag2.ts", "find": "export const again = undefined;", "replace": "export const again = probeDiagDecl(true);" } }] },
+		{ "name": "seamdiag2.ts reports without related information", "do": [{ "patch": { "file": "src/shared/seamdiag2.ts", "find": "probeDiagDecl(true)", "replace": "probeDiagDecl()" } }] },
+		{ "name": "seamdiag.ts reports with related information", "do": [{ "patch": { "file": "src/shared/seamdiag.ts", "find": "return probeDiagDecl();", "replace": "return probeDiagDecl(true);" } }] },
+		{ "name": "seamdiag.ts deleted", "do": [{ "delete": "src/shared/seamdiag.ts" }] },
+		{ "name": "seamdiag.ts back", "do": [{ "write": { "file": "src/shared/seamdiag.ts", "text": "declare const count: number;\nexport function check() {\n\tif (probeDiagSame(count, \"Value will be checked against 0, NaN\")) {\n\t\treturn 1;\n\t}\n\treturn probeDiagDecl();\n}\n" } }] },
+		{ "name": "seamdiag2.ts deleted", "do": [{ "delete": "src/shared/seamdiag2.ts" }] },
+		{ "name": "seamdiag2.ts back, with related information", "do": [{ "write": { "file": "src/shared/seamdiag2.ts", "text": "export const again = probeDiagDecl(true);\n" } }] }
+	]
+}

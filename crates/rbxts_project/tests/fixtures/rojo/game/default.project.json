@@ -1,0 +1,87 @@
+{
+	"name": "fixture-game",
+	"tree": {
+		"2": {
+			"$path": "out/two"
+		},
+		"10": {
+			"$path": "out/numbered"
+		},
+		"$className": "DataModel",
+		"ReplicatedStorage": {
+			"$className": "ReplicatedStorage",
+			"Shared": {
+				"$path": "out/shared"
+			},
+			"Single": {
+				"$path": "out/single.lua"
+			},
+			"Data": {
+				"$path": "assets/data.model.json"
+			},
+			"Nested": {
+				"$path": "nested/inner.project.json"
+			},
+			"WithDefault": {
+				"$path": "withdefault"
+			},
+			"Optional": {
+				"$path": {
+					"optional": "out/optional"
+				}
+			},
+			"Missing": {
+				"$path": "does/not/exist"
+			},
+			"MissingProject": {
+				"$path": "does/not/exist.project.json"
+			},
+			"rbxts_include": {
+				"$path": "include"
+			}
+		},
+		"ServerScriptService": {
+			"$className": "ServerScriptService",
+			"Server": {
+				"$path": "out/server"
+			}
+		},
+		"StarterPlayer": {
+			"$className": "StarterPlayer",
+			"StarterPlayerScripts": {
+				"$className": "StarterPlayerScripts",
+				"Client": {
+					"$path": "out/client"
+				}
+			},
+			"StarterCharacterScripts": {
+				"Character": {
+					"$path": "out/character"
+				}
+			}
+		},
+		"StarterGui": {
+			"Gui": {
+				"$path": "out/gui"
+			}
+		},
+		"ServerStorage": {
+			"Store": {
+				"$path": "out/store"
+			}
+		},
+		"ReplicatedFirst": {
+			"First": {
+				"$path": "out/first"
+			}
+		},
+		"Workspace": {
+			"$properties": {
+				"Gravity": 100
+			},
+			"Map": {
+				"$className": "Folder"
+			}
+		}
+	}
+}

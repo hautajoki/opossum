@@ -1,0 +1,34 @@
+{
+	"prepare": [
+		{ "write": { "file": "src/shared/marked.ts", "text": "// probe-inputs\nexport const marked = 1;\n" } },
+		{ "write": { "file": "src/shared/globbed.ts", "text": "// probe-inputs probe-glob\nexport const globbed = 1;\n" } },
+		{ "mkdir": "setup-glob" },
+		{ "mkdir": "file-glob" },
+		{ "mkdir": "globs/finish" },
+		{ "mkdir": "finish-dir" }
+	],
+	"steps": [
+		{ "name": "a finish glob match", "do": [{ "write": { "file": "globs/finish/a.json", "text": "{}" } }] },
+		{ "name": "a file the finish glob does not match", "do": [{ "write": { "file": "globs/finish/b.md", "text": "x" } }] },
+		{ "name": "an entry in the listed directory", "do": [{ "write": { "file": "finish-dir/x.txt", "text": "x" } }] },
+		{ "name": "a second entry", "do": [{ "write": { "file": "finish-dir/y.txt", "text": "y" } }] },
+		{ "name": "both entries removed: their artifacts' directories go", "do": [{ "delete": "finish-dir/x.txt" }, { "delete": "finish-dir/y.txt" }] },
+		{ "name": "the flag appears", "do": [{ "write": { "file": "finish-flag", "text": "" } }] },
+		{
+			"name": "remove_empty_dir of an empty directory",
+			"do": [{ "mkdir": "leftover" }, { "write": { "file": "finish-file.txt", "text": "remove leftover\n" } }]
+		},
+		{ "name": "a file glob match", "do": [{ "write": { "file": "file-glob/a.txt", "text": "x" } }] },
+		{ "name": "a setup glob match", "do": [{ "write": { "file": "setup-glob/s.txt", "text": "x" } }] },
+		{
+			"name": "a third marked file renumbers the cached ones",
+			"do": [{ "write": { "file": "src/shared/marked3.ts", "text": "// probe-inputs\nexport const marked3 = 1;\n" } }]
+		},
+		{ "name": "a marked file deleted", "do": [{ "delete": "src/shared/marked.ts" }] },
+		{ "name": "an unmarked edit", "do": [{ "append": { "file": "src/shared/d.ts", "text": "\n// edited\n" } }] },
+		{ "name": "the file glob match removed", "do": [{ "delete": "file-glob/a.txt" }] },
+		{ "name": "the finish glob match removed", "do": [{ "delete": "globs/finish/a.json" }] },
+		{ "name": "the flag removed", "do": [{ "delete": "finish-flag" }] },
+		{ "name": "an unchanged save", "do": [{ "touch": "src/shared/d.ts" }] }
+	]
+}

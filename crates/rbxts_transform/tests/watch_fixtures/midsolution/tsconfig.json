@@ -1,0 +1,17 @@
+{
+	"extends": "./base.json",
+	"include": [
+		"src"
+	],
+	"references": [
+		{
+			"path": "./projects/group"
+		}
+	],
+	"compilerOptions": {
+		"rootDir": "src",
+		"outDir": "out/game",
+		"tsBuildInfoFile": "cache/game.tsbuildinfo",
+		"incremental": true
+	}
+}

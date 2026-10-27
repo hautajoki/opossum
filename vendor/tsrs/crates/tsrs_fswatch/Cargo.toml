@@ -1,0 +1,20 @@
+[package]
+name = "tsrs_fswatch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rustc-hash.workspace = true
+tsrs_core.workspace = true
+# kqueue / inotify / pipe / pathconf / stat bindings (Go: golang.org/x/sys/unix).
+libc.workspace = true
+
+[lib]
+test = false
+doctest = false

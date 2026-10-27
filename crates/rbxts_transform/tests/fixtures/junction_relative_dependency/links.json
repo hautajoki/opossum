@@ -1,0 +1,9 @@
+{
+	"layouts": {
+		"linked-dependency": [
+			["node_modules/@rbxts/types", "@shared/types"],
+			["node_modules/@rbxts/compiler-types", "@shared/compiler-types"],
+			["node_modules/@rbxts/greeter", "packages/greeter"]
+		]
+	}
+}

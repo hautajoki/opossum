@@ -1,0 +1,33 @@
+// A package-style library with `declaration: true` (no Rojo file: a scoped package name makes it a package). Each
+// source gets its Luau and its `.d.ts` / `.d.ts.map` (TypeScript's declaration emit, then roblox-ts's
+// `afterDeclarations` transformers: `paths` imports rewritten to relative ones, `types` references to `@rbxts/types`);
+// each declaration file under `src` is an asset printed again with its `paths` imports rewritten
+// (`transformDeclarationFile`); other assets are copied.
+//
+// - Run: `cargo test -p rbxts_transform --test fixtures declarations`. Compares the whole written output tree.
+// - `expected/`: stock roblox-ts's `rbxtsc build` output tree (`out/`, TypeScript 5), but for the declaration maps,
+//   which are TypeScript 7's: tsrs's `--emitDeclarationOnly` maps, with the mappings after a rewritten specifier moved
+//   by its change in length (`util/math.d.ts.map`, with no rewrite, is tsrs's as it is). `expected-ts5/` (not
+//   checked) has stock's maps: TypeScript 5 maps constructors and method bodies, and the rewritten specifiers, otherwise.
+{
+	"include": ["src"],
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"noLib": true,
+		"resolveJsonModule": true,
+		"forceConsistentCasingInFileNames": true,
+		"moduleDetection": "force",
+		"strict": true,
+		"target": "ESNext",
+		"typeRoots": ["node_modules/@rbxts"],
+		"types": ["types", "compiler-types"],
+		"experimentalDecorators": true,
+		"rootDir": "src",
+		"outDir": "out",
+		"declaration": true,
+		"declarationMap": true,
+		"paths": { "*": ["./src/*"] }
+	}
+}

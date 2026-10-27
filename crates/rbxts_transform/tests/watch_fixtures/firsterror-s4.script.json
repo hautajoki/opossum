@@ -1,0 +1,6 @@
+{
+	"steps": [
+		{ "name": "S4a a3.ts plugin error, seamdiag2.ts check error", "do": [{ "append": { "file": "src/shared/a3.ts", "text": "export const h = probeHoist(laterFn());\nexport function laterFn() {\n\treturn 1;\n}\n" } }, { "append": { "file": "src/shared/seamdiag2.ts", "text": "export const bad2: number = \"y\";\n" } }], "expect": "error" },
+		{ "name": "S4b fixed", "do": [{ "patch": { "file": "src/shared/a3.ts", "find": "export const h = probeHoist(laterFn());\n", "replace": "" } }, { "patch": { "file": "src/shared/seamdiag2.ts", "find": "export const bad2: number = \"y\";\n", "replace": "" } }] }
+	]
+}

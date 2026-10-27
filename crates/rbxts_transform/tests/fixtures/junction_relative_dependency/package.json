@@ -1,0 +1,8 @@
+{
+	"name": "junction-relative-dependency-fixture",
+	"version": "1.0.0",
+	"private": true,
+	"dependencies": {
+		"@rbxts/greeter": "file:packages/greeter"
+	}
+}

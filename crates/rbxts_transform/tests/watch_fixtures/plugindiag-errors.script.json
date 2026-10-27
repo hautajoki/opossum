@@ -1,0 +1,103 @@
+{
+	"steps": [
+		{
+			"name": "seamdiag2.ts (kept copy) gets a roblox-ts error",
+			"do": [
+				{
+					"append": {
+						"file": "src/shared/seamdiag2.ts",
+						"text": "export const nul = null;\n"
+					}
+				}
+			],
+			"expect": "error"
+		},
+		{
+			"name": "seamdiag.ts unrelated edit while seamdiag2.ts fails",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/seamdiag.ts",
+						"find": "return 1;",
+						"replace": "return 2;"
+					}
+				}
+			],
+			"expect": "error"
+		},
+		{
+			"name": "seamdiag2.ts error fixed",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/seamdiag2.ts",
+						"find": "export const nul = null;",
+						"replace": "export const nul = 1;"
+					}
+				}
+			]
+		},
+		{
+			"name": "seamdiag.ts (dropped copy) gets a roblox-ts error and related info",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/seamdiag.ts",
+						"find": "return probeDiagDecl();",
+						"replace": "return probeDiagDecl(true) ?? null;"
+					}
+				}
+			],
+			"expect": "error"
+		},
+		{
+			"name": "seamdiag2.ts unrelated edit",
+			"do": [
+				{
+					"append": {
+						"file": "src/shared/seamdiag2.ts",
+						"text": "export const extra2 = 1;\n"
+					}
+				}
+			],
+			"expect": "error"
+		},
+		{
+			"name": "seamdiag2.ts stops reporting while seamdiag.ts fails",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/seamdiag2.ts",
+						"find": "export const again = probeDiagDecl(true);",
+						"replace": "export const again = undefined;"
+					}
+				}
+			],
+			"expect": "error"
+		},
+		{
+			"name": "seamdiag.ts error fixed",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/seamdiag.ts",
+						"find": "return probeDiagDecl(true) ?? null;",
+						"replace": "return probeDiagDecl(true);"
+					}
+				}
+			]
+		},
+		{
+			"name": "seamdiag2.ts reports again",
+			"do": [
+				{
+					"patch": {
+						"file": "src/shared/seamdiag2.ts",
+						"find": "export const again = undefined;",
+						"replace": "export const again = probeDiagDecl(true);"
+					}
+				}
+			]
+		}
+	]
+}

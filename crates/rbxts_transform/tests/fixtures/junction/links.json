@@ -1,0 +1,17 @@
+{
+	"layouts": {
+		"linked-packages": [
+			["node_modules/@rbxts/types", "@shared/types"],
+			["node_modules/@rbxts/compiler-types", "@shared/compiler-types"],
+			["node_modules/@rbxts/services", "@shared/services"],
+			["node_modules/@rbxts/greeter", "packages/greeter"]
+		],
+		"linked-node-modules": [
+			["store/node_modules/@rbxts/types", "@shared/types"],
+			["store/node_modules/@rbxts/compiler-types", "@shared/compiler-types"],
+			["store/node_modules/@rbxts/services", "@shared/services"],
+			["store/node_modules/@rbxts/greeter", "packages/greeter"],
+			["node_modules", "store/node_modules"]
+		]
+	}
+}

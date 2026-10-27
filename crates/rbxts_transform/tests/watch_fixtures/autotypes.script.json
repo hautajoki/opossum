@@ -1,0 +1,102 @@
+{
+	"steps": [
+		{
+			"name": "a new type-root package declares a global a source uses",
+			"do": [
+				{
+					"write": {
+						"file": "node_modules/@rbxts/extra/package.json",
+						"text": "{ \"name\": \"@rbxts/extra\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n"
+					}
+				},
+				{
+					"write": {
+						"file": "node_modules/@rbxts/extra/index.d.ts",
+						"text": "declare const extraGlobal: number;\n"
+					}
+				},
+				{
+					"write": {
+						"file": "src/shared/b.ts",
+						"text": "export const fromExtra = extraGlobal + 1;\n"
+					}
+				}
+			]
+		},
+		{
+			"name": "its global changes type",
+			"do": [
+				{
+					"patch": {
+						"file": "node_modules/@rbxts/extra/index.d.ts",
+						"find": "number",
+						"replace": "string"
+					}
+				}
+			]
+		},
+		{
+			"name": "its package.json says `\"typings\": null`: not an automatic type package",
+			"do": [
+				{
+					"write": {
+						"file": "node_modules/@rbxts/extra/package.json",
+						"text": "{ \"name\": \"@rbxts/extra\", \"version\": \"1.0.0\", \"typings\": null }\n"
+					}
+				}
+			],
+			"expect": "error"
+		},
+		{
+			"name": "a type package again",
+			"do": [
+				{
+					"write": {
+						"file": "node_modules/@rbxts/extra/package.json",
+						"text": "{ \"name\": \"@rbxts/extra\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n"
+					}
+				}
+			]
+		},
+		{
+			"name": "the package removed",
+			"do": [
+				{
+					"delete": "node_modules/@rbxts/extra"
+				}
+			],
+			"expect": "error"
+		},
+		{
+			"name": "its user removed",
+			"do": [
+				{
+					"delete": "src/shared/b.ts"
+				}
+			]
+		},
+		{
+			"name": "a hand-deleted output and a source error in one step: the failing build leaves the tree as the edits did",
+			"do": [
+				{
+					"delete-output": "out/shared/a.luau"
+				},
+				{
+					"write": {
+						"file": "src/shared/c.ts",
+						"text": "export const wrong: number = \"text\";\n"
+					}
+				}
+			],
+			"expect": "error"
+		},
+		{
+			"name": "the error fixed: the deleted output is written again",
+			"do": [
+				{
+					"delete": "src/shared/c.ts"
+				}
+			]
+		}
+	]
+}

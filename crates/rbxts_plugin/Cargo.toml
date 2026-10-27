@@ -1,0 +1,23 @@
+[package]
+name = "rbxts_plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The plugin API of rbxts-rs: the traits plugins implement and the services the compiler offers them (DESIGN §11, §14)."
+
+# Only the Luau tree, the project services and tsrs's handle and checker types: the compiler (rbxts_transform)
+# depends on this crate, never the other way round.
+[dependencies]
+rbxts_luau.workspace = true
+rbxts_project.workspace = true
+tsrs_core.workspace = true
+tsrs_ast.workspace = true
+tsrs_checker.workspace = true
+tsrs_compiler.workspace = true
+tsrs_diagnostics.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# The mock backend in tests/ computes `getStart()` positions the way the compiler does.
+tsrs_scanner.workspace = true

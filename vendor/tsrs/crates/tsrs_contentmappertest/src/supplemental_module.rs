@@ -1,0 +1,52 @@
+use tsrs_contentmapper::{
+    METHOD_INITIALIZE, METHOD_TRANSFORM, MappedOutput, ProtocolJson, SupplementalOutput,
+    TransformParams, TransformResult,
+};
+use tsrs_core::json::Value;
+use tsrs_ipc as ipc;
+
+use crate::protocol::{
+    TestHandler, initialize_result, no_notifications, unexpected_method, unmarshal_params,
+};
+
+// supplemental_module.go:11
+pub struct SupplementalModuleHandler;
+
+impl TestHandler for SupplementalModuleHandler {}
+
+impl ipc::Handler for SupplementalModuleHandler {
+    // supplemental_module.go:13
+    fn handle_request(&self, method: &str, params: Option<&Value>) -> Result<Value, ipc::Error> {
+        match method {
+            METHOD_INITIALIZE => Ok(initialize_result("mapper").marshal_json()),
+            METHOD_TRANSFORM => {
+                let _p: TransformParams = unmarshal_params(params)?;
+                Ok(TransformResult {
+                    mapped_output: MappedOutput {
+                        text: "export default 1;".to_string(),
+                        extension: ".ts".to_string(),
+                        ..Default::default()
+                    },
+                    supplemental: vec![SupplementalOutput {
+                        mapped_output: MappedOutput {
+                            text: r#"export const privateValue: number = "wrong";"#.to_string(),
+                            extension: ".ts".to_string(),
+                            ..Default::default()
+                        },
+                    }],
+                    ..Default::default()
+                }
+                .marshal_json())
+            }
+            _ => Err(unexpected_method(method)),
+        }
+    }
+
+    fn handle_notification(
+        &self,
+        _method: &str,
+        _params: Option<&Value>,
+    ) -> Result<(), ipc::Error> {
+        no_notifications()
+    }
+}

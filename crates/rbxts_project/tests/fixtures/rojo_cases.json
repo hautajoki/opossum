@@ -1,0 +1,3435 @@
+{
+ "generator": "tools/gen-rojo-cases.cjs",
+ "cases": [
+  {
+   "name": "game",
+   "kind": "fromPath",
+   "config": "{root}\\game\\default.project.json",
+   "resolver": {
+    "isGame": true,
+    "warnings": [
+     "RojoResolver: Invalid configuration! data/name must be string"
+    ],
+    "partitions": [
+     {
+      "fsPath": "{root}\\game\\out\\first",
+      "rbxPath": [
+       "ReplicatedFirst",
+       "First"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out\\store",
+      "rbxPath": [
+       "ServerStorage",
+       "Store"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out\\gui",
+      "rbxPath": [
+       "StarterGui",
+       "Gui"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out\\character",
+      "rbxPath": [
+       "StarterPlayer",
+       "StarterCharacterScripts",
+       "Character"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out\\client",
+      "rbxPath": [
+       "StarterPlayer",
+       "StarterPlayerScripts",
+       "Client"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out\\server",
+      "rbxPath": [
+       "ServerScriptService",
+       "Server"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\include",
+      "rbxPath": [
+       "ReplicatedStorage",
+       "rbxts_include"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\does\\not\\exist",
+      "rbxPath": [
+       "ReplicatedStorage",
+       "Missing"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out\\optional",
+      "rbxPath": [
+       "ReplicatedStorage",
+       "Optional"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\withdefault\\lib",
+      "rbxPath": [
+       "ReplicatedStorage",
+       "WithDefault"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\nested\\src",
+      "rbxPath": [
+       "ReplicatedStorage",
+       "Nested"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out\\shared\\withdef\\src",
+      "rbxPath": [
+       "ReplicatedStorage",
+       "Shared",
+       "SubDefault"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out\\shared\\nestedproj\\lib",
+      "rbxPath": [
+       "ReplicatedStorage",
+       "Shared",
+       "nestedproj",
+       "FooProject"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out\\shared",
+      "rbxPath": [
+       "ReplicatedStorage",
+       "Shared"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out\\numbered",
+      "rbxPath": [
+       "10"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out\\two",
+      "rbxPath": [
+       "2"
+      ]
+     }
+    ],
+    "fileMounts": [
+     [
+      "{root}\\game\\assets\\data.model.json",
+      [
+       "ReplicatedStorage",
+       "Data"
+      ]
+     ],
+     [
+      "{root}\\game\\nested\\child.luau",
+      [
+       "ReplicatedStorage",
+       "Nested",
+       "Child"
+      ]
+     ],
+     [
+      "{root}\\game\\out\\shared\\nestedproj\\extra.luau",
+      [
+       "ReplicatedStorage",
+       "Shared",
+       "nestedproj",
+       "FooProject",
+       "Extra"
+      ]
+     ],
+     [
+      "{root}\\game\\out\\single.luau",
+      [
+       "ReplicatedStorage",
+       "Single"
+      ]
+     ]
+    ]
+   },
+   "queries": [
+    {
+     "query": "{root}\\game\\out\\shared\\init.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\module.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "module"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\script.server.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "script"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\local.client.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "local"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\plug.plugin.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "plug"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\legacy.server.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "legacy"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\data.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "data"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\thing.model.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "thing.model"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\thing.meta.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "thing.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\settings.toml",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "settings"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\readme.txt",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "readme.txt"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\sub\\init.server.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "sub"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\sub\\init.meta.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "sub",
+      "init.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\sub\\x.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "sub",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\deep\\a\\b.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "deep",
+      "a",
+      "b"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\nestedproj\\lib\\z.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "nestedproj",
+      "FooProject",
+      "z"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\nestedproj\\extra.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "nestedproj",
+      "FooProject",
+      "Extra"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\withdef\\src\\w.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "SubDefault",
+      "w"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\withdef\\ignored.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "withdef",
+      "ignored"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\..dots\\d.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root}\\game\\out\\shared",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\single.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Single"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\single.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Single"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\optional\\o.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Optional",
+      "o"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\server\\main.server.luau",
+     "rbxPath": [
+      "ServerScriptService",
+      "Server",
+      "main"
+     ],
+     "rbxType": "Script",
+     "network": "Server",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\client\\main.client.luau",
+     "rbxPath": [
+      "StarterPlayer",
+      "StarterPlayerScripts",
+      "Client",
+      "main"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Client",
+     "isolated": true
+    },
+    {
+     "query": "{root}\\game\\out\\character\\c.luau",
+     "rbxPath": [
+      "StarterPlayer",
+      "StarterCharacterScripts",
+      "Character",
+      "c"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Client",
+     "isolated": true
+    },
+    {
+     "query": "{root}\\game\\out\\gui\\g.luau",
+     "rbxPath": [
+      "StarterGui",
+      "Gui",
+      "g"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Client",
+     "isolated": true
+    },
+    {
+     "query": "{root}\\game\\out\\store\\s.luau",
+     "rbxPath": [
+      "ServerStorage",
+      "Store",
+      "s"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Server",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\first\\f.luau",
+     "rbxPath": [
+      "ReplicatedFirst",
+      "First",
+      "f"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\numbered\\n.luau",
+     "rbxPath": [
+      "10",
+      "n"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\two\\t.luau",
+     "rbxPath": [
+      "2",
+      "t"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\assets\\data.model.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Data"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\nested\\src\\x.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Nested",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\nested\\child.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Nested",
+      "Child"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\withdefault\\lib\\y.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "WithDefault",
+      "y"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\include\\RuntimeLib.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\include\\Promise.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "rbxts_include",
+      "Promise"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\notmounted.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root}\\game\\does\\not\\exist\\q.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Missing",
+      "q"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\src\\not\\synced.ts",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/init.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/module.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "module"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/script.server.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "script"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/local.client.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "local"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/plug.plugin.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "plug"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/legacy.server.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "legacy"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/data.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "data"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/thing.model.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "thing.model"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/thing.meta.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "thing.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/settings.toml",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "settings"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/readme.txt",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "readme.txt"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/sub/init.server.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "sub"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/sub/init.meta.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "sub",
+      "init.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/sub/x.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "sub",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/deep/a/b.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "deep",
+      "a",
+      "b"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/nestedproj/lib/z.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "nestedproj",
+      "FooProject",
+      "z"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/nestedproj/extra.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "nestedproj",
+      "FooProject",
+      "Extra"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/withdef/src/w.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "SubDefault",
+      "w"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/withdef/ignored.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "withdef",
+      "ignored"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/..dots/d.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root_fwd}/game/out/shared",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/single.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Single"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/single.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Single"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/optional/o.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Optional",
+      "o"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/server/main.server.luau",
+     "rbxPath": [
+      "ServerScriptService",
+      "Server",
+      "main"
+     ],
+     "rbxType": "Script",
+     "network": "Server",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/client/main.client.luau",
+     "rbxPath": [
+      "StarterPlayer",
+      "StarterPlayerScripts",
+      "Client",
+      "main"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Client",
+     "isolated": true
+    },
+    {
+     "query": "{root_fwd}/game/out/character/c.luau",
+     "rbxPath": [
+      "StarterPlayer",
+      "StarterCharacterScripts",
+      "Character",
+      "c"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Client",
+     "isolated": true
+    },
+    {
+     "query": "{root_fwd}/game/out/gui/g.luau",
+     "rbxPath": [
+      "StarterGui",
+      "Gui",
+      "g"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Client",
+     "isolated": true
+    },
+    {
+     "query": "{root_fwd}/game/out/store/s.luau",
+     "rbxPath": [
+      "ServerStorage",
+      "Store",
+      "s"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Server",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/first/f.luau",
+     "rbxPath": [
+      "ReplicatedFirst",
+      "First",
+      "f"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/numbered/n.luau",
+     "rbxPath": [
+      "10",
+      "n"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/two/t.luau",
+     "rbxPath": [
+      "2",
+      "t"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/assets/data.model.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Data"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/nested/src/x.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Nested",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/nested/child.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Nested",
+      "Child"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/withdefault/lib/y.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "WithDefault",
+      "y"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/include/RuntimeLib.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/include/Promise.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "rbxts_include",
+      "Promise"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/notmounted.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root_fwd}/game/does/not/exist/q.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Missing",
+      "q"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/src/not/synced.ts",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\init.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\module.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "module"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\script.server.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "script"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\local.client.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "local"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\plug.plugin.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "plug"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\legacy.server.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "legacy"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\data.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "data"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\thing.model.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "thing.model"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\thing.meta.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "thing.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\settings.toml",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "settings"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\readme.txt",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "readme.txt"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\sub\\init.server.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "sub"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\sub\\init.meta.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "sub",
+      "init.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\sub\\x.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "sub",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\deep\\a\\b.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "deep",
+      "a",
+      "b"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\nestedproj\\lib\\z.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "nestedproj",
+      "FooProject",
+      "z"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\nestedproj\\extra.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "nestedproj",
+      "extra"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\withdef\\src\\w.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "SubDefault",
+      "w"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\withdef\\ignored.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "withdef",
+      "ignored"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\..dots\\d.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\single.lua",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root_lower}\\game\\out\\single.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root_lower}\\game\\out\\optional\\o.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Optional",
+      "o"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\server\\main.server.luau",
+     "rbxPath": [
+      "ServerScriptService",
+      "Server",
+      "main"
+     ],
+     "rbxType": "Script",
+     "network": "Server",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\client\\main.client.luau",
+     "rbxPath": [
+      "StarterPlayer",
+      "StarterPlayerScripts",
+      "Client",
+      "main"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Client",
+     "isolated": true
+    },
+    {
+     "query": "{root_lower}\\game\\out\\character\\c.luau",
+     "rbxPath": [
+      "StarterPlayer",
+      "StarterCharacterScripts",
+      "Character",
+      "c"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Client",
+     "isolated": true
+    },
+    {
+     "query": "{root_lower}\\game\\out\\gui\\g.luau",
+     "rbxPath": [
+      "StarterGui",
+      "Gui",
+      "g"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Client",
+     "isolated": true
+    },
+    {
+     "query": "{root_lower}\\game\\out\\store\\s.luau",
+     "rbxPath": [
+      "ServerStorage",
+      "Store",
+      "s"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Server",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\first\\f.luau",
+     "rbxPath": [
+      "ReplicatedFirst",
+      "First",
+      "f"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\numbered\\n.luau",
+     "rbxPath": [
+      "10",
+      "n"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\two\\t.luau",
+     "rbxPath": [
+      "2",
+      "t"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\assets\\data.model.json",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root_lower}\\game\\nested\\src\\x.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Nested",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\nested\\child.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root_lower}\\game\\withdefault\\lib\\y.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "WithDefault",
+      "y"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\include\\RuntimeLib.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\include\\Promise.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "rbxts_include",
+      "Promise"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\notmounted.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root_lower}\\game\\does\\not\\exist\\q.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Missing",
+      "q"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\src\\not\\synced.ts",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\init.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\module.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "module"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\script.server.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "script"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\local.client.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "local"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\plug.plugin.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "plug"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\legacy.server.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "legacy"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\data.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "data"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\thing.model.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "thing.model"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\thing.meta.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "thing.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\settings.toml",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "settings"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\readme.txt",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "readme.txt"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\SUB\\init.server.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "SUB"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\SUB\\init.meta.json",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "SUB",
+      "init.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\SUB\\x.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "SUB",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\DEEP\\A\\b.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "DEEP",
+      "A",
+      "b"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\NESTEDPROJ\\LIB\\z.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "nestedproj",
+      "FooProject",
+      "z"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\NESTEDPROJ\\extra.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "NESTEDPROJ",
+      "extra"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\WITHDEF\\SRC\\w.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "SubDefault",
+      "w"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\WITHDEF\\ignored.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "WITHDEF",
+      "ignored"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SHARED\\..DOTS\\d.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\shared",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\single.lua",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\single.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\OPTIONAL\\o.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Optional",
+      "o"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\SERVER\\main.server.luau",
+     "rbxPath": [
+      "ServerScriptService",
+      "Server",
+      "main"
+     ],
+     "rbxType": "Script",
+     "network": "Server",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\CLIENT\\main.client.luau",
+     "rbxPath": [
+      "StarterPlayer",
+      "StarterPlayerScripts",
+      "Client",
+      "main"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Client",
+     "isolated": true
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\CHARACTER\\c.luau",
+     "rbxPath": [
+      "StarterPlayer",
+      "StarterCharacterScripts",
+      "Character",
+      "c"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Client",
+     "isolated": true
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\GUI\\g.luau",
+     "rbxPath": [
+      "StarterGui",
+      "Gui",
+      "g"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Client",
+     "isolated": true
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\STORE\\s.luau",
+     "rbxPath": [
+      "ServerStorage",
+      "Store",
+      "s"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Server",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\FIRST\\f.luau",
+     "rbxPath": [
+      "ReplicatedFirst",
+      "First",
+      "f"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\NUMBERED\\n.luau",
+     "rbxPath": [
+      "10",
+      "n"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\TWO\\t.luau",
+     "rbxPath": [
+      "2",
+      "t"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\ASSETS\\data.model.json",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root}\\GAME\\NESTED\\SRC\\x.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Nested",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\NESTED\\child.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root}\\GAME\\WITHDEFAULT\\LIB\\y.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "WithDefault",
+      "y"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\INCLUDE\\RuntimeLib.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "rbxts_include",
+      "RuntimeLib"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\INCLUDE\\Promise.lua",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "rbxts_include",
+      "Promise"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\OUT\\notmounted.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root}\\GAME\\DOES\\NOT\\EXIST\\q.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Missing",
+      "q"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\GAME\\SRC\\NOT\\synced.ts",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\..\\shared\\module.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "module"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}/game//out/shared/./sub/x.luau",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "sub",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\MODULE.LUAU",
+     "rbxPath": [
+      "ReplicatedStorage",
+      "Shared",
+      "MODULE.LUAU"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    }
+   ]
+  },
+  {
+   "name": "synthetic-out",
+   "kind": "synthetic",
+   "base": "{root}\\game\\out",
+   "resolver": {
+    "isGame": false,
+    "warnings": [
+     "RojoResolver: Invalid configuration! data/name must be string"
+    ],
+    "partitions": [
+     {
+      "fsPath": "{root}\\game\\out\\shared\\withdef\\src",
+      "rbxPath": [
+       "shared",
+       "SubDefault"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out\\shared\\nestedproj\\lib",
+      "rbxPath": [
+       "shared",
+       "nestedproj",
+       "FooProject"
+      ]
+     },
+     {
+      "fsPath": "{root}\\game\\out",
+      "rbxPath": []
+     }
+    ],
+    "fileMounts": [
+     [
+      "{root}\\game\\out\\shared\\nestedproj\\extra.luau",
+      [
+       "shared",
+       "nestedproj",
+       "FooProject",
+       "Extra"
+      ]
+     ]
+    ]
+   },
+   "queries": [
+    {
+     "query": "{root}\\game\\out\\shared\\init.luau",
+     "rbxPath": [
+      "shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\module.luau",
+     "rbxPath": [
+      "shared",
+      "module"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\script.server.luau",
+     "rbxPath": [
+      "shared",
+      "script"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\local.client.luau",
+     "rbxPath": [
+      "shared",
+      "local"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\plug.plugin.luau",
+     "rbxPath": [
+      "shared",
+      "plug"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\legacy.server.lua",
+     "rbxPath": [
+      "shared",
+      "legacy"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\data.json",
+     "rbxPath": [
+      "shared",
+      "data"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\thing.model.json",
+     "rbxPath": [
+      "shared",
+      "thing.model"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\thing.meta.json",
+     "rbxPath": [
+      "shared",
+      "thing.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\settings.toml",
+     "rbxPath": [
+      "shared",
+      "settings"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\readme.txt",
+     "rbxPath": [
+      "shared",
+      "readme.txt"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\sub\\init.server.luau",
+     "rbxPath": [
+      "shared",
+      "sub"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\sub\\init.meta.json",
+     "rbxPath": [
+      "shared",
+      "sub",
+      "init.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\sub\\x.luau",
+     "rbxPath": [
+      "shared",
+      "sub",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\deep\\a\\b.luau",
+     "rbxPath": [
+      "shared",
+      "deep",
+      "a",
+      "b"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\nestedproj\\lib\\z.luau",
+     "rbxPath": [
+      "shared",
+      "nestedproj",
+      "FooProject",
+      "z"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\nestedproj\\extra.luau",
+     "rbxPath": [
+      "shared",
+      "nestedproj",
+      "FooProject",
+      "Extra"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\withdef\\src\\w.luau",
+     "rbxPath": [
+      "shared",
+      "SubDefault",
+      "w"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\withdef\\ignored.luau",
+     "rbxPath": [
+      "shared",
+      "withdef",
+      "ignored"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\..dots\\d.luau",
+     "rbxPath": [
+      "shared",
+      "..dots",
+      "d"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared",
+     "rbxPath": [
+      "shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\single.lua",
+     "rbxPath": [
+      "single"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\single.luau",
+     "rbxPath": [
+      "single"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\optional\\o.luau",
+     "rbxPath": [
+      "optional",
+      "o"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\server\\main.server.luau",
+     "rbxPath": [
+      "server",
+      "main"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\client\\main.client.luau",
+     "rbxPath": [
+      "client",
+      "main"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\character\\c.luau",
+     "rbxPath": [
+      "character",
+      "c"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\gui\\g.luau",
+     "rbxPath": [
+      "gui",
+      "g"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\store\\s.luau",
+     "rbxPath": [
+      "store",
+      "s"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\first\\f.luau",
+     "rbxPath": [
+      "first",
+      "f"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\numbered\\n.luau",
+     "rbxPath": [
+      "numbered",
+      "n"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\two\\t.luau",
+     "rbxPath": [
+      "two",
+      "t"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\notmounted.luau",
+     "rbxPath": [
+      "notmounted"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/init.luau",
+     "rbxPath": [
+      "shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/module.luau",
+     "rbxPath": [
+      "shared",
+      "module"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/script.server.luau",
+     "rbxPath": [
+      "shared",
+      "script"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/local.client.luau",
+     "rbxPath": [
+      "shared",
+      "local"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/plug.plugin.luau",
+     "rbxPath": [
+      "shared",
+      "plug"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/legacy.server.lua",
+     "rbxPath": [
+      "shared",
+      "legacy"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/data.json",
+     "rbxPath": [
+      "shared",
+      "data"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/thing.model.json",
+     "rbxPath": [
+      "shared",
+      "thing.model"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/thing.meta.json",
+     "rbxPath": [
+      "shared",
+      "thing.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/settings.toml",
+     "rbxPath": [
+      "shared",
+      "settings"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/readme.txt",
+     "rbxPath": [
+      "shared",
+      "readme.txt"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/sub/init.server.luau",
+     "rbxPath": [
+      "shared",
+      "sub"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/sub/init.meta.json",
+     "rbxPath": [
+      "shared",
+      "sub",
+      "init.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/sub/x.luau",
+     "rbxPath": [
+      "shared",
+      "sub",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/deep/a/b.luau",
+     "rbxPath": [
+      "shared",
+      "deep",
+      "a",
+      "b"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/nestedproj/lib/z.luau",
+     "rbxPath": [
+      "shared",
+      "nestedproj",
+      "FooProject",
+      "z"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/nestedproj/extra.luau",
+     "rbxPath": [
+      "shared",
+      "nestedproj",
+      "FooProject",
+      "Extra"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/withdef/src/w.luau",
+     "rbxPath": [
+      "shared",
+      "SubDefault",
+      "w"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/withdef/ignored.luau",
+     "rbxPath": [
+      "shared",
+      "withdef",
+      "ignored"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared/..dots/d.luau",
+     "rbxPath": [
+      "shared",
+      "..dots",
+      "d"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/shared",
+     "rbxPath": [
+      "shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/single.lua",
+     "rbxPath": [
+      "single"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/single.luau",
+     "rbxPath": [
+      "single"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/optional/o.luau",
+     "rbxPath": [
+      "optional",
+      "o"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/server/main.server.luau",
+     "rbxPath": [
+      "server",
+      "main"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/client/main.client.luau",
+     "rbxPath": [
+      "client",
+      "main"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/character/c.luau",
+     "rbxPath": [
+      "character",
+      "c"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/gui/g.luau",
+     "rbxPath": [
+      "gui",
+      "g"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/store/s.luau",
+     "rbxPath": [
+      "store",
+      "s"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/first/f.luau",
+     "rbxPath": [
+      "first",
+      "f"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/numbered/n.luau",
+     "rbxPath": [
+      "numbered",
+      "n"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/two/t.luau",
+     "rbxPath": [
+      "two",
+      "t"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_fwd}/game/out/notmounted.luau",
+     "rbxPath": [
+      "notmounted"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\init.luau",
+     "rbxPath": [
+      "shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\module.luau",
+     "rbxPath": [
+      "shared",
+      "module"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\script.server.luau",
+     "rbxPath": [
+      "shared",
+      "script"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\local.client.luau",
+     "rbxPath": [
+      "shared",
+      "local"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\plug.plugin.luau",
+     "rbxPath": [
+      "shared",
+      "plug"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\legacy.server.lua",
+     "rbxPath": [
+      "shared",
+      "legacy"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\data.json",
+     "rbxPath": [
+      "shared",
+      "data"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\thing.model.json",
+     "rbxPath": [
+      "shared",
+      "thing.model"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\thing.meta.json",
+     "rbxPath": [
+      "shared",
+      "thing.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\settings.toml",
+     "rbxPath": [
+      "shared",
+      "settings"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\readme.txt",
+     "rbxPath": [
+      "shared",
+      "readme.txt"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\sub\\init.server.luau",
+     "rbxPath": [
+      "shared",
+      "sub"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\sub\\init.meta.json",
+     "rbxPath": [
+      "shared",
+      "sub",
+      "init.meta"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\sub\\x.luau",
+     "rbxPath": [
+      "shared",
+      "sub",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\deep\\a\\b.luau",
+     "rbxPath": [
+      "shared",
+      "deep",
+      "a",
+      "b"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\nestedproj\\lib\\z.luau",
+     "rbxPath": [
+      "shared",
+      "nestedproj",
+      "FooProject",
+      "z"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\nestedproj\\extra.luau",
+     "rbxPath": [
+      "shared",
+      "nestedproj",
+      "extra"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\withdef\\src\\w.luau",
+     "rbxPath": [
+      "shared",
+      "SubDefault",
+      "w"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\withdef\\ignored.luau",
+     "rbxPath": [
+      "shared",
+      "withdef",
+      "ignored"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared\\..dots\\d.luau",
+     "rbxPath": [
+      "shared",
+      "..dots",
+      "d"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\shared",
+     "rbxPath": [
+      "shared"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\single.lua",
+     "rbxPath": [
+      "single"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\single.luau",
+     "rbxPath": [
+      "single"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\optional\\o.luau",
+     "rbxPath": [
+      "optional",
+      "o"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\server\\main.server.luau",
+     "rbxPath": [
+      "server",
+      "main"
+     ],
+     "rbxType": "Script",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\client\\main.client.luau",
+     "rbxPath": [
+      "client",
+      "main"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\character\\c.luau",
+     "rbxPath": [
+      "character",
+      "c"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\gui\\g.luau",
+     "rbxPath": [
+      "gui",
+      "g"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\store\\s.luau",
+     "rbxPath": [
+      "store",
+      "s"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\first\\f.luau",
+     "rbxPath": [
+      "first",
+      "f"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\numbered\\n.luau",
+     "rbxPath": [
+      "numbered",
+      "n"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\two\\t.luau",
+     "rbxPath": [
+      "two",
+      "t"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root_lower}\\game\\out\\notmounted.luau",
+     "rbxPath": [
+      "notmounted"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\..\\shared\\module.luau",
+     "rbxPath": [
+      "shared",
+      "module"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}/game//out/shared/./sub/x.luau",
+     "rbxPath": [
+      "shared",
+      "sub",
+      "x"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\game\\out\\shared\\MODULE.LUAU",
+     "rbxPath": [
+      "shared",
+      "MODULE.LUAU"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    }
+   ]
+  },
+  {
+   "name": "model",
+   "kind": "fromPath",
+   "config": "{root}\\model\\default.project.json",
+   "resolver": {
+    "isGame": false,
+    "warnings": [],
+    "partitions": [
+     {
+      "fsPath": "{root}\\model\\lib",
+      "rbxPath": [
+       "Extra",
+       "Inner"
+      ]
+     },
+     {
+      "fsPath": "{root}\\model\\out",
+      "rbxPath": []
+     }
+    ],
+    "fileMounts": []
+   },
+   "queries": [
+    {
+     "query": "{root}\\model\\out\\init.luau",
+     "rbxPath": [],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\model\\out\\a\\b.client.luau",
+     "rbxPath": [
+      "a",
+      "b"
+     ],
+     "rbxType": "LocalScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\model\\lib\\c.luau",
+     "rbxPath": [
+      "Extra",
+      "Inner",
+      "c"
+     ],
+     "rbxType": "ModuleScript",
+     "network": "Unknown",
+     "isolated": false
+    },
+    {
+     "query": "{root}\\model\\other.luau",
+     "rbxPath": null,
+     "rbxType": "ModuleScript",
+     "network": null,
+     "isolated": null
+    }
+   ]
+  },
+  {
+   "name": "invalid/class-number.project.json",
+   "kind": "fromPath",
+   "config": "{root}\\invalid\\class-number.project.json",
+   "resolver": {
+    "isGame": false,
+    "warnings": [
+     "RojoResolver: Invalid configuration! data/tree/a~1b/$className must be string"
+    ],
+    "partitions": [],
+    "fileMounts": []
+   },
+   "queries": []
+  },
+  {
+   "name": "invalid/ignore-string.project.json",
+   "kind": "fromPath",
+   "config": "{root}\\invalid\\ignore-string.project.json",
+   "resolver": {
+    "isGame": false,
+    "warnings": [
+     "RojoResolver: Invalid configuration! data/tree/X/$ignoreUnknownInstances must be boolean"
+    ],
+    "partitions": [],
+    "fileMounts": []
+   },
+   "queries": []
+  },
+  {
+   "name": "invalid/missing-name.project.json",
+   "kind": "fromPath",
+   "config": "{root}\\invalid\\missing-name.project.json",
+   "resolver": {
+    "isGame": false,
+    "warnings": [
+     "RojoResolver: Invalid configuration! data must have required property 'name'"
+    ],
+    "partitions": [],
+    "fileMounts": []
+   },
+   "queries": []
+  },
+  {
+   "name": "invalid/path-number.project.json",
+   "kind": "fromPath",
+   "config": "{root}\\invalid\\path-number.project.json",
+   "resolver": {
+    "isGame": false,
+    "warnings": [
+     "RojoResolver: Invalid configuration! data/tree/Child/$path must be string, data/tree/Child/$path must be object, data/tree/Child/$path must match a schema in anyOf"
+    ],
+    "partitions": [],
+    "fileMounts": []
+   },
+   "queries": []
+  },
+  {
+   "name": "invalid/path-object.project.json",
+   "kind": "fromPath",
+   "config": "{root}\\invalid\\path-object.project.json",
+   "resolver": {
+    "isGame": false,
+    "warnings": [
+     "RojoResolver: Invalid configuration! data/tree/Child/$path must be string, data/tree/Child/$path/optional must be string, data/tree/Child/$path must match a schema in anyOf"
+    ],
+    "partitions": [],
+    "fileMounts": []
+   },
+   "queries": []
+  },
+  {
+   "name": "invalid/properties-array.project.json",
+   "kind": "fromPath",
+   "config": "{root}\\invalid\\properties-array.project.json",
+   "resolver": {
+    "isGame": false,
+    "warnings": [
+     "RojoResolver: Invalid configuration! data/tree/$properties must be object"
+    ],
+    "partitions": [],
+    "fileMounts": []
+   },
+   "queries": []
+  },
+  {
+   "name": "invalid/root-array.project.json",
+   "kind": "fromPath",
+   "config": "{root}\\invalid\\root-array.project.json",
+   "resolver": {
+    "isGame": false,
+    "warnings": [
+     "RojoResolver: Invalid configuration! data must be object"
+    ],
+    "partitions": [],
+    "fileMounts": []
+   },
+   "queries": []
+  },
+  {
+   "name": "invalid/serveport.project.json",
+   "kind": "fromPath",
+   "config": "{root}\\invalid\\serveport.project.json",
+   "resolver": {
+    "isGame": false,
+    "warnings": [
+     "RojoResolver: Invalid configuration! data/servePort must be integer"
+    ],
+    "partitions": [],
+    "fileMounts": []
+   },
+   "queries": []
+  },
+  {
+   "name": "invalid/tree-string.project.json",
+   "kind": "fromPath",
+   "config": "{root}\\invalid\\tree-string.project.json",
+   "resolver": {
+    "isGame": false,
+    "warnings": [
+     "RojoResolver: Invalid configuration! data/tree must be object"
+    ],
+    "partitions": [],
+    "fileMounts": []
+   },
+   "queries": []
+  },
+  {
+   "name": "missing",
+   "kind": "fromPath",
+   "config": "{root}\\nope.project.json",
+   "resolver": {
+    "isGame": false,
+    "warnings": [
+     "RojoResolver: Path does not exist \"{root}\\nope.project.json\""
+    ],
+    "partitions": [],
+    "fileMounts": []
+   },
+   "queries": []
+  }
+ ],
+ "relations": [
+  {
+   "from": [
+    "ReplicatedStorage",
+    "Shared"
+   ],
+   "to": [
+    "ReplicatedStorage",
+    "Shared",
+    "module"
+   ],
+   "relation": "OutToOut",
+   "relative": [
+    "module"
+   ],
+   "isolatedFrom": false,
+   "networkFrom": "Unknown"
+  },
+  {
+   "from": [
+    "StarterGui",
+    "Gui",
+    "g"
+   ],
+   "to": [
+    "StarterGui",
+    "Gui",
+    "x"
+   ],
+   "relation": "InToIn",
+   "relative": [
+    "..",
+    "x"
+   ],
+   "isolatedFrom": true,
+   "networkFrom": "Client"
+  },
+  {
+   "from": [
+    "StarterGui",
+    "Gui",
+    "g"
+   ],
+   "to": [
+    "StarterPack",
+    "x"
+   ],
+   "relation": "OutToIn",
+   "relative": [
+    "..",
+    "..",
+    "..",
+    "StarterPack",
+    "x"
+   ],
+   "isolatedFrom": true,
+   "networkFrom": "Client"
+  },
+  {
+   "from": [
+    "StarterGui",
+    "Gui"
+   ],
+   "to": [
+    "ReplicatedStorage",
+    "x"
+   ],
+   "relation": "InToOut",
+   "relative": [
+    "..",
+    "..",
+    "ReplicatedStorage",
+    "x"
+   ],
+   "isolatedFrom": true,
+   "networkFrom": "Client"
+  },
+  {
+   "from": [
+    "ReplicatedStorage",
+    "x"
+   ],
+   "to": [
+    "StarterPlayer",
+    "StarterPlayerScripts",
+    "Client",
+    "main"
+   ],
+   "relation": "OutToIn",
+   "relative": [
+    "..",
+    "..",
+    "StarterPlayer",
+    "StarterPlayerScripts",
+    "Client",
+    "main"
+   ],
+   "isolatedFrom": false,
+   "networkFrom": "Unknown"
+  },
+  {
+   "from": [
+    "StarterPlayer"
+   ],
+   "to": [
+    "StarterPlayer",
+    "StarterCharacterScripts",
+    "y"
+   ],
+   "relation": "OutToIn",
+   "relative": [
+    "StarterCharacterScripts",
+    "y"
+   ],
+   "isolatedFrom": true,
+   "networkFrom": "Client"
+  },
+  {
+   "from": [
+    "StarterPlayer",
+    "StarterPlayerScripts",
+    "a"
+   ],
+   "to": [
+    "StarterPlayer",
+    "StarterCharacterScripts",
+    "b"
+   ],
+   "relation": "OutToIn",
+   "relative": [
+    "..",
+    "..",
+    "StarterCharacterScripts",
+    "b"
+   ],
+   "isolatedFrom": true,
+   "networkFrom": "Client"
+  },
+  {
+   "from": [],
+   "to": [
+    "StarterGui",
+    "x"
+   ],
+   "relation": "OutToIn",
+   "relative": [
+    "StarterGui",
+    "x"
+   ],
+   "isolatedFrom": true,
+   "networkFrom": "Server"
+  },
+  {
+   "from": [
+    "PluginDebugService",
+    "p"
+   ],
+   "to": [
+    "PluginDebugService",
+    "q"
+   ],
+   "relation": "InToIn",
+   "relative": [
+    "..",
+    "q"
+   ],
+   "isolatedFrom": true,
+   "networkFrom": "Unknown"
+  }
+ ],
+ "find": [
+  {
+   "dir": "{root}\\game",
+   "path": "{root}\\game\\default.project.json",
+   "warnings": []
+  },
+  {
+   "dir": "{root}\\multi",
+   "path": "{root}\\multi\\a.project.json",
+   "warnings": [
+    "Multiple *.project.json files found, using {root}\\multi\\a.project.json"
+   ]
+  },
+  {
+   "dir": "{root}\\model",
+   "path": "{root}\\model\\default.project.json",
+   "warnings": []
+  },
+  {
+   "dir": "{root}\\invalid",
+   "path": "{root}\\invalid\\class-number.project.json",
+   "warnings": [
+    "Multiple *.project.json files found, using {root}\\invalid\\class-number.project.json"
+   ]
+  },
+  {
+   "dir": "{root}\\game\\out",
+   "path": null,
+   "warnings": []
+  }
+ ]
+}
