@@ -1,7 +1,0 @@
-{
-	"name": "WithDefaultProject",
-	"tree": {
-		"$className": "Folder",
-		"$path": "lib"
-	}
-}

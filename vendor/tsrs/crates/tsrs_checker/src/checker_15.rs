@@ -3186,7 +3186,7 @@ impl Checker {
     }
 
     // checker.go:32656
-    pub(crate) fn get_emit_resolver(&mut self) -> P<EmitResolver> {
+    pub fn get_emit_resolver(&mut self) -> P<EmitResolver> {
         if self.emit_resolver.is_none() {
             self.emit_resolver = Some(new_emit_resolver(self, tsrs_printer::new_emit_context()));
         }

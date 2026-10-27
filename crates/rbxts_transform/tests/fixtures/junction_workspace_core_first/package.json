@@ -1,5 +1,0 @@
-{
-	"name": "junction-workspace-core-first-fixture",
-	"private": true,
-	"workspaces": ["packages/*"]
-}
