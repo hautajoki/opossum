@@ -151,7 +151,7 @@ impl Routes {
                     target.join("/")
                 ));
             }
-            if routes.list.iter().any(|r| key_matches(&r.key, key) || r.key == key) {
+            if routes.list.iter().any(|r| key_matches(&r.key, key)) {
                 return Err(format!("route key `{key}` is declared twice"));
             }
             if key == "*" {
@@ -216,10 +216,10 @@ fn file_type(name: &str) -> Option<FileType<'_>> {
     } else {
         (Kind::Json, name.strip_suffix(".json")?)
     };
-    let (stem, class) = match stem {
+    let (stem, class) = match (stem.strip_suffix(".server"), stem.strip_suffix(".client")) {
         _ if kind == Kind::Json => (stem, Class::ModuleScript),
-        _ if stem.ends_with(".server") => (&stem[..stem.len() - 7], Class::Script),
-        _ if stem.ends_with(".client") => (&stem[..stem.len() - 7], Class::LocalScript),
+        (Some(s), _) => (s, Class::Script),
+        (_, Some(s)) => (s, Class::LocalScript),
         _ => (stem, Class::ModuleScript),
     };
     let init = match kind {

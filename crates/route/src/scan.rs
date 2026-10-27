@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::{Class, Code, Diag, FileType, Module, Routes, file_type, route};
+use crate::{Class, Code, Diag, FileType, Kind, Module, Routes, file_type, route};
 
 /// Every routed module under a source root, the loose `.d.ts` files (ambient declarations, which never route) and
 /// the route and tree diagnostics. Modules keep the file order (name order from `scan`), and every path is `root`
@@ -43,7 +43,7 @@ pub fn scan_files(root: &Path, files: Vec<PathBuf>, routes: &Routes) -> Scan {
         match file_type(name) {
             Some(FileType::Dts) => dts.push(rel),
             Some(FileType::Source {
-                kind: crate::Kind::Json,
+                kind: Kind::Json,
                 ..
             })
             | None => {}
@@ -203,16 +203,11 @@ fn check(modules: &[Module], routes: &Routes, root: &Path, diags: &mut Vec<Diag>
         if (1..m.instance.len()).any(|k| at.contains_key(&m.instance[..k])) || runs_at(m.class, &m.instance) {
             continue;
         }
-        let class = if m.class == Class::Script {
-            "Script"
-        } else {
-            "LocalScript"
-        };
         diags.push(Diag {
             code: Code::DeadScript,
             path: m.file.clone(),
             other: None,
-            message: format!("a {class} at {} never runs there", m.full_name()),
+            message: format!("a {:?} at {} never runs there", m.class, m.full_name()),
         });
     }
 
