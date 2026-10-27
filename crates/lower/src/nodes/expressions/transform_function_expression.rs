@@ -43,6 +43,7 @@ pub fn transform_function_expression(state: &mut TransformState<'_>, node: P<Nod
 
     let effects = (!is_async && !is_generator).then(|| get_function_effects(&parameters, &statements));
     let mut expression = create::function(parameters, has_dot_dot_dot, statements);
+    crate::types::annotate_function_expr(state, node, &mut expression, !is_async && !is_generator);
 
     if is_async {
         let callee = state.ts("async");

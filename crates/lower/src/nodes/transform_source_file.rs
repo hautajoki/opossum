@@ -196,6 +196,8 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
         statements.push(create::return_stmt(Expr::Nil));
     }
 
+    crate::types::finish(state, &mut statements);
+
     let mut header_statements = vec![create::comment("!optimize 2")];
     if state.uses_runtime_lib
         && let Some(import) = state.create_runtime_lib_import()

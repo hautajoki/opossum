@@ -95,6 +95,8 @@ pub struct TransformState<'a> {
     /// Project bindings named after a Luau keyword or reserved global, by declaration
     /// (`transform_identifier::renamed_binding`).
     pub renames: FxHashMap<P<Node>, TemporaryIdentifier>,
+    /// Native types: the file's aliases and the type walk's state.
+    pub types: crate::types::TypeGen,
 }
 
 impl<'a> TransformState<'a> {
@@ -137,6 +139,7 @@ impl<'a> TransformState<'a> {
             symbol_to_id_map: FxHashMap::default(),
             class_element_to_object_key_map: FxHashMap::default(),
             renames: FxHashMap::default(),
+            types: crate::types::TypeGen::default(),
         }
     }
 

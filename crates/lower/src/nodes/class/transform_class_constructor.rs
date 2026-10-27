@@ -109,5 +109,8 @@ pub fn transform_class_constructor(state: &mut TransformState<'_>, node: P<Node>
 
     statements.extend(transform_statement_list(state, Some(body), &body_statements[split..]));
 
-    vec![create::method_declaration(name.clone().into(), CONSTRUCTOR, parameters, has_dot_dot_dot, statements)]
+    let mut constructor =
+        create::method_declaration(name.clone().into(), CONSTRUCTOR, parameters, has_dot_dot_dot, statements);
+    crate::types::annotate_function_stmt(state, node, &mut constructor, false);
+    vec![constructor]
 }

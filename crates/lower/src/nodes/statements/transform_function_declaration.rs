@@ -62,13 +62,17 @@ pub fn transform_function_declaration(state: &mut TransformState<'_>, node: P<No
 
     if is_async {
         let callee = state.ts("async");
-        let right = create::call(callee, vec![create::function(parameters, has_dot_dot_dot, statements)]);
+        let mut function = create::function(parameters, has_dot_dot_dot, statements);
+        crate::types::annotate_function_expr(state, node, &mut function, false);
+        let right = create::call(callee, vec![function]);
         if localize {
             vec![create::local(as_any_identifier(name), Some(right))]
         } else {
             vec![create::assignment(name, AssignmentOperator::Assign, right)]
         }
     } else {
-        vec![create::function_declaration(localize, name, parameters, has_dot_dot_dot, statements)]
+        let mut function = create::function_declaration(localize, name, parameters, has_dot_dot_dot, statements);
+        crate::types::annotate_function_stmt(state, node, &mut function, !is_generator);
+        vec![function]
     }
 }

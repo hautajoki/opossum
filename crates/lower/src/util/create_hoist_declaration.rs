@@ -19,5 +19,7 @@ pub fn create_hoist_declaration(state: &mut TransformState<'_>, statement: P<Nod
         validate_identifier(state, hoist);
     }
     let ids = hoists.iter().map(|&hoist| as_any_identifier(transform_identifier_defined(state, hoist))).collect();
-    Some(create::locals(ids, Vec::new()))
+    let mut hoist = create::locals(ids, Vec::new());
+    crate::types::annotate_hoist(state, &hoists, &mut hoist);
+    Some(hoist)
 }

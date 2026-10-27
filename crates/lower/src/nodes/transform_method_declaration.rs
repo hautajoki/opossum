@@ -52,7 +52,8 @@ pub fn transform_method_declaration(
 
     let is_async = has_syntactic_modifier(node, ModifierFlags::Async);
 
-    if node.body_data().is_some_and(|b| b.asterisk_token.is_some()) {
+    let is_generator = node.body_data().is_some_and(|b| b.asterisk_token.is_some());
+    if is_generator {
         if is_async {
             state.add_diagnostic(errors::no_async_generator_functions(node));
         }
@@ -67,26 +68,31 @@ pub fn transform_method_declaration(
     {
         if is_method(state, node) {
             parameters.remove(0); // remove `self`
-            result.push(create::method_declaration(
+            let mut method = create::method_declaration(
                 ptr.value.clone(),
                 literal.value.clone(),
                 parameters,
                 has_dot_dot_dot,
                 statements,
-            ));
+            );
+            crate::types::annotate_function_stmt(state, node, &mut method, !is_generator);
+            result.push(method);
         } else {
-            result.push(create::function_declaration(
+            let mut function = create::function_declaration(
                 false,
                 create::property(ptr.value.clone(), literal.value.clone()),
                 parameters,
                 has_dot_dot_dot,
                 statements,
-            ));
+            );
+            crate::types::annotate_function_stmt(state, node, &mut function, !is_generator);
+            result.push(function);
         }
         return result;
     }
 
     let mut expression = create::function(parameters, has_dot_dot_dot, statements);
+    crate::types::annotate_function_expr(state, node, &mut expression, !is_async && !is_generator);
 
     if is_async {
         let callee = state.ts("async");
