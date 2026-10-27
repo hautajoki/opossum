@@ -13,6 +13,11 @@ use luau::ModulePath;
 
 const MARK: &str = "/node_modules/";
 
+/// How a package compiled by roblox-ts gets its runtime: `TS.import` hands it over through `_G[script]`, but opossum
+/// requires packages plainly, so the mount requires the runtime library instead.
+const TS_GLOBAL: &str = "local TS = _G[script]";
+pub const TS_REQUIRE: &str = "local TS = require(\"@game/ReplicatedStorage/rbxts/RuntimeLib\")";
+
 /// A package to mount.
 pub struct Package {
     pub scope: String,
@@ -160,6 +165,7 @@ fn walk(dir: &Path, rel: &str, out: &mut Vec<place::PackageFile>) {
         } else if (name.ends_with(".luau") || name.ends_with(".lua"))
             && let Ok(source) = std::fs::read_to_string(&path)
         {
+            let source = if source.contains(TS_GLOBAL) { source.replacen(TS_GLOBAL, TS_REQUIRE, 1) } else { source };
             out.push(place::PackageFile { rel: format!("{rel}{name}"), source, file: path });
         }
     }

@@ -488,7 +488,7 @@ impl Session {
             }
         }
         for (p, files) in &self.packages {
-            runtime |= files.iter().any(|f| f.source.contains("_G[script]"));
+            runtime |= files.iter().any(|f| f.source.contains(packages::TS_REQUIRE));
             let files = files.iter().map(|f| place::PackageFile {
                 rel: f.rel.clone(),
                 source: f.source.clone(),
