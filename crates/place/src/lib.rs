@@ -3,6 +3,7 @@
 //! packs, and the luau-lsp sourcemap.
 
 mod config;
+mod migrate;
 mod read;
 mod sourcemap;
 mod tree;
@@ -13,6 +14,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 pub use config::{PlaceConfig, PlaceEntry, config_from_toml, config_to_toml};
+pub use migrate::{config_from_meta, convert_rojo_refs, model_json_text};
 pub use rbx_dom_weak::{self, Instance, WeakDom, types::Ref, types::Variant};
 pub use read::{read_place, resolve_ref, service_for_dir};
 pub use sourcemap::sourcemap_json;
