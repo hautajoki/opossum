@@ -4,7 +4,8 @@
 //! a `tsrs_ast::new_ad_hoc_message` (code -1), made once per factory; context-dependent ones make one per
 //! call. The location is the node's `getStart()` to its end, as `createDiagnosticWithLocation` reports it.
 //!
-//! opossum's own diagnostics carry a dotted code at the start of their message (`route.boundary: …`).
+//! Every message starts with its dotted code: `lower.<factory>` for roblox-ts's (`lower.noAny: …`), and opossum's
+//! own (`route.boundary: …`, `macro.unsupported: …`, `lower.internal: …`).
 
 use std::sync::OnceLock;
 
@@ -53,6 +54,23 @@ pub fn text_diagnostic(message: &str, category: Category) -> P<Diagnostic> {
     diagnostic
 }
 
+/// A factory's dotted code: `no_any` → `lower.noAny`.
+fn code(name: &str) -> String {
+    let mut code = String::from("lower.");
+    let mut upper = false;
+    for c in name.chars() {
+        match c {
+            '_' => upper = true,
+            c if upper => {
+                code.push(c.to_ascii_uppercase());
+                upper = false;
+            }
+            c => code.push(c),
+        }
+    }
+    code
+}
+
 macro_rules! factories {
     ($category:ident: $($(#[$meta:meta])* $name:ident = [$($line:expr),+ $(,)?];)*) => {
         $(
@@ -62,7 +80,7 @@ macro_rules! factories {
                 static MESSAGE: OnceLock<&'static Message> = OnceLock::new();
                 let message = MESSAGE.get_or_init(|| {
                     let lines: Vec<String> = vec![$(String::from($line)),+];
-                    new_ad_hoc_message(&lines.join("\n"))
+                    new_ad_hoc_message(&format!("{}: {}", code(stringify!($name)), lines.join("\n")))
                 });
                 at_node(node, message, Category::$category)
             }
@@ -220,5 +238,5 @@ pub mod errors {
 
 /// rbxts-rs: a compiler bug caught while transforming a file (a failed assertion or a panic).
 pub fn internal_error(node: P<Node>, message: &str) -> P<Diagnostic> {
-    at_node(node, new_ad_hoc_message(&format!("opossum internal error: {message}")), Category::Error)
+    at_node(node, new_ad_hoc_message(&format!("lower.internal: {message}")), Category::Error)
 }
