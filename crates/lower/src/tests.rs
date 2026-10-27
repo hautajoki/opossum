@@ -71,6 +71,8 @@ pub fn lower(files: &[(&str, &str)], mut options: Options) -> FxHashMap<String, 
                 ModulePath { names: vec!["ReplicatedStorage".into(), "RuntimeLib".into()], root: 1, init: false };
             locator.runtime_lib = Some(Location { module: runtime, realm: Realm::Shared });
             let sources = project.project_files();
+            // import elision reads what checking marked as referenced
+            project.check(&tsrs_compiler::Context::background(), &sources);
             let lowered = crate::lower_files(&project, &locator, &options, &sources);
             let mut rendered = FxHashMap::default();
             for l in lowered {

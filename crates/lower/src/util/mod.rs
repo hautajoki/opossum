@@ -29,6 +29,7 @@ pub mod get_literal_number_value;
 pub mod has_multiple_definitions;
 pub mod is_blocked_by_try_statement;
 pub mod is_method;
+pub mod inline_constants;
 pub mod is_valid_method_index_without_call;
 pub mod loop_bounds;
 pub mod native;
