@@ -221,6 +221,7 @@ pub fn transform_class_like_declaration(state: &mut TransformState<'_>, node: P<
 
     // OOP boilerplate + class functions
     let mut statements_inner = create_boilerplate(state, node, &internal_name, is_class_expression);
+    crate::types::annotate_class_new(state, node, &internal_name, &mut statements_inner);
 
     match find_constructor(node) {
         Some(constructor) => statements_inner.extend(transform_class_constructor(state, constructor, &internal_name)),

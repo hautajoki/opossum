@@ -528,3 +528,50 @@ fn const_locals_follow_luau_scoping_and_every_write() {
     );
     crate::gate::compile(&text, 2, 1).unwrap();
 }
+
+#[test]
+fn types_parenthesize_and_quote() {
+    use crate::create::{any_id, function_declaration, id, local, type_alias};
+    let n = Type::named;
+    let callback = Type::Function(Box::new(FunctionType {
+        parameters: vec![(Some("x".into()), n("number"))],
+        returns: TypePack::one(n("string")),
+        ..FunctionType::default()
+    }));
+    let shape = Type::Table(Box::new(TableType {
+        fields: vec![
+            TableTypeField { name: "then".into(), ty: Type::String("a\"b".into()), read: true },
+            TableTypeField { name: "list".into(), ty: Type::array(n("T")), read: false },
+        ],
+        indexer: None,
+    }));
+    let alias = type_alias(
+        true,
+        "Shape",
+        vec![GenericParameter { name: "T".into(), default: Some(n("number")) }],
+        Type::Union(vec![
+            Type::Optional(Box::new(callback.clone())),
+            Type::Intersection(vec![shape, Type::Union(vec![Type::Bool(true), n("T")])]),
+        ]),
+    );
+    let mut f = function_declaration(true, id("f"), vec![any_id("a")], true, vec![]);
+    if let Stmt::FunctionDeclaration(f) = &mut f {
+        f.signature = Some(Box::new(Signature {
+            generics: vec!["T".into()],
+            parameters: vec![Some(callback)],
+            var_args: Some(n("T")),
+            returns: Some(TypePack { types: vec![n("T")], variadic: Some(Box::new(n("any"))) }),
+        }));
+    }
+    let mut x = local(any_id("x"), None);
+    if let Stmt::VariableDeclaration(x) = &mut x {
+        x.types = vec![Some(Type::array(Type::Optional(Box::new(n("number")))))];
+    }
+    let luau = render_lines(vec![alias, f, x]);
+    assert_eq!(
+        luau,
+        "export type Shape<T = number> = ((x: number) -> string)? | ({ read [\"then\"]: \"a\\\"b\", list: {T} } & (true | T))\n\
+         local function f<T>(a: (x: number) -> string, ...: T): (T, ...any)\nend\nlocal x: {number?}\n"
+    );
+    crate::gate::compile(&luau, 2, 1).expect("typed luau compiles");
+}

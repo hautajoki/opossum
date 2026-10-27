@@ -94,7 +94,7 @@ mod tests {
         "#;
         let pragma = "// @native\nexport function d() { return () => 2; }\n";
         let listed = "export function e() { return 3; }\nexport const f = () => 4;\n";
-        let mut options = Options::default();
+        let mut options = Options { native_types: false, ..Options::default() };
         options.native_files.insert("listed.ts".to_owned());
         let lowered = lower(&[("tagged.ts", tagged), ("pragma.ts", pragma), ("listed.ts", listed)], options);
         let tagged = &lowered["tagged.ts"];

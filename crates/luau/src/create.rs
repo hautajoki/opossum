@@ -183,6 +183,7 @@ pub fn function(parameters: Vec<AnyIdentifier>, has_dot_dot_dot: bool, statement
         statements,
         facts: Facts::default(),
         native: false,
+        signature: None,
     }))
 }
 
@@ -213,12 +214,13 @@ pub fn local(left: impl Into<AnyIdentifier>, right: Option<Expr>) -> Stmt {
         left: vec![left.into()],
         right: right.into_iter().collect(),
         constant: false,
+        types: Vec::new(),
     }))
 }
 
 /// `local a, b = x, y`
 pub fn locals(left: Vec<AnyIdentifier>, right: Vec<Expr>) -> Stmt {
-    Stmt::VariableDeclaration(Box::new(VariableDeclaration { left, right, constant: false }))
+    Stmt::VariableDeclaration(Box::new(VariableDeclaration { left, right, constant: false, types: Vec::new() }))
 }
 
 /// `return expression`
@@ -271,6 +273,7 @@ pub fn function_declaration(
         has_dot_dot_dot,
         statements,
         native: false,
+        signature: None,
     }))
 }
 
@@ -289,6 +292,7 @@ pub fn method_declaration(
         has_dot_dot_dot,
         statements,
         native: false,
+        signature: None,
     }))
 }
 
@@ -300,4 +304,14 @@ pub fn break_stmt() -> Stmt {
 /// `continue`
 pub fn continue_stmt() -> Stmt {
     Stmt::Continue
+}
+
+/// `[export ]type name<generics> = ty`
+pub fn type_alias(
+    export: bool,
+    name: impl Into<String>,
+    generics: Vec<crate::types::GenericParameter>,
+    ty: crate::types::Type,
+) -> Stmt {
+    Stmt::TypeAlias(Box::new(crate::types::TypeAlias { export, name: name.into(), generics, ty }))
 }

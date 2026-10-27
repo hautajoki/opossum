@@ -66,7 +66,9 @@ pub fn transform_variable(
             prereqs.push(create::assignment(left.clone(), AssignmentOperator::Assign, right));
         }
     } else {
-        prereqs.push(create::local(as_any_identifier(left.clone()), right));
+        let mut local = create::local(as_any_identifier(left.clone()), right);
+        crate::types::annotate_local(state, identifier, &mut local);
+        prereqs.push(local);
     }
 
     left

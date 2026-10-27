@@ -12,6 +12,7 @@
 
 use crate::facts::Facts;
 use crate::require::ModulePath;
+use crate::types::{Signature, Type, TypeAlias};
 
 /// An expression. The first seven variants are TypeScript's `IndexableExpression`s: the ones that can be called,
 /// indexed or have a method called on them without parentheses (see [`Expr::is_indexable`]).
@@ -192,6 +193,8 @@ pub struct FunctionExpression {
     pub facts: Facts,
     /// Renders Luau's `@native` attribute before `function`.
     pub native: bool,
+    /// Native types: parameter, `...`, return and generic annotations.
+    pub signature: Option<Box<Signature>>,
 }
 
 /// `(expression)`; rendered without parentheses when the innermost expression is simple.
@@ -309,6 +312,8 @@ pub enum Stmt {
     Return(ReturnStatement),
     /// `--text`, or a `--[[ ]]` block when the text has several lines.
     Comment(String),
+    /// `[export ]type name<generics> = type`
+    TypeAlias(Box<TypeAlias>),
 }
 
 /// `left operator right`, with comma-separated lists on both sides.
@@ -414,6 +419,8 @@ pub struct FunctionDeclaration {
     pub statements: Vec<Stmt>,
     /// Renders Luau's `@native` attribute on the line before.
     pub native: bool,
+    /// Native types: parameter, `...`, return and generic annotations.
+    pub signature: Option<Box<Signature>>,
 }
 
 /// `function expression:name(parameters) statements end`
@@ -431,6 +438,8 @@ pub struct MethodDeclaration {
     pub statements: Vec<Stmt>,
     /// Renders Luau's `@native` attribute on the line before.
     pub native: bool,
+    /// Native types: parameter (after `self`), `...`, return and generic annotations.
+    pub signature: Option<Box<Signature>>,
 }
 
 /// `local left[ = right]`, or `const left = right`
@@ -442,6 +451,8 @@ pub struct VariableDeclaration {
     pub right: Vec<Expr>,
     /// Renders `const`: no name is ever assigned after the declaration (set by [`crate::mark_const_locals`]).
     pub constant: bool,
+    /// Native types: the annotation of each name in `left`; shorter than `left` (or empty) leaves the rest bare.
+    pub types: Vec<Option<Type>>,
 }
 
 /// `return expressions` (comma-separated).

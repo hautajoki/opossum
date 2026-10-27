@@ -77,7 +77,7 @@ pub(crate) fn stmt_children_mut(s: &mut Stmt, expr: &mut dyn FnMut(&mut Expr), b
             node.left.iter_mut().for_each(&mut *expr);
             node.right.iter_mut().for_each(expr);
         }
-        Stmt::Break | Stmt::Continue | Stmt::Comment(_) => {}
+        Stmt::Break | Stmt::Continue | Stmt::Comment(_) | Stmt::TypeAlias(_) => {}
         Stmt::Call(e) => expr(e),
         Stmt::Do(node) => block(&mut node.statements),
         Stmt::While(node) => {

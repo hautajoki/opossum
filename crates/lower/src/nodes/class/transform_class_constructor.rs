@@ -120,5 +120,6 @@ pub fn transform_class_constructor(state: &mut TransformState<'_>, node: P<Node>
     if is_native_function(node) {
         luau::native::mark_native_stmt(&mut constructor);
     }
+    crate::types::annotate_function_stmt(state, node, &mut constructor, false);
     vec![constructor]
 }

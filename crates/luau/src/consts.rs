@@ -105,7 +105,7 @@ impl Pass {
                     }
                 }
             }
-            Stmt::Break | Stmt::Continue | Stmt::Comment(_) => {}
+            Stmt::Break | Stmt::Continue | Stmt::Comment(_) | Stmt::TypeAlias(_) => {}
             Stmt::Call(expression) => self.expr(expression),
             Stmt::Do(node) => self.block(&mut node.statements),
             Stmt::While(node) => {

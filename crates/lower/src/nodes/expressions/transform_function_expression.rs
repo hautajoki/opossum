@@ -47,6 +47,7 @@ pub fn transform_function_expression(state: &mut TransformState<'_>, node: P<Nod
     if is_native_function(node) {
         luau::native::mark_native_expr(&mut expression);
     }
+    crate::types::annotate_function_expr(state, node, &mut expression, !is_async && !is_generator);
 
     if is_async {
         let callee = state.ts("async");

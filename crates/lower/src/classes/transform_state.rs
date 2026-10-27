@@ -100,6 +100,8 @@ pub struct TransformState<'a> {
     pub spans: Vec<(usize, u32, u32)>,
     /// What this file's compile-time macros read ([`crate::macros::compile_time`]).
     pub macro_inputs: Vec<Input>,
+    /// Native types: the file's aliases and the type walk's state.
+    pub types: crate::types::TypeGen,
 }
 
 impl<'a> TransformState<'a> {
@@ -144,6 +146,7 @@ impl<'a> TransformState<'a> {
             renames: FxHashMap::default(),
             spans: Vec::new(),
             macro_inputs: Vec::new(),
+            types: crate::types::TypeGen::default(),
         }
     }
 

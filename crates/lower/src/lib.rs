@@ -17,6 +17,7 @@ pub mod parallel;
 pub mod program;
 pub mod shared;
 pub mod source_cache;
+pub mod types;
 pub mod util;
 
 pub use groups::{Lowered, lower_files};

@@ -149,7 +149,7 @@ mod tests {
                 return [COUNT, NAME, DOWN, live, computed, Shared.B, Local.Y, Dynamic[key], Dynamic.Q];
             }
         "#;
-        let lowered = lower(&[("a.ts", a), ("b.ts", b)], Options::default());
+        let lowered = lower(&[("a.ts", a), ("b.ts", b)], Options { native_types: false, ..Options::default() });
         let b = &lowered["b.ts"];
         // `live` can change and `computed` is no literal; enum members are literals wherever they are read
         assert!(b.contains(r#"{ 4, "crate", -1, live, computed, 5, "y", Dynamic[key], 1 }"#), "{b}");

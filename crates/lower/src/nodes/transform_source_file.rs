@@ -190,6 +190,10 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
     let file_node = node.as_node();
     let mut statements = transform_statement_list(state, Some(file_node), node.get().statements.nodes());
     let exports_first = handle_exports(state, node, symbol, &mut statements);
+    // the spans index the statement list: shift them past `local exports`
+    for span in &mut state.spans {
+        span.0 += usize::from(exports_first);
+    }
 
     // a module returns nil when it exports no values
     let ends_with_return = last_non_comment_statement(&statements).is_some_and(|s| matches!(s, Stmt::Return(_)));
@@ -200,6 +204,7 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
     if is_native_file(state) {
         luau::native::mark_native_functions(&mut statements);
     }
+    crate::types::finish(state, &mut statements);
 
     let mut header_statements = Vec::new();
     if state.uses_runtime_lib
@@ -221,10 +226,9 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
         directives.insert(0, create::comment("!strict"));
     }
     directives.push(create::comment("!optimize 2"));
-    // the spans index the body: shift them past `local exports`, the header and the rewritten directives
+    // and past the header and the rewritten directives
     let shift = directives.len() + header_statements.len();
     for span in &mut state.spans {
-        span.0 += usize::from(exports_first);
         if span.0 >= directive_count {
             span.0 = span.0 - directive_count + shift;
         }
