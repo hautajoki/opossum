@@ -1,7 +1,7 @@
-// rbxts-rs: `luau_compile` behind a boundary no C++ exception crosses. Luau turns its own parse and compile errors into
+// `luau_compile` behind a boundary no C++ exception crosses. Luau turns its own parse and compile errors into
 // an error buffer, but other exceptions (std::bad_alloc, a container's length_error / out_of_range) would unwind into
 // Rust, which is undefined behaviour. Here every exception becomes an error buffer too, in Luau's format: a zero
-// byte, then `:<line>: <message>`. The buffer is malloc'ed; free it with rbxts_luau_free (the same C runtime).
+// byte, then `:<line>: <message>`. The buffer is malloc'ed; free it with opossum_luau_free (the same C runtime).
 
 #include <cstddef>
 #include <cstdlib>
@@ -27,7 +27,7 @@ static char* error_buffer(const char* what, size_t* outsize)
     return out;
 }
 
-extern "C" char* rbxts_luau_compile(const char* source, size_t size, lua_CompileOptions* options, size_t* outsize) noexcept
+extern "C" char* opossum_luau_compile(const char* source, size_t size, lua_CompileOptions* options, size_t* outsize) noexcept
 {
     try
     {
@@ -43,7 +43,7 @@ extern "C" char* rbxts_luau_compile(const char* source, size_t size, lua_Compile
     }
 }
 
-extern "C" void rbxts_luau_free(void* buffer) noexcept
+extern "C" void opossum_luau_free(void* buffer) noexcept
 {
     std::free(buffer);
 }

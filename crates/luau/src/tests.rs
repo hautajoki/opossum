@@ -1,5 +1,4 @@
-//! Renderer edge cases. The expected text is what `@roblox-ts/luau-ast` 2.1.2 renders for the same trees
-//! (`tools/luau-edge-cases.cjs --print`; the JSON form of those trees is checked by `rbxts-bench luau-parity`'s test).
+//! Renderer edge cases: precedence, string quoting, long brackets, temporary names, requires.
 
 use crate::create::*;
 use crate::*;
@@ -25,7 +24,6 @@ fn trees_are_send() {
     fn send<T: Send + Sync>() {}
     send::<Stmt>();
     send::<Expr>();
-    send::<LateStrings>();
 }
 
 #[test]
@@ -274,6 +272,24 @@ fn temporary_names_never_capture_or_hide_the_program_names() {
 }
 
 #[test]
+fn reserved_program_names_are_renamed_without_capture() {
+    // a user `next` (renamed) beside the global `next` the compiler calls, and a user `next_` already in scope
+    let mut ids = TempIds::new();
+    let next = ids.renamed("next");
+    let end = ids.renamed("end");
+    let statements = vec![
+        local(any_id("next_"), Some(number(0.0))),
+        local(next.clone(), Some(number(1.0))),
+        function_declaration(true, end.clone().into(), vec![], false, vec![]),
+        print(vec![next.into(), id("next_"), call(id("next"), vec![id("t")]), call(end.into(), vec![])]),
+    ];
+    assert_eq!(
+        render_lines(statements),
+        "local next_ = 0\nlocal next_1 = 1\nlocal function end_()\nend\nprint(next_1, next_, next(t), end_())\n"
+    );
+}
+
+#[test]
 fn blocks_and_empty_bodies() {
     let statements = vec![
         do_stmt(vec![]),
@@ -414,28 +430,16 @@ fn comments() {
 }
 
 #[test]
-fn late_strings() {
-    let mut late = LateStrings::new();
-    late.insert("id", "Services.Data");
-    late.insert("key", "shortKey");
-    late.insert("two-lines", "a\nb");
+fn requires_are_spelled_from_the_module() {
+    let path = |p: &str, init| ModulePath { names: p.split('/').map(str::to_owned).collect(), root: 2, init };
     let statements = vec![
-        local(any_id("x"), Some(late_string("id"))),
-        print(vec![map([(late_string("key"), number(1.0)), (late_string("two-lines"), number(2.0))])]),
-        print(vec![computed_index(id("t"), late_string("key")), computed_index(id("t"), late_string("id"))]),
+        local(any_id("a"), Some(require(path("ServerScriptService/server/x/a", false)))),
+        local(any_id("b"), Some(property(require(path("ReplicatedStorage/shared/b", false)), "b"))),
     ];
     assert_eq!(
-        render(&statements, &late),
-        "local x = \"Services.Data\"\nprint({\n\tshortKey = 1,\n\t[ [[a\nb]] ] = 2,\n})\nprint(t.shortKey, t[\"Services.Data\"])\n"
+        render(&statements, &path("ServerScriptService/server/main", false)),
+        "local a = require(\"./x/a\")\nlocal b = require(\"@game/ReplicatedStorage/shared/b\").b\n"
     );
-    assert!(late_string("x").is_simple());
-    assert_eq!(render_expr(&b(late_string("key"), "..", TempIds::new().expr("x")), &late), "\"shortKey\" .. _x");
-}
-
-#[test]
-#[should_panic(expected = "late string `missing` has no value")]
-fn missing_late_string_panics() {
-    render_ast(&[local(any_id("x"), Some(late_string("missing")))]);
 }
 
 #[test]
@@ -465,8 +469,8 @@ fn globals_and_guards() {
 
 #[test]
 fn numbers_without_literals() {
-    use crate::{LateStrings, create, render_expr};
-    let text = |v: f64| render_expr(&create::number(v), &LateStrings::new());
+    use crate::{create, render_expr};
+    let text = |v: f64| render_expr(&create::number(v));
     assert_eq!(text(f64::NAN), "0 / 0");
     assert_eq!(text(f64::INFINITY), "math.huge");
     assert_eq!(text(f64::NEG_INFINITY), "-math.huge");
@@ -486,7 +490,8 @@ fn statement_lines() {
         ),
         crate::create::local(crate::create::any_id("x"), Some(crate::create::number(1.0))),
     ];
-    let (luau, lines) = crate::render_with_lines(&statements, &crate::LateStrings::new());
+    let module = ModulePath { names: vec!["ReplicatedStorage".into(), "m".into()], root: 1, init: false };
+    let (luau, lines) = crate::render_with_lines(&statements, &module);
     assert_eq!(luau, crate::render_ast(&statements));
     assert_eq!(luau, "--a\nlocal function f()\n\tg()\nend\nlocal x = 1\n");
     assert_eq!(lines, vec![1, 2, 5]);

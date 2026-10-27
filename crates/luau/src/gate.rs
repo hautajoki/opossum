@@ -1,13 +1,7 @@
-//! Luau's own compiler, to ask whether Luau accepts a rendered file (DESIGN §9: the compiler owns Luau's limits for
-//! all code). Some limits can't be predicted from the syntax tree without re-implementing Luau's compiler: whether a
-//! `local` takes a register depends on Luau's constant folding, dead-branch elimination and inlining, which change
-//! with the optimisation and debug levels and between Luau releases. So the plugin seam compiles every file a plugin
-//! emitted into (`rbxts_transform::plugins::spill`) with this compiler at the levels Roblox uses.
-//!
-//! The Luau release is pinned in `Cargo.toml` (luau0-src, built from source with the C++ toolchain): [`LUAU_VERSION`].
-//! The only `unsafe` is the call into Luau ([`compile_raw`]), through `src/shim.cpp`, which turns any C++ exception
-//! into an error so that none unwinds into Rust.
-#![warn(missing_docs)]
+//! The O2 gate: Luau's own compiler (luau0-src, pinned in Cargo.toml) asked whether it accepts a rendered file.
+//! Register and constant limits depend on Luau's folding, dead-branch elimination and inlining, so only the real
+//! compiler can answer. The only `unsafe` is the call into Luau ([`compile_raw`]), through `src/shim.cpp`, which turns
+//! any C++ exception into an error so that none unwinds into Rust.
 
 use std::ffi::{c_char, c_int, c_void};
 
@@ -68,14 +62,14 @@ struct CompileOptions {
 unsafe extern "C" {
     /// `src/shim.cpp`: `luau_compile` of `luacode.h` inside a `try` (`noexcept`): returns a `malloc`ed buffer of
     /// `*outsize` bytes (bytecode, or an error, also for a C++ exception), or null when even that allocation failed.
-    fn rbxts_luau_compile(
+    fn opossum_luau_compile(
         source: *const c_char,
         size: usize,
         options: *mut CompileOptions,
         outsize: *mut usize,
     ) -> *mut c_char;
     /// `src/shim.cpp`: `free` of the C runtime Luau's `malloc` came from.
-    fn rbxts_luau_free(buffer: *mut c_void);
+    fn opossum_luau_free(buffer: *mut c_void);
 }
 
 /// Calls `luau_compile` (through the shim) and copies its output; `None` when there was no memory for it.
@@ -104,12 +98,12 @@ fn compile_raw(source: &str, optimization_level: c_int, debug_level: c_int) -> O
     // from `malloc`: it is read once, copied, and freed exactly once by the shim's `free` (the same C runtime).
     // Luau's compiler keeps no global mutable state, so threads may call this at the same time.
     unsafe {
-        let out = rbxts_luau_compile(source.as_ptr().cast(), source.len(), &mut options, &mut size);
+        let out = opossum_luau_compile(source.as_ptr().cast(), source.len(), &mut options, &mut size);
         if out.is_null() {
             return None;
         }
         let bytes = std::slice::from_raw_parts(out.cast::<u8>(), size).to_vec();
-        rbxts_luau_free(out.cast());
+        opossum_luau_free(out.cast());
         Some(bytes)
     }
 }

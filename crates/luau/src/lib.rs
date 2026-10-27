@@ -1,13 +1,12 @@
-//! Luau syntax tree and renderer: a port of `@roblox-ts/luau-ast` 2.1.2, rendering byte for byte as roblox-ts
-//! does (checked on real trees by `rbxts-bench luau-parity`).
+//! Luau syntax tree, renderer, name solver and the O2 compile gate.
 //!
 //! - [`ast`]: the node types ([`Expr`], [`Stmt`] and their structs), plain owned data with no parent links, so a
 //!   tree is `Send` and can be rendered on any thread.
 //! - [`create`]: builders mirroring `luau.create` / `luau.id` / `luau.call` …, and [`TempIds`] (`luau.tempId`).
 //! - [`globals`]: `luau.globals` and `luau.strings`.
 //! - [`facts`]: the evaluation facts roblox-ts records on nodes (`TSTransformer/util/evaluation/facts.ts`).
-//! - [`render()`]: `renderAST`, with [`LateStrings`] for string literals whose text is known only after the
-//!   transform (DESIGN §4 step 5).
+//! - [`render()`]: Luau text from a tree, with requires spelled from the module's instance path ([`require`]).
+//! - [`gate`]: Luau's own compiler, the O2 gate every emitted file passes.
 //! - name and number rules: [`is_valid_identifier`], [`is_metamethod`], [`is_reserved_identifier`],
 //!   [`is_valid_number_literal`], and JavaScript's number conversions ([`js_number_to_string`]).
 //!
@@ -23,15 +22,18 @@
 pub mod ast;
 pub mod create;
 pub mod facts;
+pub mod gate;
 pub mod globals;
 mod render;
+pub mod require;
 mod solve;
 mod util;
 
 pub use ast::*;
 pub use create::TempIds;
 pub use facts::{Binding, BindingKey, Effects, Facts};
-pub use render::{LateStrings, render, render_ast, render_expr, render_into, render_with_lines};
+pub use render::{render, render_ast, render_expr, render_into, render_with_lines};
+pub use require::{ModulePath, spell};
 pub use util::{
     LUAU_METAMETHODS, LUAU_RESERVED_CLASS_FIELDS, LUAU_RESERVED_KEYWORDS, RESERVED_IDENTIFIERS, is_js_whitespace,
     is_metamethod, is_reserved_class_field, is_reserved_identifier, is_valid_identifier, is_valid_number_literal,

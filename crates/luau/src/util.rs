@@ -67,7 +67,9 @@ pub const RESERVED_IDENTIFIERS: [&str; 27] = [
 /// True when `id` matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not a reserved keyword.
 pub fn is_valid_identifier(id: &str) -> bool {
     let bytes = id.as_bytes();
-    let Some(&first) = bytes.first() else { return false };
+    let Some(&first) = bytes.first() else {
+        return false;
+    };
     (first.is_ascii_alphabetic() || first == b'_')
         && bytes[1..].iter().all(|&b| b.is_ascii_alphanumeric() || b == b'_')
         && !LUAU_RESERVED_KEYWORDS.contains(&id)
@@ -233,7 +235,9 @@ fn parse_radix(digits: &str, radix: u32) -> f64 {
     let mut exact: u128 = 0;
     let mut approx: Option<f64> = None;
     for c in digits.chars() {
-        let Some(d) = c.to_digit(radix) else { return f64::NAN };
+        let Some(d) = c.to_digit(radix) else {
+            return f64::NAN;
+        };
         match approx {
             Some(ref mut a) => *a = *a * f64::from(radix) + f64::from(d),
             None => match exact.checked_mul(u128::from(radix)).and_then(|v| v.checked_add(u128::from(d))) {

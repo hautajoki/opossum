@@ -1,4 +1,6 @@
-//! Names for temporary identifiers (`solveTempIds`), chosen before rendering.
+//! Names for temporary identifiers (`solveTempIds`), chosen before rendering. Program names Luau reserves (`next`,
+//! `end`, …) are temporary identifiers too ([`TemporaryIdentifier::rename`]): they get `next_`, `next_1`, … by the
+//! same rules, so a rename can never capture or hide another name.
 //!
 //! The walk follows TypeScript's `visit` exactly, since the order in which temporary identifiers are met decides
 //! who gets `_x` and who gets `_x_1`. Scopes as in TypeScript:
@@ -78,15 +80,21 @@ pub(crate) fn solve_temp_ids(root: Root) -> TempNames {
         if names.names.contains_key(&temp.id) {
             continue;
         }
-        let separator = if temp.name.is_empty() { "" } else { "_" };
-        let mut input = format!("_{}", temp.name);
+        let candidate = |i: u32| match (temp.rename, temp.name.is_empty()) {
+            (true, _) if i == 0 => format!("{}_", temp.name),
+            (true, _) => format!("{}_{i}", temp.name),
+            (false, _) if i == 0 => format!("_{}", temp.name),
+            (false, true) => format!("_{i}"),
+            (false, false) => format!("_{}_{i}", temp.name),
+        };
+        let mut input = candidate(0);
         // TypeScript records the last try under the name it settled on, so this only helps a name that was free
         let mut i = last_try.get(&(scope, input.clone())).copied().unwrap_or(1);
         while solver.has_id(scope, &input)
             || captures.get(input.as_str()).is_some_and(|scopes| scopes.contains(scope))
             || appearances[&temp.id].iter().any(|&(used_in, seq)| solver.hides(used_in, seq, scope, &input))
         {
-            input = format!("_{}{separator}{i}", temp.name);
+            input = candidate(i);
             i += 1;
         }
         last_try.insert((scope, input.clone()), i);
@@ -107,11 +115,13 @@ pub(crate) fn solve_temp_ids(root: Root) -> TempNames {
             .collect();
         let mut next = 0;
         let mut fallback = |t: &TemporaryIdentifier| {
-            names.names.entry(t.id).or_insert_with(|| loop {
-                next += 1;
-                let name = format!("_{}", next - 1);
-                if !taken.contains_key(name.as_str()) {
-                    break name;
+            names.names.entry(t.id).or_insert_with(|| {
+                loop {
+                    next += 1;
+                    let name = format!("_{}", next - 1);
+                    if !taken.contains_key(name.as_str()) {
+                        break name;
+                    }
                 }
             });
         };
@@ -147,10 +157,10 @@ struct Solver<'a> {
     temps: Vec<(&'a TemporaryIdentifier, usize, usize)>,
     /// `for … in` expressions, which the visit skips.
     unwalked: Vec<&'a Expr>,
-    /// rbxts-rs: the uses of identifiers that start with `_` (the only ones a temporary name can equal), with the
+    /// The uses of identifiers with a `_` (the only ones a temporary or renamed name can equal), with the
     /// scope of each.
     uses: Vec<(usize, &'a str)>,
-    /// rbxts-rs: the locals, parameters and loop variables that start with `_`, with the scope that declares each
+    /// The locals, parameters and loop variables with a `_`, with the scope that declares each
     /// and when the declaration takes effect (after a `local`'s values).
     user_declarations: FxHashMap<&'a str, Vec<(usize, usize)>>,
     /// rbxts-rs: a counter that orders temporary appearances and declarations.
@@ -186,7 +196,9 @@ impl<'a> Solver<'a> {
 
     /// `scopeHasId`: declared in `scope` or one of its ancestors.
     fn has_id(&self, mut scope: usize, id: &str) -> bool {
-        let Some(declarers) = self.declared.get(id) else { return false };
+        let Some(declarers) = self.declared.get(id) else {
+            return false;
+        };
         loop {
             if declarers.contains(scope) {
                 return true;
@@ -207,9 +219,9 @@ impl<'a> Solver<'a> {
         }
     }
 
-    /// rbxts-rs: records the use of an identifier.
+    /// Records the use of an identifier that a temporary or renamed name could equal (every such name has a `_`).
     fn use_name(&mut self, name: &'a str) {
-        if name.starts_with('_') {
+        if name.contains('_') {
             self.uses.push((self.current(), name));
         }
     }
@@ -219,7 +231,7 @@ impl<'a> Solver<'a> {
         let scope = self.current();
         for id in ids {
             if let AnyIdentifier::Identifier(id) = id
-                && id.name.starts_with('_')
+                && id.name.contains('_')
             {
                 self.seq += 1;
                 self.user_declarations.entry(&id.name).or_default().push((scope, self.seq));
@@ -263,7 +275,9 @@ impl<'a> Solver<'a> {
     /// rbxts-rs: whether the program declares `id` before `seq` in `scope` or a scope around it below `top`, hiding a
     /// temporary of scope `top` named `id` from its appearance at `seq`.
     fn hides(&self, mut scope: usize, seq: usize, top: usize, id: &str) -> bool {
-        let Some(declarations) = self.user_declarations.get(id) else { return false };
+        let Some(declarations) = self.user_declarations.get(id) else {
+            return false;
+        };
         while scope != top {
             if declarations.iter().any(|&(s, declared_at)| s == scope && declared_at < seq) {
                 return true;
@@ -441,7 +455,7 @@ impl<'a> Solver<'a> {
             | Expr::True
             | Expr::Number(_)
             | Expr::String(_)
-            | Expr::LateString(_)
+            | Expr::Require(_)
             | Expr::VarArgs => {}
         }
     }
@@ -620,7 +634,7 @@ fn walk_expr<'t>(e: &'t Expr, f: &mut impl FnMut(Found<'t>)) {
         | Expr::True
         | Expr::Number(_)
         | Expr::String(_)
-        | Expr::LateString(_)
+        | Expr::Require(_)
         | Expr::VarArgs => {}
     }
 }

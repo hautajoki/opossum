@@ -8,9 +8,10 @@
 //! - **Node kinds are enum variants.** `luau.isX` guards become `match`; the semantic guards (`is_simple`,
 //!   `is_indexable`, …) are methods.
 //! - **Evaluation facts** ([`Facts`]) ride along on the expression kinds roblox-ts marks; the renderer ignores them.
-//! - **Late strings** ([`Expr::LateString`]) are new: string literals whose text is known only at render time.
+//! - **Requires** ([`Expr::Require`]) name their target by instance path; the renderer spells the string.
 
 use crate::facts::Facts;
+use crate::require::ModulePath;
 
 /// An expression. The first seven variants are TypeScript's `IndexableExpression`s: the ones that can be called,
 /// indexed or have a method called on them without parentheses (see [`Expr::is_indexable`]).
@@ -45,9 +46,8 @@ pub enum Expr {
     Number(NumberLiteral),
     /// A string literal.
     String(StringLiteral),
-    /// A string literal whose value is looked up by key in the [`crate::LateStrings`] given to the renderer
-    /// (DESIGN §4 step 5). It renders and behaves exactly like a [`StringLiteral`] with that value and no quote.
-    LateString(LateString),
+    /// `require("<path>")` of the module at this instance path, spelled at render ([`crate::require::spell`]).
+    Require(Box<ModulePath>),
     /// `...`
     VarArgs,
     /// `function(parameters) statements end`
@@ -90,6 +90,8 @@ pub struct TemporaryIdentifier {
     pub name: String,
     /// Unique per file: copies with the same id are the same local.
     pub id: u32,
+    /// A program name Luau reserves (`next`, `end`, …), renamed: renders `name_`, `name_1`, … instead of `_name`.
+    pub rename: bool,
     /// Evaluation facts ([`crate::facts`]); not rendered.
     pub facts: Facts,
 }
@@ -175,13 +177,6 @@ impl Quote {
             Quote::Single => '\'',
         }
     }
-}
-
-/// See [`Expr::LateString`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct LateString {
-    /// The key of the value in [`crate::LateStrings`].
-    pub key: String,
 }
 
 /// `function(parameters) statements end`
@@ -556,6 +551,7 @@ impl Expr {
                 | Expr::Call(_)
                 | Expr::MethodCall(_)
                 | Expr::Parenthesized(_)
+                | Expr::Require(_)
         )
     }
 
@@ -571,7 +567,7 @@ impl Expr {
 
     /// `isSimplePrimitive`: `nil`, booleans, numbers and strings.
     pub fn is_simple_primitive(&self) -> bool {
-        matches!(self, Expr::Nil | Expr::True | Expr::False | Expr::Number(_) | Expr::String(_) | Expr::LateString(_))
+        matches!(self, Expr::Nil | Expr::True | Expr::False | Expr::Number(_) | Expr::String(_))
     }
 
     /// `isTable`: array, set, map and mixed table constructors.

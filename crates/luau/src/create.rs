@@ -25,7 +25,12 @@ impl TempIds {
     pub fn temp_id(&mut self, name: impl Into<String>) -> TemporaryIdentifier {
         let id = self.next;
         self.next += 1;
-        TemporaryIdentifier { name: name.into(), id, facts: Facts::default() }
+        TemporaryIdentifier { name: name.into(), id, rename: false, facts: Facts::default() }
+    }
+
+    /// A program name Luau reserves, renamed at render: `name_`, `name_<n>`.
+    pub fn renamed(&mut self, name: impl Into<String>) -> TemporaryIdentifier {
+        TemporaryIdentifier { rename: true, ..self.temp_id(name) }
     }
 
     /// The id the next temporary gets: every temporary made before has a smaller one.
@@ -96,9 +101,9 @@ pub fn string_quoted(value: impl Into<String>, quote: Quote) -> Expr {
     Expr::String(StringLiteral { value: value.into(), quote: Some(quote) })
 }
 
-/// A string literal whose value is filled in at render time from [`crate::LateStrings`].
-pub fn late_string(key: impl Into<String>) -> Expr {
-    Expr::LateString(LateString { key: key.into() })
+/// `require` of the module at `path`.
+pub fn require(path: crate::require::ModulePath) -> Expr {
+    Expr::Require(Box::new(path))
 }
 
 /// `luau.comment`

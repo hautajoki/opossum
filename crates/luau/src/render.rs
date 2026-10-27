@@ -12,75 +12,43 @@
 //! the fallback names of temporary identifiers the solver never saw, which [`crate::solve`] assigns up front in
 //! TypeScript's order.
 
-use std::collections::HashMap;
-
 use crate::ast::*;
+use crate::require::{ModulePath, spell};
 use crate::solve::{Root, TempNames, solve_temp_ids};
 use crate::util::{
     is_js_whitespace, is_valid_identifier, is_valid_number_literal, js_number_to_string, js_string_to_number,
 };
 
-/// Values of [`Expr::LateString`]s by key, filled in after the transform (DESIGN §4 step 5). A value is used as a
-/// [`StringLiteral::value`]: text between the quotes, already escaped.
-#[derive(Clone, Debug, Default)]
-pub struct LateStrings {
-    values: HashMap<String, String>,
-}
-
-impl LateStrings {
-    /// No values.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Sets the value of `key`, replacing an earlier one.
-    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<String>) {
-        self.values.insert(key.into(), value.into());
-    }
-
-    /// The value of `key`, if set.
-    pub fn get(&self, key: &str) -> Option<&str> {
-        self.values.get(key).map(String::as_str)
-    }
-
-    /// The number of keys set.
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    /// No key is set.
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
-}
-
-/// Renders a file's statements as Luau (`renderAST`). Panics when the tree has no rendering (a compiler bug, as
-/// TypeScript's asserts): an invalid identifier, a `None` expression, a statement after `return` / `break` /
-/// `continue`, or a late string with no value in `late_strings`.
-pub fn render(ast: &[Stmt], late_strings: &LateStrings) -> String {
+/// Renders the statements of the module at `module` as Luau; requires are spelled from it ([`crate::require`]).
+/// Panics when the tree has no rendering (a compiler bug): an invalid identifier, a `None` expression, or a
+/// statement after `return` / `break` / `continue`.
+pub fn render(ast: &[Stmt], module: &ModulePath) -> String {
     let mut out = String::new();
-    render_into(ast, late_strings, &mut out);
+    render_into(ast, Some(module), &mut out);
     out
 }
 
-/// [`render`] with no late strings.
+/// [`render`] for a tree with no module (tests, messages): requires are spelled `@game/...`.
 pub fn render_ast(ast: &[Stmt]) -> String {
-    render(ast, &LateStrings::default())
+    let mut out = String::new();
+    render_into(ast, None, &mut out);
+    out
 }
 
 /// [`render`], appending to `out`.
-pub fn render_into(ast: &[Stmt], late_strings: &LateStrings, out: &mut String) {
+pub fn render_into(ast: &[Stmt], module: Option<&ModulePath>, out: &mut String) {
     let temp_names = solve_temp_ids(Root::Statements(ast));
-    let mut r = Renderer { out, indent: 0, temp_names: &temp_names, late_strings, starts: None };
+    let mut r = Renderer { out, indent: 0, temp_names: &temp_names, module, starts: None };
     r.statements(ast);
 }
 
 /// [`render`], and for each of the file's own statements the line its text starts on (1-based), so a message about
 /// a line of the output (Luau's) can be traced to the statement that holds it.
-pub fn render_with_lines(ast: &[Stmt], late_strings: &LateStrings) -> (String, Vec<u32>) {
+pub fn render_with_lines(ast: &[Stmt], module: &ModulePath) -> (String, Vec<u32>) {
     let mut out = String::new();
     let temp_names = solve_temp_ids(Root::Statements(ast));
-    let mut r = Renderer { out: &mut out, indent: 0, temp_names: &temp_names, late_strings, starts: Some(Vec::new()) };
+    let mut r =
+        Renderer { out: &mut out, indent: 0, temp_names: &temp_names, module: Some(module), starts: Some(Vec::new()) };
     r.statements(ast);
     let starts = r.starts.take().unwrap_or_default();
     let mut lines = Vec::with_capacity(starts.len());
@@ -95,10 +63,10 @@ pub fn render_with_lines(ast: &[Stmt], late_strings: &LateStrings) -> (String, V
 
 /// Renders one expression, with its temporary identifiers named as if it were the whole file (`debugRender`; for
 /// debugging and messages).
-pub fn render_expr(expr: &Expr, late_strings: &LateStrings) -> String {
+pub fn render_expr(expr: &Expr) -> String {
     let mut out = String::new();
     let temp_names = solve_temp_ids(Root::Expr(expr));
-    let mut r = Renderer { out: &mut out, indent: 0, temp_names: &temp_names, late_strings, starts: None };
+    let mut r = Renderer { out: &mut out, indent: 0, temp_names: &temp_names, module: None, starts: None };
     r.expr(expr, Ctx::None);
     out
 }
@@ -148,7 +116,8 @@ struct Renderer<'a> {
     out: &'a mut String,
     indent: usize,
     temp_names: &'a TempNames,
-    late_strings: &'a LateStrings,
+    /// The module rendered, which requires are spelled from.
+    module: Option<&'a ModulePath>,
     /// Where each of the file's own statements starts in `out` (`render_with_lines`).
     starts: Option<Vec<usize>>,
 }
@@ -449,13 +418,12 @@ impl Renderer<'_> {
     }
 
     fn expr(&mut self, e: &Expr, ctx: Ctx) {
-        let late = self.late_strings;
         match e {
             Expr::Identifier(id) => self.identifier(&id.name),
             Expr::TemporaryIdentifier(id) => self.temporary_identifier(id),
             Expr::ComputedIndex(node) => {
                 self.base(&node.expression);
-                match string_value(late, &node.index) {
+                match string_value(&node.index) {
                     Some(name) if is_valid_identifier(name) => {
                         self.out.push('.');
                         self.out.push_str(name);
@@ -521,7 +489,19 @@ impl Renderer<'_> {
                 }
             }
             Expr::String(s) => string_literal(self.out, &s.value, s.quote, matches!(ctx, Ctx::Brackets)),
-            Expr::LateString(s) => string_literal(self.out, late_value(late, s), None, matches!(ctx, Ctx::Brackets)),
+            Expr::Require(to) => {
+                let spelled = match self.module {
+                    Some(from) => spell(from, to),
+                    None => Some(format!("@game/{}", to.names.join("/"))),
+                };
+                self.out.push_str("require(");
+                match spelled {
+                    Some(path) => string_literal(self.out, &path, None, false),
+                    // lowering reports an unreachable require before anything renders
+                    None => self.out.push_str("error(\"opossum: unreachable require\")"),
+                }
+                self.out.push(')');
+            }
             Expr::VarArgs => self.out.push_str("..."),
             Expr::Function(node) => {
                 self.out.push_str("function");
@@ -651,7 +631,7 @@ impl Renderer<'_> {
                 self.indent += 1;
                 for member in members {
                     self.write_indent();
-                    match string_value(late, member) {
+                    match string_value(member) {
                         Some(name) if is_valid_identifier(name) => self.out.push_str(name),
                         _ => {
                             self.out.push('[');
@@ -689,7 +669,7 @@ impl Renderer<'_> {
 
     /// `renderMapField`: `name = value`, or `[index] = value`.
     fn map_field(&mut self, field: &MapField) {
-        match string_value(self.late_strings, &field.index) {
+        match string_value(&field.index) {
             Some(name) if is_valid_identifier(name) => self.out.push_str(name),
             _ => {
                 self.out.push('[');
@@ -702,17 +682,12 @@ impl Renderer<'_> {
     }
 }
 
-/// The value of a string literal or late string, for the "is it a valid identifier" key shortcuts.
-fn string_value<'e>(late_strings: &'e LateStrings, e: &'e Expr) -> Option<&'e str> {
+/// The value of a string literal, for the "is it a valid identifier" key shortcuts.
+fn string_value(e: &Expr) -> Option<&str> {
     match e {
         Expr::String(s) => Some(&s.value),
-        Expr::LateString(s) => Some(late_value(late_strings, s)),
         _ => None,
     }
-}
-
-fn late_value<'e>(late_strings: &'e LateStrings, s: &LateString) -> &'e str {
-    late_strings.get(&s.key).unwrap_or_else(|| panic!("late string `{}` has no value", s.key))
 }
 
 /// `renderStringLiteral`:`"…"`, else `'…'`, else a long bracket `[=[…]=]` (with spaces inside `[ ]`).
@@ -809,7 +784,9 @@ fn interpolated_text(out: &mut String, text: &str) {
 /// `getEnding`: a `;` after a statement that ends in an indexable expression when the next statement (comments
 /// skipped) starts with a parenthesis, which Luau would otherwise read as a call.
 fn needs_semicolon(statement: &Stmt, rest: &[Stmt]) -> bool {
-    let Some(next) = rest.iter().find(|s| !s.is_comment()) else { return false };
+    let Some(next) = rest.iter().find(|s| !s.is_comment()) else {
+        return false;
+    };
     ends_with_indexable(statement) && starts_with_parenthesis(next)
 }
 
