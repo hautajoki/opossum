@@ -210,11 +210,13 @@ fn file(state: &mut TransformState<'_>, chain: &[ChainItem]) -> (Expr, usize) {
 fn member<'v>(value: &'v Value, item: &ChainItem) -> Option<Option<&'v Value>> {
     match (value, item.kind) {
         (Value::Object(map), ChainItemKind::PropertyAccess { name }) => Some(map.get(name)),
-        (Value::Object(map), ChainItemKind::ElementAccess { expression }) => literal(expression).map(|key| map.get(key)),
+        (Value::Object(map), ChainItemKind::ElementAccess { expression }) => {
+            literal(expression).map(|key| map.get(key))
+        }
         (Value::Array(list), ChainItemKind::ElementAccess { expression }) => {
             let expression = skip_downwards(expression);
-            let index = expression.text().parse::<usize>().ok();
-            index.filter(|_| expression.kind() == Kind::NumericLiteral).map(|i| list.get(i))
+            let index = (expression.kind() == Kind::NumericLiteral).then(|| expression.text().parse::<usize>().ok());
+            index.flatten().map(|i| list.get(i))
         }
         _ => None,
     }
@@ -295,7 +297,7 @@ fn keys(state: &mut TransformState<'_>, item: &ChainItem) -> Expr {
         _ => string_literal_value(e).map(|key| vec![key]),
     });
     let Some(keys) = keys else {
-        return error(state, type_node, "$keys", "the keys must be known at compile time: not generic, any or an index signature");
+        return error(state, type_node, "$keys", "T must have known keys: not generic, any or an index signature");
     };
     let t = state.checker.get_type_from_type_node_exported(type_node);
     let apparent = state.checker.get_apparent_type_exported(t);
