@@ -33,7 +33,8 @@ fn vector3_lowers_to_the_vector_library_only_where_the_checker_proves_it() {
         "vector.zero",
         "Vector3.xAxis",
         "vector.dot(vector.normalize(v), w)",
-        "vector.max(v, w, v)",
+        // Max/Min pick the other operand on a NaN or a signed zero than vector.max/min do
+        "v:Max(w, v)",
         "v:Lerp(w, 0.5)",
         // a union receiver and a userland lookalike are not the @rbxts/types Vector3
         "either.Magnitude",

@@ -7,8 +7,7 @@
 //! Vector3.zero / Vector3.one    vector.zero / vector.one
 //! v.Magnitude / v.Unit          vector.magnitude(v) / vector.normalize(v)
 //! v.Abs() .Ceil() .Floor() .Sign()           vector.abs/ceil/floor/sign(v)
-//! v.Cross(w) .Dot(w) .Angle(w, axis?)        vector.cross/dot/angle(v, w, axis?)
-//! v.Max(...) .Min(...)                       vector.max/min(v, ...)
+//! v.Cross(w) .Dot(w)                        vector.cross/dot(v, w)
 //! ```
 //!
 //! The arithmetic macros (`v.add(w)`, `v.mul(2)`) are already native operators (`macros::property_call_macros`).
@@ -22,6 +21,8 @@
 //! - no optional chain link (`v?.Unit`): it runs inside the chain's nil check, which the plain lowering owns.
 //!
 //! Left on the Vector3 API: `Lerp` (`vector.lerp` returns `b` exactly at `t == 1`, where `a + (b - a) * t` may not),
+//! `Angle` (Roblox rounds the result to float, `vector.angle` returns the double), `Max`/`Min` (they compare the other
+//! way round, so a NaN or a signed zero picks the other operand; measured in Studio),
 //! `FuzzyEq` (no library equivalent), the axis constants and `FromNormalId`/`FromAxis`, and `.X/.Y/.Z` (the VM reads
 //! either case of a vector's components on the same fast path).
 
@@ -69,13 +70,10 @@ pub fn declarations_file(root: &str) -> String {
 /// `vector.function(v, args)`.
 const METHODS: &[(&str, &str)] = &[
     ("Abs", "abs"),
-    ("Angle", "angle"),
     ("Ceil", "ceil"),
     ("Cross", "cross"),
     ("Dot", "dot"),
     ("Floor", "floor"),
-    ("Max", "max"),
-    ("Min", "min"),
     ("Sign", "sign"),
 ];
 
