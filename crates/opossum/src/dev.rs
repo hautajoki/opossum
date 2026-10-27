@@ -107,9 +107,14 @@ fn serve(
             let rel = path.strip_prefix(&root).unwrap_or(&path);
             let name = rel.to_string_lossy();
             if matches!(name.as_ref(), config::FILE | "package.json" | ".env" | ".env.local") {
-                println!("{name} changed, starting over");
-                let cfg = config::load(&root.join(config::FILE))?;
-                return Ok(cfg);
+                match config::load(&root.join(config::FILE)) {
+                    Ok(cfg) => {
+                        println!("{name} changed, starting over");
+                        return Ok(cfg);
+                    }
+                    // keep serving the last good configuration until the file is fixed
+                    Err(e) => eprintln!("opossum: {e}"),
+                }
             }
             if rel.starts_with("place") {
                 touched = true;
