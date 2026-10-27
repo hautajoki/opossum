@@ -310,6 +310,7 @@ impl Session {
     pub fn update(&mut self, changed: &[String], rescan: bool) -> Result<Stats, String> {
         let mut stats = Stats::default();
         let t = Instant::now();
+        let before = rescan.then(|| std::mem::take(&mut self.locator.files));
         if rescan {
             self.rescan();
         }
@@ -332,8 +333,11 @@ impl Session {
             self.file_diags.remove(gone);
             self.compiled.remove(gone);
         }
+        // a module that routes elsewhere now changes how its importers spell it, which no fact of the program shows
+        let moved = before
+            .is_some_and(|old| old.iter().any(|(name, l)| self.locator.files.get(name).is_some_and(|now| now != l)));
         let all = project.project_files();
-        let files: Vec<P<SourceFile>> = if invalidation.all {
+        let files: Vec<P<SourceFile>> = if invalidation.all || moved {
             all
         } else {
             all.into_iter().filter(|f| invalidation.affected.contains(&f.path().to_string())).collect()
