@@ -37,6 +37,7 @@ rbxts_cli = { path = "crates/rbxts_cli" }
 rbxts_test_plugins = { path = "crates/rbxts_test_plugins" }
 rbxts_test_support = { path = "crates/rbxts_test_support" }
 flamework_rs = { path = "crates/flamework_rs" }
+route = { path = "crates/route" }
 # The versions in tsrs's lock file.
 rustc-hash = "2"
 # flamework_rs: JavaScript number formatting (Number#toString), already in the lock through tsrs_core.
