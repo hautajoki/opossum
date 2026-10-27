@@ -60,7 +60,8 @@ fn file_json_becomes_a_table_and_a_path_into_it_a_literal() {
     let json = r#"{ "name": "deep", "list": [1, null, 2.5], "gone": null, "inner": { "on": true } }"#;
     let (luau, inputs, diagnostics) = lower_one(
         "file_json",
-        "export const data = $file(\"../data.json\");\nexport const on: boolean = $file(\"../data.json\").inner.on;\n",
+        "export const data = $file(\"../data.json\");\nexport const on: boolean = $file(\"../data.json\").inner.on;\n\
+         export const third: number = $file(\"../data.json\").list[2];\n",
         &[("data.json", json)],
         lower::Options::default(),
     );
@@ -70,6 +71,8 @@ fn file_json_becomes_a_table_and_a_path_into_it_a_literal() {
     assert!(luau.contains("list = { 1, nil, 2.5 }"), "{luau}");
     assert!(!luau.contains("gone"), "{luau}");
     assert!(luau.contains("local on = true"), "{luau}");
+    // a TS index is 0-based like the JSON array, so it folds without the Luau offset
+    assert!(luau.contains("local third = 2.5"), "{luau}");
     assert!(matches!(inputs.as_slice(), [Input::File(path)] if path.ends_with("/file_json/data.json")), "{inputs:?}");
 }
 

@@ -50,23 +50,23 @@ pub fn macro_at(state: &mut TransformState<'_>, node: P<Node>) -> Option<&'stati
 /// Folds macro `name`, the receiver `base` of `chain` (empty for a bare identifier): its value and how many links of
 /// `chain` it consumed. After a reported error the value is `Expr::None`.
 pub fn fold(state: &mut TransformState<'_>, name: &'static str, base: P<Node>, chain: &[ChainItem]) -> (Expr, usize) {
-    let Some(item) = chain.first() else {
+    let (value, used) = match (name, chain.first()) {
         // only `$package` is a value on its own
-        return match name {
-            "$package" => package(state, base, chain),
-            _ => (misuse(state, base, name), 0),
-        };
-    };
-    match name {
-        "$env" => (env(state, item), 1),
-        "$git" => (git(state, item), 1),
-        "$package" => package(state, base, chain),
-        "$file" => file(state, chain),
-        "$nameof" => (nameof(state, item), 1),
-        "$keys" => (keys(state, item), 1),
-        "$buildTime" => (build_time(state, item), 1),
+        ("$package", _) => package(state, base, chain),
+        (_, None) => (misuse(state, base, name), 0),
+        ("$env", Some(item)) => (env(state, item), 1),
+        ("$git", Some(item)) => (git(state, item), 1),
+        ("$file", Some(_)) => file(state, chain),
+        ("$nameof", Some(item)) => (nameof(state, item), 1),
+        ("$keys", Some(item)) => (keys(state, item), 1),
+        ("$buildTime", Some(item)) => (build_time(state, item), 1),
         _ => (misuse(state, base, name), chain.len()),
+    };
+    // `nil?.…` is nil: the rest of the chain never runs
+    if matches!(value, Expr::Nil) && chain.get(used).is_some_and(|item| item.optional) {
+        return (Expr::Nil, chain.len());
     }
+    (value, used)
 }
 
 /// Reports `macro.<name>: message` at `node`; the value of a failed macro.
@@ -201,17 +201,23 @@ fn file(state: &mut TransformState<'_>, chain: &[ChainItem]) -> (Expr, usize) {
     }
 }
 
-/// The name a static key link reads: `.name` or `["name"]`.
-fn static_key(item: &ChainItem) -> Option<&'static str> {
-    match item.kind {
-        ChainItemKind::PropertyAccess { name } => Some(name),
-        ChainItemKind::ElementAccess { expression } => literal(expression),
+/// The member a static link of `chain` reads in `value`: `.key` or `["key"]` of an object, `[0]` of an array. `None`
+/// when the link is not static; `Some(None)` when the member is missing.
+fn member<'v>(value: &'v Value, item: &ChainItem) -> Option<Option<&'v Value>> {
+    match (value, item.kind) {
+        (Value::Object(map), ChainItemKind::PropertyAccess { name }) => Some(map.get(name)),
+        (Value::Object(map), ChainItemKind::ElementAccess { expression }) => literal(expression).map(|key| map.get(key)),
+        (Value::Array(list), ChainItemKind::ElementAccess { expression }) => {
+            let expression = skip_downwards(expression);
+            let index = expression.text().parse::<usize>().ok();
+            index.filter(|_| expression.kind() == Kind::NumericLiteral).map(|i| list.get(i))
+        }
         _ => None,
     }
 }
 
-/// Follows the static keys of `chain[start..]` into `value` while it is an object: the value reached, as a Luau
-/// literal, and the index of the first link not followed. A missing key is nil; reading through one is an error.
+/// Follows the static links of `chain[start..]` into `value`: the value reached, as a Luau literal, and the index of
+/// the first link not followed. A missing member is nil; reading through one is an error.
 fn json_path(
     state: &mut TransformState<'_>,
     name: &str,
@@ -220,25 +226,27 @@ fn json_path(
     chain: &[ChainItem],
     start: usize,
 ) -> (Expr, usize) {
-    let mut value = Some(value);
+    let mut value = value;
     let mut index = start;
-    while let (Some(Value::Object(map)), Some(key)) = (value, chain.get(index).and_then(static_key)) {
-        value = map.get(key);
+    while let Some(item) = chain.get(index)
+        && let Some(next) = member(value, item)
+    {
         index += 1;
-    }
-    match value {
-        Some(value) => (json_to_luau(value), index),
-        None => {
-            if let Some(next) = chain.get(index)
-                && !next.optional
-            {
-                let path: Vec<&str> = chain[start..index].iter().filter_map(static_key).collect();
-                let message = format!("{source} has no `{}`", path.join("."));
-                return (error(state, chain[index - 1].node, name, &message), chain.len());
+        let Some(next) = next else {
+            if chain.get(index).is_some_and(|item| !item.optional) {
+                let key = match item.kind {
+                    ChainItemKind::ElementAccess { expression } => skip_downwards(expression).text(),
+                    ChainItemKind::PropertyAccess { name } => name,
+                    _ => "",
+                };
+                let message = format!("{source} has no `{key}` to read through");
+                return (error(state, item.node, name, &message), chain.len());
             }
-            (Expr::Nil, index)
-        }
+            return (Expr::Nil, index);
+        };
+        value = next;
     }
+    (json_to_luau(value), index)
 }
 
 /// A JSON value as a Luau literal. Object members keep their order; a null member is left out (a nil field is no
