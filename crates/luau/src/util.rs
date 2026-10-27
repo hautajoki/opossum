@@ -34,7 +34,7 @@ pub const LUAU_METAMETHODS: [&str; 19] = [
 pub const LUAU_RESERVED_CLASS_FIELDS: [&str; 2] = ["__index", "new"];
 
 /// The names of `luau.globals` (`isReservedIdentifier`).
-pub const RESERVED_IDENTIFIERS: [&str; 27] = [
+pub const RESERVED_IDENTIFIERS: [&str; 28] = [
     "_G",
     "TS",
     "assert",
@@ -62,6 +62,7 @@ pub const RESERVED_IDENTIFIERS: [&str; 27] = [
     "typeof",
     "unpack",
     "game",
+    "vector",
 ];
 
 /// True when `id` matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not a reserved keyword.

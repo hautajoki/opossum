@@ -24,6 +24,9 @@ pub fn transform_new_expression(state: &mut TransformState<'_>, prereqs: &mut Pr
     {
         return (r#macro.transform)(state, prereqs, node);
     }
+    if let Some(vector) = crate::vector::new_vector(state, prereqs, node) {
+        return vector;
+    }
 
     let mut expression = convert_to_indexable_expression(transform_expression(state, prereqs, class_expression));
     // rbxts-rs: fixes roblox-ts reading the constructor after the arguments' prerequisites ran: JavaScript evaluates
