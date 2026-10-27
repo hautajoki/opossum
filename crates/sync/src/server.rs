@@ -1,6 +1,6 @@
 //! HTTP/1.1 over std::net: one request per connection (`Connection: close`), a thread per connection.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
@@ -96,17 +96,17 @@ fn hello(shared: &Shared) -> Response {
 }
 
 /// `?since=G&session=S[&only=a,b]`: the ops from G to the current generation, waiting up to `POLL` while G is
-/// current or nothing was published yet. A `since` of 0, from another session or older than the log is answered
-/// with the full snapshot.
+/// current or nothing was published yet. A `since` of 0, from another (or no) session or older than the log is
+/// answered with the full snapshot.
 fn patch(req: &Request, shared: &Shared) -> Response {
     let mut since = 0;
-    let mut stale = false;
+    let mut session = "";
     let mut only = Vec::new();
     for pair in req.query.split('&') {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
         match key {
             "since" => since = value.parse().unwrap_or(0),
-            "session" => stale = value != shared.session,
+            "session" => session = value,
             "only" => only.extend(
                 decode(value)
                     .split(',')
@@ -117,6 +117,7 @@ fn patch(req: &Request, shared: &Shared) -> Response {
         }
     }
 
+    let stale = session != shared.session;
     let deadline = Instant::now() + POLL;
     let mut state = shared.lock();
     while state.generation == 0 || (state.generation == since && !stale) {
@@ -155,7 +156,7 @@ fn patch(req: &Request, shared: &Shared) -> Response {
             }
         }
     } else {
-        let mut merged = std::collections::BTreeMap::new();
+        let mut merged = BTreeMap::new();
         for patch in state.log.iter().filter(|p| p.generation > since) {
             for (path, op) in &patch.ops {
                 merged.insert(path.clone(), op.clone());

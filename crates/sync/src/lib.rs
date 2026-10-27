@@ -90,7 +90,6 @@ pub struct LogLine {
 #[derive(Clone)]
 pub struct Server {
     shared: Arc<Shared>,
-    port: u16,
 }
 
 impl Server {
@@ -117,11 +116,11 @@ impl Server {
         thread::Builder::new()
             .name("sync".into())
             .spawn(move || server::serve(listener, serving))?;
-        Ok(Server { shared, port })
+        Ok(Server { shared })
     }
 
     pub fn port(&self) -> u16 {
-        self.port
+        self.shared.port
     }
 
     /// Makes `snapshot` the current generation and wakes waiting plugins. Returns the generation, which stays the
