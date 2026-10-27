@@ -59,7 +59,7 @@ pub fn macros_file(root: &str) -> String {
 /// does not take (module, lib, paths and jsx are opossum's).
 pub fn compiler_options(root: &str, flags: &[(String, bool)]) -> Result<CompilerOptions, String> {
     let mut paths = OrderedMap::default();
-    paths.insert("*".to_owned(), Some(vec!["src/*".to_owned()]));
+    paths.insert("*".to_owned(), Some(vec!["./src/*".to_owned()]));
     let mut options = CompilerOptions {
         module: ModuleKind::PRESERVE,
         module_resolution: ModuleResolutionKind::BUNDLER,

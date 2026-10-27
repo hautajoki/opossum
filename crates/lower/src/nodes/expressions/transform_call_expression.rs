@@ -56,6 +56,10 @@ pub fn transform_call_expression_inner(
     }
 
     let callee = node.expression().expect("a call has a callee");
+    // a callee that failed to lower (reported) is not called
+    if expression.is_none() {
+        return Expr::None;
+    }
     // a in a()
     validate_not_any_type(state, callee);
 

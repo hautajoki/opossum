@@ -110,9 +110,11 @@ pub fn is_boolean_type(_: &mut TransformState<'_>, t: P<Type>) -> bool {
 
 /// The regular `true` or `false` literal type (`getTrueType()` without `fresh`): `boolean` is the union of the two.
 pub fn regular_boolean_literal(checker: &Checker, value: bool) -> P<Type> {
-    let name = if value { "true" } else { "false" };
     let parts = checker.get_boolean_type().types();
-    *parts.iter().find(|t| t.as_intrinsic_type().intrinsic_name() == name).expect("boolean is false | true")
+    *parts
+        .iter()
+        .find(|t| matches!(t.as_literal_type().value(), Some(LiteralValue::Boolean(v)) if v == value))
+        .expect("boolean is false | true")
 }
 
 /// `isBooleanLiteralType(state, value)`
