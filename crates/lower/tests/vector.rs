@@ -38,6 +38,9 @@ fn vector3_lowers_to_the_vector_library_only_where_the_checker_proves_it() {
         // a union receiver and a userland lookalike are not the @rbxts/types Vector3
         "either.Magnitude",
         "lookalike.Magnitude",
+        // the injected declarations: operator macros and `vector.lerp`
+        "(a + a) * 2",
+        "vector.lerp(a, a, 0.5)",
     ] {
         assert!(out.contains(expected), "missing `{expected}` in:\n{out}");
     }

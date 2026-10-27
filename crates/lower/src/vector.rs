@@ -38,6 +38,33 @@ use crate::util::ensure_transform_order::ensure_transform_order;
 use crate::util::evaluation::effects::{effects_commute, get_effects, get_effects_of_statements};
 use crate::util::types::{is_definitely_type, is_in_rbxts_types, is_number_type};
 
+/// What `@rbxts/types` leaves out of the `vector` library: the operator macros (as `Vector3` has them, lowered by
+/// `macros::property_call_macros`) and `vector.lerp`. A file of its own ([`declarations_file`]): opossum's `$macro`
+/// detection reads the file of a symbol's first declaration, and these merge into the global `vector`.
+pub const VECTOR_D_TS: &str = r#"interface vector {
+	/** macro for vector + vector */
+	add(this: vector, v: vector): vector;
+	/** macro for vector - vector */
+	sub(this: vector, v: vector): vector;
+	/** macro for vector * vector | number */
+	mul(this: vector, other: vector | number): vector;
+	/** macro for vector / vector | number */
+	div(this: vector, other: vector | number): vector;
+	/** macro for vector // vector | number */
+	idiv(this: vector, other: vector | number): vector;
+}
+
+declare namespace vector {
+	/** Linearly interpolates every component from `a` to `b` by `t`; exactly `b` at `t == 1`. */
+	function lerp(a: vector, b: vector, t: number): vector;
+}
+"#;
+
+/// The in-memory file holding [`VECTOR_D_TS`].
+pub fn declarations_file(root: &str) -> String {
+    tsrs_core::tspath::combine_paths(root, &[".opossum/vector.d.ts"])
+}
+
 /// `Vector3` methods with a `vector` library function of the same semantics: `v.Method(args)` is
 /// `vector.function(v, args)`.
 const METHODS: &[(&str, &str)] = &[
