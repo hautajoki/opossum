@@ -74,19 +74,12 @@ fn is_method_declaration(node: P<Node>) -> bool {
         && skip_upwards(node).parent().is_some_and(|p| p.kind() == Kind::PropertyAssignment)
 }
 
-/// The `this` parameter TypeScript 5 gives a signature that has none of its own.
-// rbxts-rs: TypeScript 5 calls a function expression or object literal method without type parameters and without
-// an explicit `this` parameter context sensitive, and so gives it its contextual signature's `this` parameter
-// (`assignContextualParameterTypes`). TypeScript 7's `hasContextSensitiveParameters` asks whether such a
-// function uses `this`, so one that has only annotated parameters and doesn't use `this` keeps no `this`
-// parameter, and a `function () {}` in a `(this: defined) => void` slot would lose its `self`. Emulate TypeScript 5
-// in exactly that case; with an unannotated parameter, or `this` used, both agree and the signature has it already.
-// Needs the tsrs fork at adadb25 or later, where `Checker::get_contextual_signature` is public.
-// Known limit: overloads that disagree on `this`. TypeScript 5 fixes the contextual `this` once, from the first
-// overload it checks, even when that overload is then rejected; here it is the chosen overload's at transform time.
-// `over(cb: (this: void) => number)` declared before `over(cb: (this: Foo) => void)` gives `function()` on TS5 and
-// `function(self)` here; swapped, TS5 reports TS2769 and rbxts-rs doesn't (val-cthis `edge/src/shared/overload.ts`).
-fn ts5_contextual_this_parameter(state: &mut TransformState<'_>, signature: P<Signature>) -> Option<P<Symbol>> {
+/// The `this` parameter a function expression or object literal method takes from its contextual signature when it
+/// has none of its own, no type parameters, only annotated parameters and does not use `this`. TypeScript 7 gives
+/// such a function no `this` parameter (`hasContextSensitiveParameters` asks whether it uses `this`), but it still
+/// runs in a `(this: T) => …` slot and is called with a receiver, so it must take `self`. With overloads that disagree
+/// on `this`, the overload chosen at the call decides.
+fn contextual_this_parameter(state: &mut TransformState<'_>, signature: P<Signature>) -> Option<P<Symbol>> {
     let declaration = signature.declaration()?;
     if !(declaration.kind() == Kind::FunctionExpression || tsrs_ast::is_object_literal_method(declaration))
         || declaration.type_parameter_list().is_some()
@@ -103,7 +96,7 @@ fn is_method_inner(state: &mut TransformState<'_>, node: P<Node>, t: P<Type>) ->
     let mut has_callback_definition = false;
 
     for &signature in state.checker.get_signatures_of_type_exported(t, SignatureKind::Call) {
-        let this_parameter = signature.this_parameter().or_else(|| ts5_contextual_this_parameter(state, signature));
+        let this_parameter = signature.this_parameter().or_else(|| contextual_this_parameter(state, signature));
         if let Some(this_parameter) = this_parameter {
             let this_type = state
                 .checker

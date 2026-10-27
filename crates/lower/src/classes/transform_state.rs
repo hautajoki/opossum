@@ -62,7 +62,7 @@ pub struct TransformState<'a> {
     pub multi_transform_state: &'a mut MultiTransformState,
     /// The file transformed.
     pub source_file: P<SourceFile>,
-    /// The emit resolver, for import elision on the original program (DESIGN §9).
+    /// The emit resolver, for import elision.
     pub resolver: P<EmitResolver>,
     /// The file's diagnostics.
     pub diagnostics: DiagnosticService,
@@ -331,7 +331,7 @@ impl<'a> TransformState<'a> {
 
 /// `ts.isTypeOnlyExportDeclaration`.
 ///
-/// rbxts-rs: tsrs has it as `pub(crate)` (`tsrs_ast::utilities_2`); this is a copy until the fork makes it public.
+/// A copy of tsrs's private one (`tsrs_ast::utilities_2`).
 fn is_type_only_export_declaration(node: P<Node>) -> bool {
     match node.kind() {
         Kind::ExportSpecifier => {

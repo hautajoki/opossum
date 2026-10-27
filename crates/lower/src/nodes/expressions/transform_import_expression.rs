@@ -8,7 +8,7 @@ use crate::classes::transform_state::TransformState;
 use crate::shared::diagnostics::errors;
 use crate::util::create_import_expression::create_import_expression;
 
-/// `import("x")`: `TS.Promise.new(function(resolve) resolve(TS.import(script, …)) end)`.
+/// `import("x")`: `TS.Promise.new(function(resolve) resolve(require("x")) end)`.
 pub fn transform_import_expression(state: &mut TransformState<'_>, node: P<Node>) -> Expr {
     let module_specifier = node.arguments().first().copied();
     let Some(module_specifier) = module_specifier.filter(|n| n.kind() == Kind::StringLiteral) else {

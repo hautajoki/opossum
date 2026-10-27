@@ -43,7 +43,7 @@ use super::transform_unary_expression::{transform_postfix_unary_expression, tran
 use super::transform_void_expression::transform_void_expression;
 use super::transform_yield_expression::transform_yield_expression;
 
-/// The label of a node kind in diagnostics and the parity report (`getKindName`).
+/// The label of a node kind in diagnostics (`getKindName`).
 pub fn kind_name(kind: Kind) -> String {
     format!("{kind:?}")
 }

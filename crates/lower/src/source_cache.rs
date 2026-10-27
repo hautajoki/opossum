@@ -1,4 +1,4 @@
-//! Parsed source files kept across the builds of one process (watch mode, DESIGN §14): a compiler host that hands
+//! Parsed source files kept across the builds of one process (watch mode): a compiler host that hands
 //! out the same `SourceFile` for a file whose modification time, size and parse options are unchanged, as roblox-ts's
 //! program factory does (an unchanged file is the same object in the next program) and as tsrs's own watcher does.
 //!
