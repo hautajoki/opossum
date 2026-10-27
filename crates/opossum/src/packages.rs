@@ -78,7 +78,8 @@ pub fn location(file: &str) -> Option<ModulePath> {
             root = names.len();
         }
         if inner.starts_with("node_modules/") {
-            // a nested package: `<dir>/node_modules/@x/y/...`
+            // a nested package: `<dir>/node_modules/@x/y/...`, mounted inside its parent as `files` walks it
+            names.push("node_modules".to_owned());
             from += len;
             continue;
         }
