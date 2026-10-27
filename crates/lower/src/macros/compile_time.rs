@@ -16,6 +16,7 @@ use crate::nodes::transform_optional_chain::{ChainItem, ChainItemKind};
 use crate::shared::diagnostics::node_range;
 use crate::util::create_string_from_literal::create_string_from_value;
 use crate::util::traversal::skip_downwards;
+use crate::util::types::string_literal_value;
 
 /// Something outside the program that a file's macros read.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -265,26 +266,29 @@ fn nameof(state: &mut TransformState<'_>, item: &ChainItem) -> Expr {
     }
 }
 
-/// `$keys<T>()`: the string-named properties of `T`, optional ones included, in declaration order.
+/// `$keys<T>()`: `T`'s properties named in `Extract<keyof T, string>`, optional ones included, in declaration order.
 fn keys(state: &mut TransformState<'_>, item: &ChainItem) -> Expr {
     let type_node = match item.kind {
         ChainItemKind::Call => item.node.type_arguments().first().copied(),
         _ => None,
     };
     let Some(type_node) = type_node else { return misuse(state, item.node, "$keys") };
+    // the call's type is `Array<Extract<keyof T, string>>`: never or string literals exactly when the keys are known
+    // (not for a generic T, `any` or an index signature), and then it names exactly the keys the array may hold
+    let call = state.checker.get_type_at_location(item.node);
+    let element = state.checker.get_type_arguments_exported(call).first().copied();
+    let keys: Option<Vec<&str>> = element.and_then(|e| match e.flags() {
+        f if f.intersects(TypeFlags::Never) => Some(Vec::new()),
+        f if f.intersects(TypeFlags::Union) => e.types().iter().map(|&t| string_literal_value(t)).collect(),
+        _ => string_literal_value(e).map(|key| vec![key]),
+    });
+    let Some(keys) = keys else {
+        return error(state, type_node, "$keys", "the keys must be known at compile time: not generic, any or an index signature");
+    };
     let t = state.checker.get_type_from_type_node_exported(type_node);
-    if t.flags().intersects(TypeFlags::TypeVariable | TypeFlags::AnyOrUnknown) {
-        return error(state, type_node, "$keys", "the type must be known at compile time, not generic, any or unknown");
-    }
     let apparent = state.checker.get_apparent_type_exported(t);
     let names = state.checker.get_properties_of_type_exported(apparent).iter().map(|p| p.name());
-    // symbol-keyed and computed members carry an internal name; numeric names are indices, not string keys
-    let names = names.filter(|n| {
-        !n.starts_with(tsrs_ast::INTERNAL_SYMBOL_NAME_PREFIX)
-            && !n.starts_with("__@")
-            && !n.bytes().all(|b| b.is_ascii_digit())
-    });
-    create::array(names.map(create_string_from_value).collect())
+    create::array(names.filter(|n| keys.contains(n)).map(create_string_from_value).collect())
 }
 
 /// `$buildTime()`: the build's ISO-8601 UTC timestamp.
