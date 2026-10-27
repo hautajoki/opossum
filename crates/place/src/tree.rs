@@ -289,17 +289,16 @@ impl Place {
     }
 
     /// Mounts a package's Luau files at `ReplicatedStorage/rbxts/node_modules/<scope>/<name>`, replacing an
-    /// earlier mount of it. `init.luau` makes its folder the module, as everywhere else.
+    /// earlier mount of it. `init.luau` makes its folder the module, as everywhere else. A file that is not Luau
+    /// fails the mount before anything changes.
     pub fn mount_package(
         &mut self,
         scope: &str,
         name: &str,
-        files: &[PackageFile],
+        files: Vec<PackageFile>,
     ) -> Result<Ref, Diag> {
         let base = format!("{PACKAGES}/{scope}/{name}");
-        if self.find(&base).is_some() {
-            self.remove_tree(&base)?;
-        }
+        let mut modules = Vec::with_capacity(files.len());
         for file in files {
             let Some(module) = module_path(&file.rel) else {
                 return Err(Diag::error(
@@ -313,12 +312,13 @@ impl Place {
             } else {
                 format!("{base}/{module}")
             };
-            self.set_script(
-                &path,
-                ScriptKind::Module,
-                file.source.clone(),
-                Some(file.file.clone()),
-            )?;
+            modules.push((path, file));
+        }
+        if self.find(&base).is_some() {
+            self.remove_tree(&base)?;
+        }
+        for (path, file) in modules {
+            self.set_script(&path, ScriptKind::Module, file.source, Some(file.file))?;
         }
         // A package with no init module is still there, as the folder holding its modules.
         match self.find(&base) {
