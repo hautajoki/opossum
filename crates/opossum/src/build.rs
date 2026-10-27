@@ -85,6 +85,8 @@ pub struct Session {
     pub compiled: FxHashMap<String, Compiled>,
     /// TypeScript, lowering and gate diagnostics by file name.
     file_diags: FxHashMap<String, Vec<Diag>>,
+    /// The files each module's `$file` macros read, by module file name: the module lowers again when one changes.
+    reads: FxHashMap<String, Vec<String>>,
     global_diags: Vec<Diag>,
     route_diags: Vec<Diag>,
     pub place_diags: Vec<Diag>,
@@ -161,6 +163,7 @@ impl Session {
             versions: FxHashMap::default(),
             compiled: FxHashMap::default(),
             file_diags: FxHashMap::default(),
+            reads: FxHashMap::default(),
             global_diags: Vec::new(),
             route_diags: Vec::new(),
             place_diags: Vec::new(),
@@ -307,7 +310,14 @@ impl Session {
 
     /// Rebuilds after edits: `changed` TypeScript files (program spelling) by reusing the program, or a fresh load
     /// when the file set changed (`rescan`) or tsrs cannot reuse it; then only the files the edit can affect.
-    pub fn update(&mut self, changed: &[String], rescan: bool) -> Result<Stats, String> {
+    /// The modules whose `$file` macros read `path` (absolute, forward slashes).
+    pub fn readers(&self, path: &str) -> Vec<String> {
+        self.reads.iter().filter(|(_, files)| files.iter().any(|f| f == path)).map(|(m, _)| m.clone()).collect()
+    }
+
+    /// Rebuilds after an edit: `changed` TypeScript files, `rescan` when the file set changed, and `stale` modules
+    /// that must lower again although their source did not change (a file their `$file` macros read did).
+    pub fn update(&mut self, changed: &[String], rescan: bool, stale: &[String]) -> Result<Stats, String> {
         let mut stats = Stats::default();
         let t = Instant::now();
         let before = rescan.then(|| std::mem::take(&mut self.locator.files));
@@ -332,6 +342,7 @@ impl Session {
         for gone in &invalidation.deleted {
             self.file_diags.remove(gone);
             self.compiled.remove(gone);
+            self.reads.remove(gone);
         }
         // a module that routes elsewhere now changes how its importers spell it, which no fact of the program shows
         let moved = before
@@ -340,7 +351,11 @@ impl Session {
         let files: Vec<P<SourceFile>> = if invalidation.all || moved {
             all
         } else {
-            all.into_iter().filter(|f| invalidation.affected.contains(&f.path().to_string())).collect()
+            all.into_iter()
+                .filter(|f| {
+                    invalidation.affected.contains(&f.path().to_string()) || stale.iter().any(|s| s == f.file_name())
+                })
+                .collect()
         };
         self.compile(&project, &files, &mut stats);
         self.commit(project, facts);
@@ -409,6 +424,19 @@ impl Session {
         });
         for (l, rendered) in lowered.iter().zip(rendered) {
             let name = l.file.file_name();
+            let reads: Vec<String> = l
+                .inputs
+                .iter()
+                .filter_map(|i| match i {
+                    lower::Input::File(path) => Some(path.clone()),
+                    _ => None,
+                })
+                .collect();
+            if reads.is_empty() {
+                self.reads.remove(name);
+            } else {
+                self.reads.insert(name.to_owned(), reads);
+            }
             let diags = self.file_diags.entry(name.to_owned()).or_default();
             diags.extend(l.diagnostics.iter().map(|&d| diag::from_ts(d, &file_of)));
             let Some((compiled, gate)) = rendered else { continue };

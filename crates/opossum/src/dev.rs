@@ -1,6 +1,7 @@
 //! `opossum dev`: a full build, then the Studio sync server and a file watcher. Each settled burst of edits
 //! (~30 ms quiet) rebuilds what it touched: TypeScript edits reuse the program and re-lower only the files they can
-//! affect, added or removed files route `src/` again, `place/` edits re-read the place, and an edit to
+//! affect, a file a `$file` macro reads re-lowers its readers, added or removed files route `src/` again, `place/`
+//! edits re-read the place, and an edit to
 //! `opossum.toml`, `package.json` or a `.env` file starts the session over. Studio's output comes back through
 //! `POST /log` and prints with compiled lines mapped to their TypeScript.
 
@@ -101,9 +102,10 @@ fn serve(
         let start = Instant::now();
         let root = session.cfg.root.clone();
         let src = session.cfg.src();
-        let (mut changed, mut rescan, mut touched) = (Vec::new(), false, false);
+        let (mut changed, mut rescan, mut touched, mut stale) = (Vec::new(), false, false, Vec::new());
         for path in &paths {
             let path = project_path(&session.cfg, path);
+            stale.extend(session.readers(&slashed(&path)));
             let rel = path.strip_prefix(&root).unwrap_or(&path);
             let name = rel.to_string_lossy();
             if matches!(name.as_ref(), config::FILE | "package.json" | ".env" | ".env.local") {
@@ -137,10 +139,14 @@ fn serve(
                 _ => {}
             }
         }
-        if changed.is_empty() && !rescan && !touched {
+        if changed.is_empty() && !rescan && !touched && stale.is_empty() {
             continue;
         }
-        let stats = if !changed.is_empty() || rescan { session.update(&changed, rescan)? } else { Default::default() };
+        let stats = if !changed.is_empty() || rescan || !stale.is_empty() {
+            session.update(&changed, rescan, &stale)?
+        } else {
+            Default::default()
+        };
         let t = Instant::now();
         let generation = publish(&mut session, server, index, &mut shown);
         let mut phases: Vec<String> = stats.times.iter().map(|(p, ms)| format!("{p} {ms:.0}")).collect();
