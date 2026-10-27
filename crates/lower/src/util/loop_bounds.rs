@@ -18,12 +18,14 @@ const MAX_DEPTH: u32 = 8;
 enum Variable {
     /// A `const` (possibly imported, possibly destructured): its declaration.
     Const(P<Node>),
-    /// A `let` or a parameter of this file: its symbol and the function (if any) that declares it.
+    /// An unexported `let` or a parameter of this file: its symbol and the [`scope_of`] its declaration.
     Mutable(P<Symbol>, Option<P<Node>>),
 }
 
-fn is_function_like(node: P<Node>) -> bool {
-    tsrs_ast::is_function_like(Some(node))
+/// The function a node runs in, or the class whose property initializers it runs in (at construction, not where the
+/// class is written); `None` at the top level of the module.
+fn scope_of(node: P<Node>) -> Option<P<Node>> {
+    get_ancestor(node, |n| tsrs_ast::is_function_like(Some(n)) || tsrs_ast::is_class_like(n))
 }
 
 fn variable_of(state: &mut TransformState<'_>, identifier: P<Node>) -> Option<Variable> {
@@ -42,8 +44,12 @@ fn variable_of(state: &mut TransformState<'_>, identifier: P<Node>) -> Option<Va
             let list = binding.parent()?;
             if list.flags().intersects(NodeFlags::Const) {
                 Some(Variable::Const(declaration))
-            } else if list.flags().intersects(NodeFlags::Let) && !imported {
-                Some(Variable::Mutable(symbol, get_ancestor(binding, is_function_like)))
+            } else if list.flags().intersects(NodeFlags::Let)
+                && !imported
+                // a namespace's exported `let` is a property other files can write
+                && list.parent().is_some_and(|s| !has_syntactic_modifier(s, ModifierFlags::Export))
+            {
+                Some(Variable::Mutable(symbol, scope_of(binding)))
             } else {
                 None
             }
@@ -53,8 +59,10 @@ fn variable_of(state: &mut TransformState<'_>, identifier: P<Node>) -> Option<Va
     }
 }
 
-/// Every write to the mutable variable is outside `for_node` and in the function that declares it, so none can run
-/// while the loop runs (a write in a closure could, from a call in the body).
+/// No write to the mutable variable can run while `for_node` runs: there is none, or the loop and every write run in
+/// the one activation of the scope that declares it, the writes outside the loop. A write anywhere else could run
+/// mid-loop: a closure called from the body, or the declaring scope itself while the loop's closure is suspended in a
+/// yield.
 fn is_unwritten_in(
     state: &mut TransformState<'_>,
     symbol: P<Symbol>,
@@ -66,9 +74,10 @@ fn is_unwritten_in(
     if crate::util::traversal::source_file_of(declaration) != file {
         return false;
     }
+    let loop_in_owner = scope_of(for_node) == owner;
     state.checker.get_references_to_symbol_in_file(file, symbol).into_iter().all(|reference| {
         !tsrs_ast::is_write_access(reference)
-            || (!is_ancestor_of(for_node, reference) && get_ancestor(reference, is_function_like) == owner)
+            || (loop_in_owner && !is_ancestor_of(for_node, reference) && scope_of(reference) == owner)
     })
 }
 
@@ -312,10 +321,22 @@ mod tests {
             }
             export function writtenVariable() { for (let i = 0; i < 10; i++) { i += 1; } }
             export function fractionalStart() { for (let i = 0.5; i < 3; i++) print(i); }
+            export function initializerWritesBound(n: number) {
+                class A { x = (n = 0); }
+                for (let i = 0; i < n; i++) new A();
+            }
+            export function ownerWritesMidLoop(n: number, spawn: (f: () => void) => void, wait: () => void) {
+                spawn(() => { for (let i = 0; i < n; i++) wait(); });
+                n = 0;
+            }
+            export namespace N {
+                export let m = 3;
+                export function f() { for (let i = 0; i < m; i++) print(i); }
+            }
             "#,
         );
         assert!(!text.contains("for i ="), "{text}");
-        assert_eq!(text.matches("while ").count(), 8, "{text}");
+        assert_eq!(text.matches("while ").count(), 11, "{text}");
     }
 
     #[test]
