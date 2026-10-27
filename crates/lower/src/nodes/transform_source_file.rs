@@ -200,7 +200,6 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
     if is_native_file(state) {
         luau::native::mark_native_functions(&mut statements);
     }
-    luau::mark_const_locals(&mut statements);
 
     let mut header_statements = Vec::new();
     if state.uses_runtime_lib
@@ -209,20 +208,22 @@ pub fn transform_source_file(state: &mut TransformState<'_>, node: P<SourceFile>
         header_statements.push(import);
     }
 
-    // Luau directive comments from the source go first, except the ones opossum's own header sets and a blanket
-    // `--!native` (`@native` goes on functions)
+    // Luau directive comments from the source go first, except `--!optimize` (the header sets it) and a blanket
+    // `--!native` (`@native` goes on functions); a mode the source sets wins over the header's `--!strict`
     let directive_count =
         statements.iter().take_while(|s| matches!(s, Stmt::Comment(text) if text.starts_with('!'))).count();
     let mut directives: Vec<Stmt> = statements.drain(..directive_count).collect();
-    directives.retain(|s| {
-        !matches!(s, Stmt::Comment(text) if ["strict", "optimize", "native"].contains(&directive_name(text)))
-    });
-    if state.options.native_types {
+    directives.retain(|s| !matches!(s, Stmt::Comment(text) if ["optimize", "native"].contains(&directive_name(text))));
+    let has_mode = directives.iter().any(
+        |s| matches!(s, Stmt::Comment(text) if ["strict", "nonstrict", "nocheck"].contains(&directive_name(text))),
+    );
+    if state.options.native_types && !has_mode {
         directives.insert(0, create::comment("!strict"));
     }
     directives.push(create::comment("!optimize 2"));
     statements.splice(0..0, header_statements);
     statements.splice(0..0, directives);
+    luau::mark_const_locals(&mut statements);
     statements
 }
 
