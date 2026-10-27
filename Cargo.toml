@@ -29,6 +29,7 @@ mimalloc-safe = { version = "0.1.67", features = ["v3", "no_thp"] }
 rustc-hash = "2"
 luau = { path = "crates/luau" }
 lower = { path = "crates/lower" }
+route = { path = "crates/route" }
 
 # A debug checker is unusably slow, so even dev builds are optimised (as in tsrs).
 [profile.dev]
