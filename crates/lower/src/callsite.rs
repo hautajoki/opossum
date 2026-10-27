@@ -28,13 +28,14 @@ pub fn append_callsite(state: &mut TransformState<'_>, call: P<Node>, arguments:
         return;
     }
     let Some(declaration) = state.checker.get_resolved_signature_exported(call).declaration() else { return };
-    let parameters = declaration.parameters();
-    let Some(&last) = parameters.last() else { return };
+    let mut parameters = declaration.parameters();
     // a `this` parameter takes no argument
-    let this = parameters
-        .first()
-        .is_some_and(|p| p.name().is_some_and(|n| n.kind() == Kind::Identifier && n.text() == "this"));
-    let index = parameters.len() - 1 - usize::from(this);
+    let this = |p: &P<Node>| p.name().is_some_and(|n| n.kind() == Kind::Identifier && n.text() == "this");
+    if parameters.first().is_some_and(this) {
+        parameters = &parameters[1..];
+    }
+    let Some(&last) = parameters.last() else { return };
+    let index = parameters.len() - 1;
     if arguments.len() > index || !is_callsite_parameter(state, last) {
         return;
     }
