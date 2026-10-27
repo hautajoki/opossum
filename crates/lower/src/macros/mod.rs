@@ -2,6 +2,7 @@
 //! inline Luau instead of a call. The macro manager resolves each entry's symbol.
 
 pub mod call_macros;
+pub mod compile_time;
 pub mod constructor_macros;
 pub mod identifier_macros;
 pub mod property_call_macros;

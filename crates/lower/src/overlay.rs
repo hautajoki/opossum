@@ -20,7 +20,7 @@ pub const MACROS_D_TS: &str = r#"declare const $env: {
 	((name: string) => string | undefined);
 
 declare function $nameof(item: unknown): string;
-declare function $keys<T>(): string[];
+declare function $keys<T>(): Array<Extract<keyof T, string>>;
 declare function $file(path: string): any;
 declare function $git(field: "sha" | "branch" | "tag"): string;
 declare function $git(field: "dirty"): boolean;

@@ -7,6 +7,7 @@ use tsrs_core::P;
 
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
+use crate::macros::compile_time;
 use crate::nodes::expressions::transform_call_expression::{
     transform_call_expression_inner, transform_element_call_expression_inner, transform_property_call_expression_inner,
 };
@@ -429,6 +430,13 @@ fn transform_optional_chain_inner(
 /// `transformOptionalChain`
 pub fn transform_optional_chain(state: &mut TransformState<'_>, prereqs: &mut Prereqs, node: P<Node>) -> Expr {
     let (chain, expression) = flatten_optional_chain(node);
+    if let Some(name) = compile_time::macro_at(state, expression) {
+        let (value, used) = compile_time::fold(state, name, expression, &chain);
+        if value.is_none() {
+            return Expr::None;
+        }
+        return transform_optional_chain_inner(state, prereqs, &chain, value, None, used);
+    }
     let base = transform_expression(state, prereqs, expression);
     transform_optional_chain_inner(state, prereqs, &chain, base, None, 0)
 }

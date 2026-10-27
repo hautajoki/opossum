@@ -49,6 +49,7 @@ pub fn start_git(root: &Path) -> GitRead {
         Command::new("git")
             .args(args)
             .current_dir(root)
+            .env("GIT_OPTIONAL_LOCKS", "0") // `status` would otherwise refresh the repository's index
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

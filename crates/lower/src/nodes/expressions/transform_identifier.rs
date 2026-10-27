@@ -7,6 +7,7 @@ use tsrs_core::P;
 use crate::classes::macro_manager::symbol_names;
 use crate::classes::prereqs::renamed_id;
 use crate::classes::transform_state::TransformState;
+use crate::macros::compile_time;
 use crate::shared::diagnostics::errors;
 use crate::util::evaluation::bindings::get_binding_key;
 use crate::util::evaluation::builtins::try_mark_builtin_library;
@@ -147,12 +148,6 @@ fn check_identifier_hoist(state: &mut TransformState<'_>, node: P<Node>, symbol:
     state.is_hoisted.insert(symbol, true);
 }
 
-/// A compile-time macro of opossum's declarations (`$git`, `$env`, …), none of which lowers yet.
-fn is_unsupported_macro(state: &TransformState<'_>, symbol: P<Symbol>) -> bool {
-    let file = symbol.declarations().first().and_then(|&d| tsrs_ast::get_source_file_of_node(d));
-    file.is_some_and(|f| f.get().file_name() == crate::program::macros_file(state.root))
-}
-
 /// `transformIdentifier`
 pub fn transform_identifier(state: &mut TransformState<'_>, node: P<Node>) -> Expr {
     // synthetic nodes have no parents or symbols, so skip all the symbol-related logic
@@ -162,9 +157,9 @@ pub fn transform_identifier(state: &mut TransformState<'_>, node: P<Node>) -> Ex
 
     let symbol = identifier_symbol(state, node).expect("an identifier has a symbol");
 
-    if is_unsupported_macro(state, symbol) {
-        state.add_diagnostic(errors::unsupported_macro(node, node.text()));
-        return Expr::None;
+    // a compile-time macro not at the head of a chain (`transform_optional_chain` folds those)
+    if let Some(name) = compile_time::macro_name(state, symbol) {
+        return compile_time::fold(state, name, node, &[]).0;
     }
 
     if state.checker.is_undefined_symbol(symbol) {

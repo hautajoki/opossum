@@ -14,6 +14,7 @@ use crate::classes::diagnostic_service::DiagnosticService;
 use crate::classes::macro_manager::MacroManager;
 use crate::classes::multi_transform_state::MultiTransformState;
 use crate::locate::{Location, Locator};
+use crate::macros::compile_time::Input;
 use crate::options::Options;
 use crate::program::Project;
 use crate::shared::diagnostics::{errors, internal_error};
@@ -97,6 +98,8 @@ pub struct TransformState<'a> {
     pub renames: FxHashMap<P<Node>, TemporaryIdentifier>,
     /// The file's top-level statements as [`crate::Lowered::spans`] records them.
     pub spans: Vec<(usize, u32, u32)>,
+    /// What this file's compile-time macros read ([`crate::macros::compile_time`]).
+    pub macro_inputs: Vec<Input>,
 }
 
 impl<'a> TransformState<'a> {
@@ -140,6 +143,7 @@ impl<'a> TransformState<'a> {
             class_element_to_object_key_map: FxHashMap::default(),
             renames: FxHashMap::default(),
             spans: Vec::new(),
+            macro_inputs: Vec::new(),
         }
     }
 
