@@ -220,22 +220,26 @@ fn enum_body(declared: P<TsType>) -> Type {
         if declared.flags().intersects(TypeFlags::Union) { declared.types() } else { &[declared] };
     let mut out = Vec::new();
     for &member in members {
-        let ty = match member.flags() {
+        out.push(match member.flags() {
             f if f.intersects(TypeFlags::StringLiteral) => match member.as_literal_type().value() {
                 Some(LiteralValue::String(s)) => Type::String(s.to_owned()),
                 _ => Type::named("string"),
             },
             f if f.intersects(TypeFlags::StringLike) => Type::named("string"),
             _ => Type::named("number"),
-        };
-        if !out.contains(&ty) {
-            out.push(ty);
-        }
+        });
     }
     union_of(out)
 }
 
-fn union_of(mut members: Vec<Type>) -> Type {
+/// `A | B` of `members` without repeats; one member is itself, none is `nil`.
+fn union_of(members: Vec<Type>) -> Type {
+    let mut members = members.into_iter().fold(Vec::new(), |mut out, m| {
+        if !out.contains(&m) {
+            out.push(m);
+        }
+        out
+    });
     match members.len() {
         0 => Type::nil(),
         1 => members.remove(0),
@@ -698,7 +702,7 @@ fn expand_object_inner(state: &mut TransformState<'_>, t: P<TsType>) -> Type {
     let indexer = match keys.len() {
         0 => None,
         1 => Some(Indexer { key: keys.remove(0), value: values.remove(0), read }),
-        _ => Some(Indexer { key: Type::Union(keys), value: Type::Union(values), read }),
+        _ => Some(Indexer { key: Type::Union(keys), value: union_of(values), read }),
     };
     if fields.is_empty() && indexer.is_none() {
         // `{}` admits every value but nil, not just tables
