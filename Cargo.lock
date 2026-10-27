@@ -979,6 +979,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sync"
+version = "0.0.0"
+dependencies = [
+ "rbx_binary",
+ "rbx_dom_weak",
+ "serde_json",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "synstructure"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
