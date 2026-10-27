@@ -151,6 +151,23 @@ impl Reader {
             if name.starts_with('.') {
                 continue;
             }
+            // Instances are addressed by path, so two entries may not make one name (`boat/` and
+            // `boat.model.json`). Siblings inside one model file may share a name, as Studio content does.
+            let instance = if is_dir {
+                Some(name.as_str())
+            } else {
+                [".model.json", ".rbxm", ".rbxmx", ".txt"]
+                    .iter()
+                    .find_map(|ext| name.strip_suffix(ext))
+            };
+            if let Some(instance) = instance
+                && self.place.child(parent, instance).is_some()
+            {
+                let message = format!("{instance} is already made by another entry here");
+                self.diags
+                    .push(Diag::error("tree.instanceClash", &path, message));
+                continue;
+            }
             if is_dir {
                 let folder = self
                     .place
@@ -359,6 +376,9 @@ impl Reader {
             .map(|i| i.class.as_str())
             .unwrap_or_default();
         let class = match class {
+            Some(class) if !value::is_class(class) => {
+                return Err(format!("{class} is not a class"));
+            }
             Some(class) => class,
             None if NESTED.contains(&(parent_class, name)) || value::is_class(name) => name,
             None => return Err(format!("{path} does not exist; give its ClassName")),
