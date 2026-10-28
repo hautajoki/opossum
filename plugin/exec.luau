@@ -4,13 +4,14 @@
 --
 -- Studio's require caches a result per instance for the life of this VM: a Source change, rename, reparent or
 -- UpdateSourceAsync leaves it returning the first result (measured), and sync writes Source in place. So each exec
--- loads every ModuleScript it requires afresh: a nil-parented copy of its current Source, placed in a mirror of its
--- ancestors' names so chunk names and tracebacks read like the original's, its first line given `script` (the
--- original) and a `require` that does the same. Nothing is cached between execs, module state included.
+-- runs every ModuleScript it requires afresh, through its body: the module's Source wrapped as a function of `script`
+-- (the original) and `require` (this loader), compiled once per Source from a nil-parented copy placed in a mirror of
+-- its ancestors' names, so chunk names and tracebacks read like the original's. Module state never carries from one
+-- exec to the next; compiled code does, since Studio never frees native code (a fresh copy per run ran a dozen
+-- test runs out of it, measured).
 
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local HttpService = game:GetService("HttpService")
-local ScriptContext = game:GetService("ScriptContext")
 local ScriptEditorService = game:GetService("ScriptEditorService")
 
 local apply = require("./apply")
@@ -34,14 +35,8 @@ export type Request = {
 	start: number?,
 }
 
--- The copy loading now, by token: the original it stands for and the require it gets. Read by the copy's first line.
-local pending: { [number]: { any } } = {}
-local token = 0
-_G.__opossum_exec = function(n: number): (Instance, (any) -> any)
-	local entry = pending[n]
-	pending[n] = nil
-	return entry[1], entry[2]
-end
+-- Module bodies by the module's full name, with the Source each was compiled from.
+local bodies: { [string]: { source: string, body: (Instance, (any) -> any) -> any } } = {}
 
 -- The byte where the first token that is not a comment starts, or nil: directives (--!native) stay in front of it.
 local function first_code(source: string): number?
@@ -89,7 +84,15 @@ local function resolve(from: Instance, path: string): Instance
 	return at
 end
 
-type Session = { cache: { [Instance]: any }, folders: { [string]: Instance }, tops: { Instance } }
+-- One exec's modules: results, and the error of each that failed (a later require rethrows it, as Studio's does);
+-- `traces` holds the whole stack of a located loading error, which its rethrow loses.
+type Session = {
+	cache: { [Instance]: any },
+	failed: { [Instance]: unknown },
+	traces: { [string]: string },
+	folders: { [string]: Instance },
+	tops: { Instance },
+}
 
 local function set_source(module: ModuleScript, source: string)
 	if #source < SOURCE_LIMIT then
@@ -149,46 +152,65 @@ local function folder_for(session: Session, original: Instance): Instance?
 	return parent
 end
 
+-- `trace` without the plugin's own frames.
+local function trim(trace: string): string
+	local lines: { string } = {}
+	for line in string.gmatch(trace, "[^\n]+") do
+		if string.sub(line, 1, #OWN) ~= OWN then table.insert(lines, line) end
+	end
+	return table.concat(lines, "\n")
+end
+
+-- The body of `original`'s current Source, compiled on first use.
+local function compile(session: Session, original: ModuleScript): (Instance, (any) -> any) -> any
+	local name, source = original:GetFullName(), original.Source
+	local compiled = bodies[name]
+	if compiled and compiled.source == source then return compiled.body end
+	-- spliced in front of the first code, on its line, so directives stay first and lines keep their numbers
+	local at = first_code(source)
+	local open = "return function(script, require, ...) "
+	local wrapped = if at then `{string.sub(source, 1, at - 1)}{open}{string.sub(source, at)}\nend` else `{source}\n{open}\nend`
+	local copy = Instance.new("ModuleScript")
+	copy.Name = original.Name
+	set_source(copy, wrapped)
+	copy.Parent = folder_for(session, original)
+	local ok, body = pcall(require, copy)
+	copy:Destroy()
+	if not ok then
+		-- require says only "Requested module experienced an error while loading": compiling again says what
+		local syntax = if loadstring then select(2, loadstring(wrapped, `={name}`)) else nil
+		error(syntax or body, 0)
+	end
+	bodies[name] = { source = source, body = body }
+	return body
+end
+
+-- A loading error, located: an engine error ("x is not a valid member of y") names no place, so the stack's first
+-- frame goes in front of it, and the stack is kept for `run`, since the rethrow up the requires loses it.
+local function locate(session: Session, e: unknown): unknown
+	if type(e) ~= "string" or session.traces[e] then return e end
+	local trace = trim(debug.traceback(nil, 2))
+	local where = string.match(trace, "^%[C%][^\n]*\n(.-:%d+)") or string.match(trace, "^(.-:%d+)")
+	local message = if where and not string.match(e, "^[%w_%.%-@]+:%d+: ") then `{where}: {e}` else e
+	session.traces[message] = trace
+	return message
+end
+
 load = function(session: Session, original: ModuleScript): any
 	local cached = session.cache[original]
 	if cached == LOADING then error(`{original:GetFullName()} was required recursively`, 3) end
+	if session.failed[original] ~= nil then error(session.failed[original], 0) end
 	if cached ~= nil then return cached end
 	session.cache[original] = LOADING
-	token += 1
-	pending[token] = { original, bound(session, original) }
-	local source = original.Source
-	local line = `local script, require = _G.__opossum_exec({token}); `
-	local at = first_code(source)
-	source = if at then string.sub(source, 1, at - 1) .. line .. string.sub(source, at) else source .. "\n" .. line
-	local copy = Instance.new("ModuleScript")
-	copy.Name = original.Name
-	set_source(copy, source)
-	local parent = folder_for(session, original)
-	if parent then
-		copy.Parent = parent
-	else
-		table.insert(session.tops, copy)
-	end
-	-- a module that throws makes require say only "Requested module experienced an error while loading" (measured):
-	-- ScriptContext.Error has a runtime error's own message, synchronously, and a syntax error compiles again to say it
-	local failure: string? = nil
-	local listen = ScriptContext.Error:Connect(function(message, stack, at)
-		if at ~= copy then return end
-		-- an engine error ("x is not a valid member of y") names no place; its stack does, as `Path, line 3`
-		local path, n = string.match(stack, "^([^\n]-), line (%d+)")
-		local placed = string.match(message, "^[%w_%.%-@]+:%d+: ") ~= nil
-		failure = if path and not placed then `{path}:{n}: {message}` else message
+	local ok, result = xpcall(function()
+		return compile(session, original)(original, bound(session, original))
+	end, function(e: unknown)
+		return locate(session, e)
 	end)
-	local ok, result = pcall(require, copy)
-	listen:Disconnect()
-	pending[token] = nil
 	if not ok then
 		session.cache[original] = nil
-		if not failure and loadstring then
-			local _, syntax = loadstring(source, `={copy:GetFullName()}`)
-			failure = syntax
-		end
-		error(failure or result, 0)
+		session.failed[original] = result
+		error(result, 0)
 	end
 	session.cache[original] = result
 	return result
@@ -236,15 +258,6 @@ local function encode(value: unknown, room: number): string
 	return if #text <= room then text else HttpService:JSONEncode(cut(text, room))
 end
 
--- `trace` without the plugin's own frames.
-local function trim(trace: string): string
-	local lines: { string } = {}
-	for line in string.gmatch(trace, "[^\n]+") do
-		if string.sub(line, 1, #OWN) ~= OWN then table.insert(lines, line) end
-	end
-	return table.concat(lines, "\n")
-end
-
 -- The `result` message for an exec that did not run to an answer: `late` when it never started.
 local function failed(request: Request, problem: unknown, late: boolean?): string
 	local text = cut(describe(problem), ANSWER_LIMIT)
@@ -275,7 +288,7 @@ local function run(request: Request, at: number): string
 		end
 	end
 	local chunk: ModuleScript? = nil
-	local session: Session = { cache = {}, folders = {}, tops = {} }
+	local session: Session = { cache = {}, failed = {}, traces = {}, folders = {}, tops = {} }
 	-- in edit, what the script writes is one waypoint of its own, so Ctrl+Z takes it back
 	local recording = if apply.role == "edit" then ChangeHistoryService:TryBeginRecording("opossum: exec") else nil
 	local result: { n: number, [number]: any }? = nil
@@ -301,7 +314,8 @@ local function run(request: Request, at: number): string
 			end
 			return load(session, made)(capture("output"), capture("warning"))
 		end, function(e: unknown)
-			return { message = if type(e) == "string" then e else describe(e), trace = trim(debug.traceback(nil, 2)) }
+			local trace = if type(e) == "string" then session.traces[e] else nil
+			return { message = if type(e) == "string" then e else describe(e), trace = trace or trim(debug.traceback(nil, 2)) }
 		end))
 	end)
 	local deadline = started + (request.timeout or 60)

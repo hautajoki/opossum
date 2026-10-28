@@ -427,17 +427,21 @@ the stamps watch.luau keeps catch any synced instance it touched).
 write, a rename, a reparent or `UpdateSourceAsync`, `require` of the same instance returns the first result, and only
 a new instance loads anew (measured in Studio 0.745, 2026-10-28). Sync writes `Source` in place, so the plugin's
 `require` would run stale code from the second exec on. So the chunk, its modules and everything they require load
-through exec.luau's own `require`: each ModuleScript is copied (its current `Source`) into a nil-parented mirror of its
-ancestors' names, so chunk names, errors and tracebacks read `ReplicatedStorage.shared.x:12` as the original's would
-and map to files the same way; the copy's first code line (after leading comments, so `--!native` stays a directive)
-gets `local script, require = ...;` binding `script` to the original and `require` to the loader, which resolves
-instances and `@self`/`@game`/`./`/`../` paths against the original. Each exec has its own cache, so module state never
-leaks from one run into the next. A module that throws while loading makes Studio's `require` say only "Requested
-module experienced an error while loading" (measured); the loader takes the real message from `ScriptContext.Error`,
-which fires synchronously, and a syntax error from compiling the source again with `loadstring` (plugins have it;
-`debug.loadmodule` is not enabled). An engine error (`x is not a valid member of y`) names no place: its stack's first
-frame is put in front (`ReplicatedStorage.shared.x:3: x is not ...`), so it maps like any other. The traceback of a
-loading error stops at the require that loaded it.
+through exec.luau's own `require`, which runs each module's **body**: its `Source` wrapped as
+`return function(script, require, ...) <source> end` (spliced in front of the first code line, so `--!native` stays a
+directive and lines keep their numbers), compiled by requiring a copy placed in a nil-parented mirror of the
+original's ancestors' names, so chunk names, errors and tracebacks read `ReplicatedStorage.shared.x:12` as the
+original's would and map to files the same way. `script` is the original and `require` the loader, which resolves
+instances and `@self`/`@game`/`./`/`../` paths against the original. A body is compiled once per `Source` and called
+anew by each exec, so module state never leaks from one run into the next while compiled code is kept: Studio never
+frees native code, and compiling fresh copies of every module per run ran the edit VM out of it after about a dozen
+`opossum test` runs over a large project ("Memory allocation limit reached for native code generation", every module interpreted
+from then on and the whole set past its 60 s limit; measured). A body that throws while loading throws through the
+requires like any call, so its traceback reaches the code that failed; an engine error (`x is not a valid member of
+y`) names no place, so its stack's first frame is put in front (`ReplicatedStorage.shared.x:3: x is not ...`), and a
+later require of a module that failed rethrows its error, as Studio's does. A syntax error makes the copy's `require`
+say only "Requested module experienced an error while loading" (measured): compiling the source again with
+`loadstring` says what (plugins have it; `debug.loadmodule` is not enabled).
 
 Measured on a test project in the blank place: 20 of 20 "write a module's return value, immediately exec a require of
 it" runs saw the new value, for a `.luau` module and for a TypeScript one, 61–71 ms per run end to end; new files 85–94
