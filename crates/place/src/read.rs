@@ -154,6 +154,8 @@ struct Reader<'a> {
     refs: Vec<RefSpec>,
 }
 
+const ROJO_META: &str = "a Rojo meta file; properties live in place/*.toml, and `opossum migrate` moves them there";
+
 /// Reads `dir` (a project's `place/`) into a fresh DataModel, applies its properties files and resolves every Ref.
 /// Problems come back as diagnostics; whatever could be read is in the place.
 pub fn read_place(dir: &Path) -> (Place, Vec<Diag>) {
@@ -161,6 +163,9 @@ pub fn read_place(dir: &Path) -> (Place, Vec<Diag>) {
     let mut r = Reader { place: &mut place, diags: Vec::new(), refs: Vec::new() };
     let props = read_properties(dir, &mut r.diags);
     for (name, path, is_dir) in entries(dir, &mut r.diags) {
+        if !is_dir && name.ends_with(".meta.json") {
+            r.diags.push(Diag::error("place.rojoMeta", &path, ROJO_META));
+        }
         if !is_dir || name.starts_with('.') || name == "assets" {
             continue;
         }
@@ -186,7 +191,7 @@ impl Place {
     /// on its way that is new, gone or not a directory, together with every sibling entry that makes the same instance
     /// name (the first, by name, wins, as in a full read). An event on a service directory or `place/` itself reads
     /// everything again, and so does one on a properties file (rare: properties may make instances, which only a full
-    /// read orders). Afterwards the properties files are read and applied again and every ref that pointed into the
+    /// read orders) or a top-level meta file (whose error only a full read reports). Afterwards the properties files are read and applied again and every ref that pointed into the
     /// re-read entries, or did not resolve, is resolved again.
     ///
     /// Returns the files and directories re-read, whose diagnostics the returned ones replace (the properties files
@@ -194,7 +199,7 @@ impl Place {
     pub fn replace_entry(&mut self, dir: &Path, path: &Path) -> Option<(Vec<PathBuf>, Vec<Diag>)> {
         let rel = path.strip_prefix(dir).ok()?;
         let parts: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
-        let full = parts.len() == 1 && is_properties_file(&parts[0]);
+        let full = parts.len() == 1 && (is_properties_file(&parts[0]) || parts[0].ends_with(".meta.json"));
         let Some(top) = parts.first().filter(|_| !full) else {
             let (place, diags) = read_place(dir);
             *self = place;
@@ -442,8 +447,7 @@ impl Reader<'_> {
                 Err(e) => self.diags.push(Diag::error("place.io", path, e.to_string())),
             }
         } else if name.ends_with(".meta.json") {
-            let message = "a Rojo meta file; properties live in place/*.toml, and `opossum migrate` moves them there";
-            self.diags.push(Diag::error("place.rojoMeta", path, message));
+            self.diags.push(Diag::error("place.rojoMeta", path, ROJO_META));
         } else {
             self.diags.push(Diag::note("place.ignored", path, "not place content"));
         }

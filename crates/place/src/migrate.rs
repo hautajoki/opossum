@@ -20,6 +20,8 @@ pub struct Write {
     pub text: Option<String>,
 }
 
+const ONLY_INIT: &str = "only a directory's init.meta.json converts; move its properties by hand";
+
 /// The writes, by path, that convert `dir` (a project's `place/`) with `moved` (opossum.toml's `[place]` entries)
 /// joining the properties files; Err with every reason it cannot. A path that meta files and `moved` both set merges
 /// when they agree; one an existing properties file already sets is a conflict.
@@ -31,6 +33,8 @@ pub fn plan_migration(dir: &Path, moved: Vec<PlaceEntry>) -> Result<Vec<Write>, 
     for (name, path, is_dir) in tops {
         if let Some(service) = service_for_dir(&name).filter(|_| is_dir) {
             plan.dir(&path, &service, true);
+        } else if !is_dir && name.ends_with(".meta.json") {
+            plan.diags.push(Diag::error("migrate.meta", &path, ONLY_INIT));
         }
     }
     for entry in moved {
@@ -94,8 +98,7 @@ impl Plan {
             if is_dir {
                 self.dir(&file, &format!("{path}/{name}"), false);
             } else if name.ends_with(".meta.json") {
-                let message = "only a directory's init.meta.json converts; move its properties by hand";
-                self.diags.push(Diag::error("migrate.meta", &file, message));
+                self.diags.push(Diag::error("migrate.meta", &file, ONLY_INIT));
             } else if name.ends_with(".model.json") {
                 self.model(&file);
             }
