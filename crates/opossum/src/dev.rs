@@ -8,17 +8,24 @@
 //! (a few µs); anything that changed the shape builds a fresh tree and pairs it in, then rewrites the sourcemap and
 //! the log index. Studio's output comes back over the socket and prints with compiled lines mapped to their
 //! TypeScript. Everything the session says is an [`Event`], text or (`--json`) JSON lines.
+//!
+//! `opossum exec` and `opossum test` reach the session through the sync server's `POST /exec` on the port written to
+//! `.opossum/port`. Each request is answered from code at least as new as every file saved before it arrived: it writes
+//! a fence file, `.opossum/fence/<n>`, and waits for the watcher to bring it. FSEvents delivers one stream's events in
+//! order, so by then every earlier save has been seen too, and the build of the burst holding the fence is published
+//! before the fence is answered. The sync server then runs the code once the DataModel holds that build.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher};
 use place::Tree;
 use rustc_hash::FxHashMap;
-use sync::Report;
+use serde_json::{Value, json};
+use sync::{Realm, Report};
 
 use crate::build::{LineMap, RUNTIME, Session, script_class, script_kind, slashed};
 use crate::config::{self, Config};
@@ -27,10 +34,38 @@ use crate::event::{Event, Out};
 use crate::{editor, project_path};
 
 const QUIET: Duration = Duration::from_millis(30);
+/// How long a request waits for its fence: the watcher's latency plus the build of that burst.
+const FENCE_WAIT: Duration = Duration::from_secs(60);
+/// How much longer than its own time limit an exec waits for Studio to take it and answer.
+const EXEC_SLACK: Duration = Duration::from_secs(30);
 
 /// Instance full name (`ServerScriptService.server.app`) → its file relative to the root, and for a compiled
 /// module the map from output lines to TypeScript lines.
 type LogIndex = FxHashMap<String, (String, Option<Arc<LineMap>>)>;
+
+/// Requests waiting for their fence file to come back through the watcher, by number.
+#[derive(Default)]
+struct Fences {
+    next: u64,
+    waiting: Vec<(u64, Sender<u32>)>,
+}
+
+impl Fences {
+    /// Answers every fence up to `upto` with `generation`.
+    fn answer(&mut self, upto: u64, generation: u32) {
+        self.waiting.retain(|(n, tx)| {
+            if *n > upto {
+                return true;
+            }
+            let _ = tx.send(generation);
+            false
+        });
+    }
+}
+
+fn fence_dir(root: &Path) -> PathBuf {
+    editor::dir(root).join("fence")
+}
 
 /// Runs until a fatal error, which with `--json` is an event too.
 pub fn run(cfg: Config, json: bool) -> Result<bool, String> {
@@ -46,8 +81,7 @@ pub fn run(cfg: Config, json: bool) -> Result<bool, String> {
 
 fn session(cfg: Config, out: &Out) -> Result<bool, String> {
     let (report_tx, reports) = mpsc::channel();
-    // nobody takes exec requests yet: the server answers them 503
-    let (request_tx, _) = mpsc::channel();
+    let (request_tx, requests) = mpsc::channel();
     let server = sync::Server::start(sync::Config {
         project: cfg.name.clone(),
         place: cfg.place.unwrap_or(0),
@@ -59,6 +93,8 @@ fn session(cfg: Config, out: &Out) -> Result<bool, String> {
     })
     .map_err(|e| format!("sync server: {e}"))?;
     let port = server.port();
+    let file = editor::dir(&cfg.root).join("port");
+    std::fs::write(&file, port.to_string()).map_err(|e| format!("{}: {e}", file.display()))?;
     out.emit(&Event::Serving { project: &cfg.name, port });
 
     let index: Arc<Mutex<LogIndex>> = Arc::default();
@@ -66,6 +102,23 @@ fn session(cfg: Config, out: &Out) -> Result<bool, String> {
     std::thread::Builder::new()
         .name("studio-reports".into())
         .spawn(move || show_reports(reports, &printer, &studio, port))
+        .map_err(|e| e.to_string())?;
+    let fences: Arc<Mutex<Fences>> = Arc::default();
+    let execs = Execs {
+        server: server.clone(),
+        fences: Arc::clone(&fences),
+        index: Arc::clone(&index),
+        out: out.clone(),
+        root: cfg.root.clone(),
+    };
+    std::thread::Builder::new()
+        .name("exec-requests".into())
+        .spawn(move || {
+            for request in requests {
+                let execs = execs.clone();
+                let _ = std::thread::Builder::new().name("exec".into()).spawn(move || execs.handle(request));
+            }
+        })
         .map_err(|e| e.to_string())?;
 
     let (tx, events) = mpsc::channel();
@@ -75,7 +128,7 @@ fn session(cfg: Config, out: &Out) -> Result<bool, String> {
     let mut tree = Tree::new();
     loop {
         watch(&mut watcher, &cfg)?;
-        let reload = serve(cfg, &server, &mut tree, &index, &events, out)?;
+        let reload = serve(cfg, &server, &mut tree, &index, &fences, &events, out)?;
         cfg = reload;
         server.configure(cfg.name.clone(), cfg.place.unwrap_or(0), cfg.place.is_none(), cfg.hot_reload);
         let _ = editor::write(&cfg.root, &cfg.ts);
@@ -89,9 +142,19 @@ fn watch(watcher: &mut notify::RecommendedWatcher, cfg: &Config) -> Result<(), S
         }
         Ok::<(), String>(())
     };
+    let fences = fence_dir(&cfg.root);
+    std::fs::create_dir_all(&fences).map_err(|e| format!("{}: {e}", fences.display()))?;
+    add(&fences, RecursiveMode::NonRecursive)?;
     add(&cfg.root, RecursiveMode::NonRecursive)?;
     add(&cfg.src(), RecursiveMode::Recursive)?;
     add(&cfg.root.join("place"), RecursiveMode::Recursive)
+}
+
+/// The number of a fence file among the watcher's paths.
+fn fence_of(path: &Path) -> Option<u64> {
+    let dir = path.parent()?;
+    let editor = dir.parent()?.file_name()? == editor::DIR;
+    (editor && dir.file_name()? == "fence").then(|| path.file_name()?.to_str()?.parse().ok()).flatten()
 }
 
 /// What a burst of edits did to the tree.
@@ -99,6 +162,7 @@ struct Dev<'a> {
     server: &'a sync::Server,
     tree: &'a mut Tree,
     index: &'a Mutex<LogIndex>,
+    fences: &'a Mutex<Fences>,
     out: &'a Out,
     shown: Vec<String>,
 }
@@ -109,18 +173,23 @@ fn serve(
     server: &sync::Server,
     tree: &mut Tree,
     index: &Mutex<LogIndex>,
+    fences: &Mutex<Fences>,
     events: &Receiver<notify::Result<notify::Event>>,
     out: &Out,
 ) -> Result<Config, String> {
     let start = Instant::now();
+    // a fence written before this full build read the files is covered by it
+    let covered = fences.lock().unwrap_or_else(|e| e.into_inner()).next;
     let mut session = Session::new(cfg, None)?;
     let stats = session.build()?;
-    let mut dev = Dev { server, tree, index, out, shown: Vec::new() };
+    let mut dev = Dev { server, tree, index, fences, out, shown: Vec::new() };
     dev.reshape(&mut session);
     dev.publish(&session, false, start, &stats.times, 0, stats.lowered);
+    dev.answer(covered);
 
     loop {
         let paths = settle(events, out)?;
+        let fenced = paths.iter().filter_map(|p| fence_of(p)).max().unwrap_or(0);
         let start = Instant::now();
         let root = session.cfg.root.clone();
         let src = session.cfg.src();
@@ -169,6 +238,7 @@ fn serve(
             }
         }
         if changed.is_empty() && !rescan && !shape && luau.is_empty() && stale.is_empty() {
+            dev.answer(fenced);
             continue;
         }
         let packages: Vec<PathBuf> = session.packages.iter().map(|(p, _)| p.dir.clone()).collect();
@@ -187,6 +257,7 @@ fn serve(
         let mut phases = stats.times;
         phases.push(("publish", t.elapsed().as_secs_f64() * 1000.0));
         dev.publish(&session, true, start, &phases, changed.len() + luau.len(), stats.lowered);
+        dev.answer(fenced);
     }
 }
 
@@ -213,6 +284,11 @@ fn settle(events: &Receiver<notify::Result<notify::Event>>, out: &Out) -> Result
 }
 
 impl Dev<'_> {
+    /// Fences up to `upto` came back: everything saved before them is published.
+    fn answer(&self, upto: u64) {
+        self.fences.lock().unwrap_or_else(|e| e.into_inner()).answer(upto, self.server.generation());
+    }
+
     /// The shape changed (or this is the first build): pairs a fresh tree into the long-lived one, rewrites the
     /// sourcemap and the log index.
     fn reshape(&mut self, session: &mut Session) {
@@ -302,6 +378,113 @@ impl Dev<'_> {
     }
 }
 
+/// What answers `POST /exec`: the newest DataModel of the asked realm runs the code once it holds every save made
+/// before the request (the module doc), with Studio's output and errors mapped like log lines.
+#[derive(Clone)]
+struct Execs {
+    server: sync::Server,
+    fences: Arc<Mutex<Fences>>,
+    index: Arc<Mutex<LogIndex>>,
+    out: Out,
+    root: PathBuf,
+}
+
+impl Execs {
+    fn handle(&self, request: sync::Request) {
+        let (status, body) = match self.exec(&request.body) {
+            Ok(body) => (200, body),
+            Err((status, message)) => (status, json!({ "error": message })),
+        };
+        let _ = request.reply.send((status, body.to_string()));
+    }
+
+    /// The request's body is `{root, realm?, name, source, modules?, timeout?, map?}` (DESIGN.md, Exec).
+    fn exec(&self, body: &[u8]) -> Result<Value, (u16, String)> {
+        let request: Value = serde_json::from_slice(body).map_err(|e| (400, format!("bad request: {e}")))?;
+        let root = request["root"].as_str().unwrap_or("");
+        let same = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        if same(Path::new(root)) != same(&self.root) {
+            return Err((400, format!("this opossum dev serves {}, not {root}", self.root.display())));
+        }
+        let connected = self.server.realms();
+        let realm = match request["realm"].as_str() {
+            Some("edit") => Realm::Edit,
+            Some("server") => Realm::Server,
+            Some("client") => Realm::Client,
+            None if connected.contains(&Realm::Server) => Realm::Server,
+            None => Realm::Edit,
+            Some(other) => return Err((400, format!("no realm {other}: edit, server or client"))),
+        };
+        if !connected.contains(&realm) {
+            let port = self.server.port();
+            return Err((503, format!("no {} DataModel is connected to opossum dev on port {port}", realm.name())));
+        }
+        self.fence().map_err(|e| (503, e))?;
+        let timeout = request["timeout"].as_f64().filter(|t| *t > 0.0).unwrap_or(60.0);
+        let name = request["name"].as_str().unwrap_or("exec");
+        let message = json!({
+            "t": "exec",
+            "name": name,
+            "source": request["source"],
+            "modules": request["modules"],
+            "timeout": timeout,
+        });
+        let wait = Duration::from_secs_f64(timeout) + EXEC_SLACK;
+        let ran = self.server.exec(realm, message, wait).map_err(|e| (503, e))?;
+        let index = self.index.lock().unwrap_or_else(|e| e.into_inner());
+        let map = |v: &Value| v.as_str().map(|text| map_log(&sync::clean(text), &index).0);
+        let result = &ran.result;
+        let output: Vec<Value> = result["output"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|line| json!({ "kind": line[0], "text": map(&line[1]) }))
+            .collect();
+        let mut values = result["values"].clone();
+        if request["map"].as_bool() == Some(true) {
+            map_strings(&mut values, &index);
+        }
+        let (error, trace) = (map(&result["error"]), map(&result["trace"]));
+        drop(index);
+        let ok = result["ok"].as_bool().unwrap_or(false);
+        let ms = result["ms"].as_f64().unwrap_or(0.0);
+        let (generation, fresh) = (ran.generation, ran.fresh);
+        self.out.emit(&Event::Exec { realm, generation, name, ok, ms, error: error.as_deref() });
+        Ok(json!({
+            "ok": ok,
+            "realm": realm.name(),
+            "gen": generation,
+            "fresh": fresh,
+            "ms": ms,
+            "output": output,
+            "values": values,
+            "error": error,
+            "trace": trace,
+        }))
+    }
+
+    /// Waits until the watcher brought a fence file written now, and the build of its burst is published.
+    fn fence(&self) -> Result<u32, String> {
+        let (tx, rx) = mpsc::channel();
+        let n = {
+            let mut fences = self.fences.lock().unwrap_or_else(|e| e.into_inner());
+            fences.next += 1;
+            let n = fences.next;
+            fences.waiting.push((n, tx));
+            n
+        };
+        let file = fence_dir(&self.root).join(n.to_string());
+        let written = std::fs::write(&file, "");
+        let answer = written.as_ref().ok().map(|()| rx.recv_timeout(FENCE_WAIT));
+        let _ = std::fs::remove_file(&file);
+        match (written, answer) {
+            (Err(e), _) => Err(format!("{}: {e}", file.display())),
+            (_, Some(Ok(generation))) => Ok(generation),
+            _ => Err(format!("the file watcher did not bring {} within {} s", file.display(), FENCE_WAIT.as_secs())),
+        }
+    }
+}
+
 fn log_entry(session: &Session, root: &Path, file: &Path) -> (String, Option<Arc<LineMap>>) {
     let rel = file.strip_prefix(root).unwrap_or(file).display().to_string();
     (rel, session.compiled.get(&slashed(file)).map(|c| Arc::clone(&c.lines)))
@@ -324,6 +507,16 @@ fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, out: &Out, p
             Report::Verify { realm, generation, quiet } => out.emit(&Event::Verify { realm, generation, quiet }),
             Report::Failed(failure) => out.emit(&Event::Failed(&failure)),
         }
+    }
+}
+
+/// Maps every string inside `value` like a log line (`opossum test`'s report).
+fn map_strings(value: &mut Value, index: &LogIndex) {
+    match value {
+        Value::String(text) => *text = map_log(text, index).0,
+        Value::Array(items) => items.iter_mut().for_each(|v| map_strings(v, index)),
+        Value::Object(fields) => fields.values_mut().for_each(|v| map_strings(v, index)),
+        _ => {}
     }
 }
 

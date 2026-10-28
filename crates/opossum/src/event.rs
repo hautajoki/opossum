@@ -60,6 +60,15 @@ pub enum Event<'a> {
         text: &'a str,
         at: Option<(&'a str, Option<u32>)>,
     },
+    /// `opossum exec` or `test` ran `name` in a DataModel holding `generation` (`ms` in Studio).
+    Exec {
+        realm: Realm,
+        generation: u32,
+        name: &'a str,
+        ok: bool,
+        ms: f64,
+        error: Option<&'a str>,
+    },
     /// A config file changed: the session starts over.
     Restart {
         file: &'a str,
@@ -140,6 +149,13 @@ impl Event<'_> {
                 LogKind::Output => format!("[{}] {text}", realm.name()),
                 _ => format!("[{}] {}: {text}", realm.name(), kind.name()),
             },
+            Event::Exec { realm, generation, name, ok: true, ms, .. } => {
+                format!("[{}] ran {name} in {ms:.1} ms, generation {generation}", realm.name())
+            }
+            Event::Exec { realm, generation, name, error, .. } => {
+                let error = error.unwrap_or("failed").lines().next().unwrap_or("");
+                format!("[{}] {name} failed, generation {generation}: {error}", realm.name())
+            }
             Event::Restart { file } => format!("{file} changed, starting over"),
             Event::Error { message, .. } => format!("opossum: {message}"),
         }
@@ -199,6 +215,15 @@ impl Event<'_> {
                 "text": text,
                 "file": at.map(|(file, _)| file),
                 "line": at.and_then(|(_, line)| line),
+            }),
+            Event::Exec { realm, generation, name, ok, ms, error } => json!({
+                "t": "exec",
+                "realm": realm.name(),
+                "gen": generation,
+                "name": name,
+                "ok": ok,
+                "ms": ms,
+                "error": error,
             }),
             Event::Restart { file } => json!({"t": "restart", "file": file}),
             Event::Error { message, fatal } => json!({"t": "error", "message": message, "fatal": fatal}),

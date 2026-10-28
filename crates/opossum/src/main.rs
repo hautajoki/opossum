@@ -6,6 +6,7 @@ mod dev;
 mod diag;
 mod editor;
 mod event;
+mod exec;
 mod inputs;
 mod packages;
 
@@ -25,6 +26,9 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
   build [--profile <name>] [-o <file.rbxl>] [--emit <dir>]   build the place (.opossum/place.rbxl)
   check [--profile <name>] [--json]                          diagnostics, no output
   dev [--json]                                               watch, rebuild and sync to Studio
+  exec [--realm <r>] [--timeout <s>] [--json] (<file.luau> | -e <code> | -)
+                                                             run Luau in Studio through opossum dev
+  test [--realm <r>] [--timeout <s>] [--json] [<filter>]     run hexagon specs in Studio (bench: benchmarks)
   where <file | Instance.Path[:line]>                        a file's instance, or an instance's file
   sourcemap                                                  .opossum/sourcemap.json for luau-lsp
   plugin install [<path>]                                    the Studio plugin .rbxm
@@ -34,6 +38,8 @@ enum Command {
     Build { profile: Option<String>, out: Option<PathBuf>, emit: Option<PathBuf> },
     Check { profile: Option<String>, json: bool },
     Dev { json: bool },
+    Exec(exec::Options, exec::Source),
+    Test(exec::Options, &'static str, Option<String>),
     Where(String),
     Sourcemap,
     Plugin(Option<PathBuf>),
@@ -51,6 +57,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         }
     }
     let (mut profile, mut out, mut emit, mut json) = (None, None, None, false);
+    let (mut realm, mut timeout, mut code) = (None, None, None);
     let mut positional: Vec<&str> = Vec::new();
     let mut it = rest.iter().copied().skip(1);
     while let Some(arg) = it.next() {
@@ -60,14 +67,34 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
             "-o" => out = Some(PathBuf::from(value()?)),
             "--emit" => emit = Some(PathBuf::from(value()?)),
             "--json" => json = true,
+            "--realm" => realm = Some(value()?),
+            "--timeout" => timeout = Some(value()?.parse::<f64>().map_err(|_| "--timeout takes seconds")?),
+            "-e" => code = Some(value()?),
+            "-" => positional.push(arg),
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}")),
             _ => positional.push(arg),
         }
     }
+    let studio = matches!(rest.first().copied(), Some("exec" | "test" | "bench"));
+    if !studio && (realm.is_some() || timeout.is_some()) || code.is_some() && rest.first() != Some(&"exec") {
+        return Err(USAGE.to_owned());
+    }
+    let options = || exec::Options { realm: realm.clone(), json, timeout };
     let command = match (rest.first().copied(), positional.as_slice()) {
         (Some("build"), []) if !json => Command::Build { profile, out, emit },
         (Some("check"), []) if out.is_none() && emit.is_none() => Command::Check { profile, json },
         (Some("dev"), []) if profile.is_none() && out.is_none() && emit.is_none() => Command::Dev { json },
+        (Some("exec"), []) if code.is_some() => {
+            Command::Exec(options(), exec::Source::Code(code.clone().unwrap_or_default()))
+        }
+        (Some("exec"), ["-"]) if code.is_none() => Command::Exec(options(), exec::Source::Stdin),
+        (Some("exec"), [file]) if code.is_none() => Command::Exec(options(), exec::Source::File((*file).to_owned())),
+        (Some(mode @ ("test" | "bench")), filter)
+            if filter.len() <= 1 && profile.is_none() && out.is_none() && emit.is_none() =>
+        {
+            let mode = if mode == "test" { "test" } else { "bench" };
+            Command::Test(options(), mode, filter.first().map(|f| (*f).to_owned()))
+        }
         (Some("where"), [target]) => Command::Where((*target).to_owned()),
         (Some("sourcemap"), []) => Command::Sourcemap,
         (Some("plugin"), ["install"]) => Command::Plugin(None),
@@ -120,6 +147,12 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         return migrate(&config::find(&start)?);
     }
     let cfg = config::load(&config::find(&start)?)?;
+    // dev wrote what the editor reads; these only talk to it
+    match command {
+        Command::Exec(options, source) => return exec::exec(&cfg, &options, source),
+        Command::Test(options, mode, filter) => return exec::test(&cfg, &options, mode, filter.as_deref()),
+        _ => {}
+    }
     editor::write(&cfg.root, &cfg.ts)?;
     match command {
         Command::Build { profile, out, emit } => build(cfg, profile.as_deref(), out, emit),
@@ -127,7 +160,7 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Command::Dev { json } => dev::run(cfg, json),
         Command::Where(target) => where_(cfg, &cwd, &target),
         Command::Sourcemap => sourcemap(cfg),
-        Command::Plugin(_) | Command::Migrate => unreachable!("handled above"),
+        Command::Plugin(_) | Command::Migrate | Command::Exec(..) | Command::Test(..) => unreachable!("handled above"),
     }
 }
 
