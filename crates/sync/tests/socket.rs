@@ -1,7 +1,7 @@
 //! One socket end to end, with tungstenite as the plugin: the handshake, the hello exchange, an adopting verify, an
 //! edit, a repair after a failed ack, a late ack after a verify, an exec held back until the frame in flight is
-//! acked, a play server's exec by the build its stamps hold, an orphan a verify lists, and a reconfigure, with what
-//! the server reports to the dev session along the way.
+//! acked, a play server's exec by the build its stamps hold, an orphan a verify lists, a parked node the files drop,
+//! and a reconfigure, with what the server reports to the dev session along the way.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -340,6 +340,30 @@ fn socket_session() {
     assert_eq!(bind.1[1..], [Field::U(rs), Field::S(String::new()), Field::S("old".into())]);
     assert!(orphan.ops.contains(&(sync::REMOVE, vec![bind.1[0].clone()])));
     send(&mut socket, serde_json::json!({"t": "ack", "gen": orphan.generation, "failed": []}));
+
+    // a node that failed twice is parked and holds its root unstamped; once the files drop it, the root is stamped
+    // again, or a playtest's stamps would never match a build
+    let mut fresh = Tree::new();
+    for (path, source) in [("ReplicatedStorage/shared/a", "return 3"), ("ReplicatedStorage/shared/b", "return 4")] {
+        fresh.set_script(path, ScriptKind::Module, Source::new(Arc::from(source)), None).unwrap();
+    }
+    cur.update(fresh);
+    let b = cur.find("ReplicatedStorage/shared/b").unwrap();
+    server.publish(cur.clone());
+    let insert = frame(&mut socket).generation;
+    send(&mut socket, serde_json::json!({"t": "ack", "gen": insert, "failed": [[b, sync::SOURCE, "boom"]]}));
+    let repair = frame(&mut socket).generation;
+    send(&mut socket, serde_json::json!({"t": "ack", "gen": repair, "failed": [[b, sync::SOURCE, "boom"]]}));
+    std::thread::sleep(Duration::from_millis(50));
+    let mut fresh = Tree::new();
+    fresh
+        .set_script("ReplicatedStorage/shared/a", ScriptKind::Module, Source::new(Arc::from("return 3")), None)
+        .unwrap();
+    cur.update(fresh);
+    server.publish(cur.clone());
+    let dropped = frame(&mut socket);
+    assert_eq!(tags(&dropped), [sync::REMOVE, sync::STAMP]);
+    send(&mut socket, serde_json::json!({"t": "ack", "gen": dropped.generation, "failed": []}));
 
     // the plugin checks the place only at hello: another place closes the socket, and the plugin connects again
     server.configure("test".into(), 42, false, false);

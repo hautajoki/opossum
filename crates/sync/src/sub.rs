@@ -305,6 +305,9 @@ impl Sub {
                 self.verify.push(root);
             }
         }
+        // a failed node the files dropped leaves nothing behind to hold its root unstamped
+        self.parked.retain(|&id, _| cur.get(id).is_some());
+        self.fails.retain(|&id, _| cur.get(id).is_some());
         let mut verify = std::mem::take(&mut self.verify);
         verify.sort_unstable();
         verify.dedup();
