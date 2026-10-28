@@ -1,7 +1,8 @@
 //! `opossum dev`: a full build, then the Studio sync server and a file watcher. Each settled burst of edits
 //! (~30 ms quiet) rebuilds what it touched: TypeScript edits reuse the program and re-lower only the files they can
 //! affect, a file a `$file` macro reads re-lowers its readers, added or removed files route `src/` again, a `place/`
-//! edit re-reads that entry, and an edit to `opossum.toml`, `package.json` or a `.env` file starts the session over.
+//! edit re-reads that entry, and an edit to `opossum.toml`, `package.json`, bun's lockfile or a `.env` file starts
+//! the session over.
 //!
 //! The session keeps one [`place::Tree`] for its whole life. An edit that only changed sources sets them on it
 //! (a few µs); anything that changed the shape builds a fresh tree and pairs it in, then rewrites the sourcemap and
@@ -110,12 +111,16 @@ fn serve(
         let src = session.cfg.src();
         let (mut changed, mut rescan, mut shape, mut luau, mut stale) =
             (Vec::new(), false, false, Vec::new(), Vec::new());
+        // a full read of place/ already holds every later place/ event of the burst
+        let mut place_read = false;
         for path in &paths {
             let path = project_path(&session.cfg, path);
             stale.extend(session.readers(&slashed(&path)));
             let rel = path.strip_prefix(&root).unwrap_or(&path);
             let name = rel.to_string_lossy();
-            if matches!(name.as_ref(), config::FILE | "package.json" | ".env" | ".env.local") {
+            // a lockfile changes when an install rewrote node_modules, which is not watched
+            if matches!(name.as_ref(), config::FILE | "package.json" | "bun.lock" | "bun.lockb" | ".env" | ".env.local")
+            {
                 match config::load(&root.join(config::FILE)) {
                     Ok(cfg) => {
                         println!("{name} changed, starting over");
@@ -126,7 +131,11 @@ fn serve(
                 }
             }
             if rel.starts_with("place") {
-                shape |= session.place_changed(&path);
+                if !place_read {
+                    let read = session.place_changed(&path);
+                    shape |= read.is_some();
+                    place_read = read == Some(true);
+                }
                 continue;
             }
             if !path.starts_with(&src) || is_hidden(&path, &src) {
@@ -135,29 +144,26 @@ fn serve(
             let file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let source = [".ts", ".tsx", ".luau"].iter().any(|e| file.ends_with(e));
             let known = session.scan.find(&path).is_some() || session.scan.decls.contains(&path);
-            if file.ends_with(".luau") {
-                // known or not: a file deleted and made again later must not mount its old text
-                session.reread_luau(&path);
-            }
             match (path.is_file(), known) {
                 (true, true) if file.ends_with(".luau") => luau.push(path),
                 (true, true) => changed.push(slashed(&path)),
-                // a new or deleted source file, or a directory: the file set changed
-                (exists, _) if source || !exists || path.is_dir() => rescan = true,
+                // a new or deleted source file, or a directory made or removed: the file set changed. A vanished
+                // path that held nothing scanned (an editor's backup or probe file) changes nothing.
+                (exists, _) if source || path.is_dir() || (!exists && session.scan.holds(&path)) => rescan = true,
                 _ => {}
             }
         }
         if changed.is_empty() && !rescan && !shape && luau.is_empty() && stale.is_empty() {
             continue;
         }
-        let packages = session.packages.len();
+        let packages: Vec<PathBuf> = session.packages.iter().map(|(p, _)| p.dir.clone()).collect();
         let stats = if !changed.is_empty() || rescan || !stale.is_empty() {
             session.update(&changed, rescan, &stale)?
         } else {
             Default::default()
         };
         let t = Instant::now();
-        let shape = shape || rescan || session.packages.len() != packages;
+        let shape = shape || rescan || !session.packages.iter().map(|(p, _)| &p.dir).eq(packages.iter());
         let generation = if shape { dev.reshape(&mut session) } else { dev.edit(&mut session, &luau) };
         let mut phases: Vec<String> = stats.times.iter().map(|(p, ms)| format!("{p} {ms:.0}")).collect();
         phases.push(format!("publish {:.2}", t.elapsed().as_secs_f64() * 1000.0));

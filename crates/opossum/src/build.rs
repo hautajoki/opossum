@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use lower::graph::{FileFacts, Version};
@@ -93,8 +93,9 @@ pub struct Session {
     /// Problems mounting scripts and packages into the tree.
     mount_diags: Vec<Diag>,
     pub packages: Vec<(Package, Vec<place::PackageFile>)>,
-    /// Luau sources by file.
-    luau_sources: FxHashMap<PathBuf, place::Source>,
+    /// Luau sources by file, with the modification time and size they were read at: a change the watcher reports
+    /// only on a directory (a move, a coalesced checkout) is still read again.
+    luau_sources: FxHashMap<PathBuf, (Option<SystemTime>, u64, place::Source)>,
     /// What `place/` holds, read once and then entry by entry as files change.
     place: Option<place::Place>,
     /// RuntimeLib and Promise.
@@ -383,10 +384,15 @@ impl Session {
         Ok(stats)
     }
 
-    /// Keeps `project` and its facts, freeing the program it replaces.
+    /// Keeps `project` and its facts, freeing the program it replaces. A reuse with no edited file (only `$file`
+    /// inputs changed) hands back the same program: the old `Project` is then only dropped, which releases its
+    /// lineage reference.
     fn commit(&mut self, project: Project, facts: Vec<(String, FileFacts)>) {
         self.facts = facts.into_iter().collect();
-        if let Some(old) = self.project.replace(project) {
+        let program = project.program;
+        if let Some(old) = self.project.replace(project)
+            && !std::ptr::eq(old.program, program)
+        {
             // SAFETY: every diagnostic was copied into an owned `Diag` and every lowered tree rendered into text;
             // nothing reads the old program or its checkers again. Its files stay in the source cache.
             unsafe { old.free() };
@@ -480,11 +486,6 @@ impl Session {
         stats.time("render", t);
     }
 
-    /// Re-reads a Luau source after an edit.
-    pub fn reread_luau(&mut self, file: &Path) {
-        self.luau_sources.remove(file);
-    }
-
     /// Every diagnostic: routing, the place, then each file's (by file, then line), then the program's.
     pub fn diagnostics(&self) -> Vec<Diag> {
         let mut out: Vec<Diag> = self.route_diags.clone();
@@ -501,14 +502,19 @@ impl Session {
         out
     }
 
-    /// Reads a Luau module's source, from the session's cache when it has it.
+    /// Reads a Luau module's source, from the session's cache while the file's modification time and size are
+    /// the ones it was read at.
     fn luau(&mut self, file: &Path) -> Result<place::Source, String> {
-        if let Some(source) = self.luau_sources.get(file) {
+        let meta = std::fs::metadata(file).map_err(|e| e.to_string())?;
+        let (time, size) = (meta.modified().ok(), meta.len());
+        if let Some((t, n, source)) = self.luau_sources.get(file)
+            && (*t, *n) == (time, size)
+        {
             return Ok(source.clone());
         }
         let text = std::fs::read_to_string(file).map_err(|e| e.to_string())?;
         let source = place::Source::new(text.into());
-        self.luau_sources.insert(file.to_path_buf(), source.clone());
+        self.luau_sources.insert(file.to_path_buf(), (time, size, source.clone()));
         Ok(source)
     }
 
@@ -521,18 +527,25 @@ impl Session {
     }
 
     /// `place/` changed at `path`: re-reads that entry, replacing the diagnostics of what it re-read, every `[place]`
-    /// one and every unresolved ref (a re-read reports those whole). False when `path` is no content.
-    pub fn place_changed(&mut self, path: &Path) -> bool {
+    /// one and every unresolved ref (a re-read reports those whole). None when `path` is no content; Some(true) when
+    /// all of `place/` was read again, which covers every other event of the burst.
+    pub fn place_changed(&mut self, path: &Path) -> Option<bool> {
         let dir = self.cfg.root.join("place");
-        let Some(place) = &mut self.place else { return false };
-        let Some((scopes, diags)) = place.replace_entry(&dir, path, &self.cfg.place_props) else { return false };
+        let place = self.place.as_mut()?;
+        let Some((scopes, diags)) = place.replace_entry(&dir, path, &self.cfg.place_props) else {
+            // a top-level directory that named no service and went away takes its error along
+            let top = dir.join(path.strip_prefix(&dir).ok()?.components().next()?);
+            let before = self.place_diags.len();
+            self.place_diags.retain(|d| d.file.as_deref() != Some(top.as_path()));
+            return (self.place_diags.len() != before).then_some(false);
+        };
         self.place_diags.retain(|d| {
             let file = d.file.as_deref();
             let scoped = file.is_some_and(|f| scopes.iter().any(|s| f.starts_with(s)));
             !scoped && d.code != "place.badRef" && file != Some(Path::new("opossum.toml"))
         });
         self.place_diags.extend(diags.iter().map(diag::from_place));
-        true
+        Some(scopes == [dir])
     }
 
     /// A fresh tree of the whole DataModel: `place/` with the `[place]` properties, every routed module, the packages
@@ -600,7 +613,7 @@ impl Session {
         let mut out = BTreeMap::new();
         for m in &self.scan.modules {
             let source = match m.kind {
-                route::Kind::Luau => self.luau_sources.get(&m.file).map(|s| s.text.to_string()),
+                route::Kind::Luau => self.luau_sources.get(&m.file).map(|(_, _, s)| s.text.to_string()),
                 _ => self.compiled.get(&slashed(&m.file)).map(|c| c.source.text.to_string()),
             };
             if let Some(source) = source {

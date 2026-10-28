@@ -200,13 +200,23 @@ impl Place {
             *self = place;
             return Some((vec![dir.to_path_buf()], diags));
         };
-        if top.starts_with('.') || top == "assets" || dir.join(top).is_file() {
+        if top.starts_with('.') || top == "assets" {
             return None;
         }
         let Some(service_path) = service_for_dir(top) else {
+            // a loose file, there or gone, is no content; only a directory names a service
+            if !dir.join(top).is_dir() {
+                return None;
+            }
             let diags = vec![Diag::error("place.unknownService", dir.join(top), format!("{top} names no service"))];
             return Some((vec![dir.join(top)], diags));
         };
+        if !dir.join(top).is_dir() && parts.len() > 1 {
+            // a service directory that went away with what was in it
+            let (place, diags) = read_place(dir, config);
+            *self = place;
+            return Some((vec![dir.to_path_buf()], diags));
+        }
         if parts.len() == 1 {
             // a service directory came or went: rare, and only a full read orders services and nested containers
             let (place, diags) = read_place(dir, config);
@@ -234,9 +244,16 @@ impl Place {
                 _ => break,
             }
         }
-        let folder = at.parent().map(Path::to_path_buf).unwrap_or_else(|| dir.to_path_buf());
-        // what made `name` here before: entries, or `[place]` (made again below); never a nested container
         let parent_class = r.place.dom.get_by_ref(parent).map(|i| i.class.to_string()).unwrap_or_default();
+        if NESTED.contains(&(parent_class.as_str(), name.as_str())) {
+            // a nested container's own directory came, went or holds the event: its children may also come from
+            // a top-level directory (`place/terrain`) and `[place]` may make it, which only a full read orders
+            let (place, diags) = read_place(dir, config);
+            *self = place;
+            return Some((vec![dir.to_path_buf()], diags));
+        }
+        let folder = at.parent().map(Path::to_path_buf).unwrap_or_else(|| dir.to_path_buf());
+        // what made `name` here before: entries, or `[place]` (made again below)
         let old: Vec<Ref> = r
             .place
             .dom
@@ -245,7 +262,6 @@ impl Place {
             .unwrap_or_default()
             .into_iter()
             .filter(|&c| r.place.dom.get_by_ref(c).is_some_and(|i| i.name == name))
-            .filter(|_| !NESTED.contains(&(parent_class.as_str(), name.as_str())))
             .collect();
         for old in old {
             r.place.forget(old);

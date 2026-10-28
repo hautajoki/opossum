@@ -250,6 +250,11 @@ impl Scan {
         i.map(|&i| &self.modules[i])
     }
 
+    /// Whether `path` is a scanned file (a module, its typing, a declaration file) or a directory holding one.
+    pub fn holds(&self, path: &Path) -> bool {
+        self.by_file.keys().chain(&self.decls).any(|f| f.starts_with(path))
+    }
+
     /// `where <file>`: where a file lands, and the require spelling from `importer` when one is given.
     pub fn where_file(&self, routes: &Routes, file: &Path, importer: Option<&Path>) -> Option<Where<'_>> {
         let module = self.find(file)?;
