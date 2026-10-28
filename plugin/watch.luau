@@ -97,18 +97,26 @@ local function watch(root: Instance)
 	}
 end
 
--- Watches exactly the current roots (edit only). Called at start, after connecting and after a generation that
--- changed structure.
+-- Watches the roots the plugin found since the last look and lets go of the ones that are no longer roots (edit
+-- only); called after a generation that changed structure. The watched set is every root the plugin knows.
 function M.refresh()
 	if not edit then return end
-	local now: { [Instance]: true } = {}
-	for _, root in apply.roots() do
-		now[root] = true
-		if not watched[root] then watch(root) end
+	for _, root in apply.found do
+		if not watched[root] and apply.root_of(root) == root then watch(root) end
 	end
+	table.clear(apply.found)
 	for root in watched do
-		if not now[root] then unwatch(root) end
+		if apply.root_of(root) ~= root then unwatch(root) end
 	end
+end
+
+-- Watches every root in `roots` (a full apply.roots() scan, at start and on connect) and refreshes.
+function M.scan(roots: { { path: string, root: Instance } })
+	if not edit then return end
+	for _, r in roots do
+		table.insert(apply.found, r.root)
+	end
+	M.refresh()
 end
 
 -- Starts the DataModel-wide listeners for `role`; `sender` sends one upstream message.
@@ -138,21 +146,26 @@ function M.start(role: apply.Role, sender: (message: string) -> ())
 	-- Each frame is its own waypoint, so undoing someone's edit reverts only theirs, and the signals above see it.
 	-- Stepping over an opossum waypoint makes every root dirty: "opossum: resync" gives back the strays a verify
 	-- took (kept until the next Resync), "opossum: sync" reverts synced content, so the server verifies, as it
-	-- does after any step while a frame went unrecorded and rode someone else's waypoint.
+	-- does after any step while a frame went unrecorded and rode someone else's waypoint. That verify applies
+	-- unrecorded (apply.quiet), so the next Ctrl+Z goes on to the waypoint below instead of undoing the verify.
 	local function stepped(name: string)
 		local sync = name == "opossum: sync" or apply.unrecorded
 		if not sync and name ~= "opossum: resync" then return end
-		for _, root in apply.roots() do
+		for root in watched do
 			dirty(root)
 		end
 		if sync then
 			apply.unrecorded = false
-			send(`\{"t":"verify"}`)
+			apply.quiet = true
+			-- the verify pairs every root again, so what the step removed is never reported lost: a lost the
+			-- server took before the verify would be answered by a frame of its own, which takes apply.quiet
+			table.clear(lost)
+			send(apply.verify())
 		end
 	end
 	ChangeHistoryService.OnUndo:Connect(stepped)
 	ChangeHistoryService.OnRedo:Connect(stepped)
-	M.refresh()
+	M.scan(apply.roots())
 end
 
 return table.freeze(M)

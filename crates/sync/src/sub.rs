@@ -9,6 +9,7 @@ use place::{Id, NESTED, NONE, ROOT, Tree, Ustr};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::frame::{self, AUTHORITATIVE, Blob, RECONCILE, Section, changed_names, copy_names, folder_carried};
+use crate::server::clean;
 
 /// A frame splits above this many new instances or bytes of new content.
 const MAX_INSTANCES: usize = 10_000;
@@ -19,6 +20,9 @@ const FORCE_SOURCE: u8 = 2;
 const FORCE_REFS: u8 = 4;
 /// Diff the node although its pointer did not change (a failed move or remove, a lost instance).
 const FORCE_NODE: u8 = 8;
+
+/// How the plugin's failure messages start when the frame's blob threw.
+const BLOB_THREW: &str = "the blob does not load";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
@@ -47,7 +51,10 @@ pub struct Sent {
     inserted: FxHashSet<Id>,
     /// Ids a reconcile placed, with the root it verified: a failure there verifies the root again.
     reconciled: FxHashMap<Id, Id>,
-    consumers: usize,
+    /// The force flags the frame consumed: a play server that drops it is sent them again.
+    force: FxHashMap<Id, u8>,
+    /// Ids reported lost while the frame was in flight: Studio no longer holds them, whatever the frame did.
+    lost: FxHashSet<Id>,
     /// A connect frame's hello: if the frame never applies, the subscriber connects again.
     hello: Option<Vec<(String, String)>>,
 }
@@ -61,11 +68,16 @@ pub struct Sub {
     /// The content hash a node last failed with; failing again with it parks the node.
     fails: FxHashMap<Id, u128>,
     parked: FxHashMap<Id, u128>,
+    /// Parked reconcile nodes with the root they were verified in: Studio still holds them paired, so once they
+    /// change their root is verified again, never inserted beside them.
+    paired: FxHashMap<Id, Id>,
     /// Play server: the roots it hydrated, and nodes that did not pair.
     scope: FxHashSet<Id>,
     dropped: FxHashSet<Id>,
     /// Roots to verify in the next frame.
     verify: Vec<Id>,
+    /// Stamped paths a `verify` listed that are no longer roots, removed by the next frame.
+    orphans: Vec<String>,
     /// A blob threw: one insert or verify per frame until no work waits.
     isolate: bool,
     pub sent: Option<Sent>,
@@ -138,9 +150,11 @@ impl Sub {
             force: FxHashMap::default(),
             fails: FxHashMap::default(),
             parked: FxHashMap::default(),
+            paired: FxHashMap::default(),
             scope: FxHashSet::default(),
             dropped: FxHashSet::default(),
             verify: Vec::new(),
+            orphans: Vec::new(),
             isolate: false,
             sent: None,
             hello: None,
@@ -157,10 +171,11 @@ impl Sub {
         }
     }
 
-    /// The plugin's `verify` (the Resync button, or a frame it dropped or could not apply): the wait for an ack ends.
-    /// Edit verifies every root. The play server, which never verifies, is sent again what the frame in flight
-    /// carried; a connect frame that never applied connects again.
-    pub fn resync(&mut self, cur: &Tree) {
+    /// The plugin's `verify` (the Resync button, an undo over a sync, or a frame it dropped or could not apply), with
+    /// its stamped paths: the wait for an ack ends. Edit verifies every root and removes the listed paths that are
+    /// no longer roots. The play server, which never verifies, is sent again what the frame in flight carried; a
+    /// connect frame that never applied connects again.
+    pub fn resync(&mut self, cur: &Tree, roots: &[(String, String)]) {
         let sent = self.sent.take();
         if self.hello.is_some() {
             return;
@@ -172,14 +187,23 @@ impl Sub {
             Role::Edit => {
                 self.verify = cur.roots();
                 self.parked.clear();
+                self.paired.clear();
                 self.fails.clear();
                 for f in cur.frames() {
                     *self.force.entry(f).or_default() |= FORCE_PROPS;
+                }
+                // a connect again removes them itself
+                if self.hello.is_none() {
+                    let at: FxHashSet<String> = self.verify.iter().map(|&r| cur.path_of(r)).collect();
+                    self.orphans = roots.iter().filter(|(p, _)| !at.contains(p)).map(|(p, _)| p.clone()).collect();
                 }
             }
             Role::Server if self.hello.is_none() => {
                 if let Some(sent) = sent {
                     self.known = sent.prev;
+                    for (id, f) in sent.force {
+                        *self.force.entry(id).or_default() |= f;
+                    }
                 }
             }
             _ => {}
@@ -187,19 +211,33 @@ impl Sub {
     }
 
     /// Instances someone else removed: they leave the known tree, so the next frame puts them back, and refs into
-    /// them are sent again. The play server's game code removes synced instances on purpose, so it never reports any.
+    /// them are sent again. One the frame in flight places anew stays: Studio holds it again after the apply, so its
+    /// root is verified, which pairs whatever is live. The play server's game code removes synced instances on
+    /// purpose, so it never reports any.
     pub fn lost(&mut self, cur: &Tree, ids: &[Id]) {
         if self.role != Role::Edit {
             return;
         }
         let mut gone = FxHashSet::default();
         for &id in ids {
+            if let Some(sent) = &mut self.sent {
+                if let Some(&root) = sent.reconciled.get(&id) {
+                    self.verify.push(root);
+                    continue;
+                }
+                if sent.inserted.contains(&id) {
+                    self.verify.extend(cur.root_of(id));
+                    continue;
+                }
+                sent.lost.insert(id);
+            }
             gone.extend(drop_subtree(&mut self.known, id));
         }
         self.refs_into(cur, &gone);
     }
 
-    /// Marks every node outside `gone` whose refs point into it, so its refs are sent again.
+    /// Marks every node outside `gone` whose refs point into it, so its refs are sent again; one parked (its `ref`
+    /// failed against what is now back) is unparked, unless it is paired, which its root's verify settles.
     fn refs_into(&mut self, cur: &Tree, gone: &FxHashSet<Id>) {
         if gone.is_empty() {
             return;
@@ -208,6 +246,9 @@ impl Sub {
             let node = cur.get(id).expect("a live id");
             if !gone.contains(&id) && node.refs.iter().any(|(_, t)| gone.contains(t)) {
                 *self.force.entry(id).or_default() |= FORCE_REFS;
+                if !self.paired.contains_key(&id) {
+                    self.parked.remove(&id);
+                }
             }
         }
     }
@@ -222,6 +263,19 @@ impl Sub {
             None if self.known.ids().next().is_none() => return None,
             None => self.known.clone(),
         };
+        for path in std::mem::take(&mut self.orphans) {
+            self.orphan(cx, &path, &mut plan);
+        }
+        // a parked reconcile node that changed (or left) is still paired in Studio: its root is verified again
+        for (id, root) in std::mem::take(&mut self.paired) {
+            let same = self.parked.get(&id).is_some_and(|&h| cur.get(id).is_some_and(|n| n.hash == h));
+            if same {
+                self.paired.insert(id, root);
+            } else {
+                self.parked.remove(&id);
+                self.verify.push(root);
+            }
+        }
         let mut verify = std::mem::take(&mut self.verify);
         verify.sort_unstable();
         verify.dedup();
@@ -230,9 +284,12 @@ impl Sub {
         if self.isolate && verify.len() > 1 {
             self.verify = verify.split_off(1);
         }
+        let mut reconciled: FxHashSet<Id> = FxHashSet::default();
         for root in verify {
-            self.verify_root(cur, root, &mut known, &mut plan);
+            reconciled.extend(self.verify_root(cur, root, &mut known, &mut plan));
         }
+        // a holder elsewhere may point at an instance the reconcile replaced with a fresh blob copy
+        self.refs_into(cur, &reconciled);
         self.diff(cx, &known, &mut plan);
         if self.isolate {
             if plan.reconciles.len() + plan.tops.len() > 1 || !self.verify.is_empty() {
@@ -242,13 +299,61 @@ impl Sub {
                 self.isolate = false;
             }
         }
-        // a parked node keeps what made it fail, to be sent when it changes
-        self.force.retain(|id, _| self.parked.contains_key(id));
+        // a parked node keeps what made it fail, to be sent when it changes; the rest is this frame's
+        let (keep, consumed): (FxHashMap<Id, u8>, FxHashMap<Id, u8>) =
+            std::mem::take(&mut self.force).into_iter().partition(|(id, _)| self.parked.contains_key(id));
+        self.force = keep;
+        let next = self.next(cur, &known, &plan);
+        let refs = std::mem::take(&mut plan.refs);
+        for r in refs {
+            if r.2 == NONE || next.get(r.2).is_some() {
+                plan.refs.push(r);
+            } else {
+                self.hold(cur, r.0, &mut plan.unstamped);
+            }
+        }
         if plan.is_empty() && hello.is_none() {
             self.known = known;
             return None;
         }
-        Some(self.encode(cx, known, plan, generation, hello))
+        Some(self.encode(cx, known, next, plan, generation, hello, consumed))
+    }
+
+    /// A ref whose target Studio will not hold after the frame (deferred, parked, or not followed) cannot land: it is
+    /// held back, sent once the target is there, and its root stays unstamped meanwhile.
+    fn hold(&mut self, cur: &Tree, holder: Id, unstamped: &mut FxHashSet<Id>) {
+        *self.force.entry(holder).or_default() |= FORCE_REFS;
+        unstamped.extend(cur.root_of(holder));
+    }
+
+    /// What the subscriber holds once a frame of `plan` applies.
+    fn next(&self, cur: &Tree, known: &Tree, plan: &Plan) -> Tree {
+        let mut next = cur.clone();
+        for &a in &plan.absent {
+            for id in cur.preorder_from(a) {
+                next.put(id, None);
+            }
+        }
+        for &id in &plan.keep {
+            next.put(id, known.arc(id).cloned());
+        }
+        for &root in &self.verify {
+            // a root waiting for its first verify (a connect while isolating) is not held at all; one held already
+            // took this frame's diff like any other
+            if known.get(root).is_none() {
+                for id in subtree(&next, root) {
+                    next.put(id, known.arc(id).cloned());
+                }
+            }
+        }
+        if self.role == Role::Server {
+            for id in cur.ids().collect::<Vec<_>>() {
+                if !self.tracked(cur, id) {
+                    next.put(id, None);
+                }
+            }
+        }
+        next
     }
 
     fn connect(&mut self, cx: &Context, roots: Vec<(String, String)>, plan: &mut Plan) -> Tree {
@@ -324,7 +429,8 @@ impl Sub {
     }
 
     /// A stamped instance that is no longer a root: bound by its path and removed. The class is `""`, which binds
-    /// only an instance carrying the `opossum` attribute: what the hello listed, never the user's own.
+    /// only an instance carrying the `opossum` attribute: what the plugin listed, never the user's own. The plugin
+    /// removes it with `Parent = nil` in a waypoint of its own, so Ctrl+Z gives it back.
     fn orphan(&mut self, cx: &Context, path: &str, plan: &mut Plan) {
         let parts: Vec<&str> = path.split('/').collect();
         let nested = parts.len() >= 3 && NESTED.contains(&(parts[0], parts[1]));
@@ -346,15 +452,15 @@ impl Sub {
         self.temp -= 1;
         bind(plan, id, parent, "", &name);
         plan.removes.push(id);
-        (cx.notice)(format!("removing {path}: it is no longer a root"));
+        (cx.notice)(format!("removing {}: it is no longer a root (Ctrl+Z in Studio gives it back)", clean(path)));
     }
 
     /// A reconcile of the root under its frame of reference, every node's properties listed. What the subscriber
     /// holds under the root and the tree no longer has is removed; what it holds elsewhere and the tree now has here
-    /// is left out of the reconcile and moves in, keeping its identity.
-    fn verify_root(&mut self, cur: &Tree, root: Id, known: &mut Tree, plan: &mut Plan) {
+    /// is left out of the reconcile and moves in, keeping its identity. Returns the ids reconciled.
+    fn verify_root(&mut self, cur: &Tree, root: Id, known: &mut Tree, plan: &mut Plan) -> Vec<Id> {
         if cur.get(root).is_none() {
-            return;
+            return Vec::new();
         }
         let inside: FxHashSet<Id> = cur.preorder_from(root).into_iter().collect();
         let held = subtree(known, root);
@@ -389,11 +495,12 @@ impl Sub {
             let children = &cur.get(id).expect("a live id").children;
             plan.foreign.extend(children.iter().copied().filter(|&c| known.get(c).is_some()));
         }
-        for id in reconciled {
+        for &id in &reconciled {
             known.put(id, cur.arc(id).cloned());
         }
         plan.reconciles.push(root);
         plan.touched.insert(root);
+        reconciled
     }
 
     /// Whether the play server follows this node: frames, and what is under a root it hydrated.
@@ -525,16 +632,16 @@ impl Sub {
         if self.role == Role::Server && !plan.swaps.is_empty() {
             self.importers(cur, plan);
         }
-        if edit {
-            for &id in plan.tops.iter().chain(&plan.moves).chain(&plan.sources).chain(&plan.reconciles) {
-                plan.touched.extend(cur.root_of(id));
-            }
-            for (id, _) in &plan.props {
-                plan.touched.extend(cur.root_of(*id));
-            }
-            for (id, _, _) in &plan.refs {
-                plan.touched.extend(cur.root_of(*id));
-            }
+        let changed =
+            plan.tops.iter().chain(&plan.moves).chain(&plan.sources).chain(&plan.swaps).chain(&plan.reconciles);
+        for &id in changed {
+            plan.touched.extend(cur.root_of(id));
+        }
+        for (id, _) in &plan.props {
+            plan.touched.extend(cur.root_of(*id));
+        }
+        for (id, _, _) in &plan.refs {
+            plan.touched.extend(cur.root_of(*id));
         }
     }
 
@@ -568,13 +675,16 @@ impl Sub {
         plan.swaps = swaps;
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn encode(
         &mut self,
         cx: &Context,
         known: Tree,
+        next: Tree,
         plan: Plan,
         generation: u32,
         hello: Option<Vec<(String, String)>>,
+        force: FxHashMap<Id, u8>,
     ) -> Vec<Vec<u8>> {
         let cur = cx.cur;
         let edit = self.role == Role::Edit;
@@ -713,16 +823,36 @@ impl Sub {
             frame::u32(out, id);
             frame::str(out, text);
         }
-        let mut refs = Section::default();
         let mut removes = Section::default();
         for &id in &plan.removes {
             frame::u32(removes.op(frame::REMOVE), id);
         }
+        let count = parts.len();
+        let mut blobs = Vec::with_capacity(count);
+        let mut outside = Vec::new();
+        let mut childrens = Vec::with_capacity(count);
+        for part in parts {
+            let (bytes, held) = part.blob.finish(cur);
+            blobs.push(bytes);
+            outside.extend(held);
+            childrens.push(part.children);
+        }
+        let mut unstamped = plan.unstamped.clone();
+        let mut refs = Section::default();
+        for (id, name, target) in outside.into_iter().chain(plan.refs.iter().copied()) {
+            if target != NONE && next.get(target).is_none() {
+                self.hold(cur, id, &mut unstamped);
+                continue;
+            }
+            let out = refs.op(frame::REF);
+            frame::u32(out, id);
+            frame::str(out, &name);
+            frame::u32(out, target);
+        }
         // a root is stamped when the frame touched it and Studio will hold exactly its tree: nothing under it parked,
-        // deferred or left with a value it could not take
+        // deferred or left with a value it could not take (the play server keeps its stamps in memory)
         let mut stamps = Section::default();
-        if edit {
-            let mut unstamped = plan.unstamped.clone();
+        if self.role != Role::Client {
             let held = plan.absent.iter().chain(&plan.keep).chain(self.parked.keys());
             unstamped.extend(held.filter_map(|&id| cur.root_of(id).or_else(|| known.root_of(id))));
             let mut touched: Vec<Id> = plan
@@ -756,23 +886,6 @@ impl Sub {
             }
         }
 
-        let consumers = units.len() + plan.swaps.len() + props.count as usize;
-        let count = parts.len();
-        let mut blobs = Vec::with_capacity(count);
-        let mut outside = Vec::new();
-        let mut childrens = Vec::with_capacity(count);
-        for part in parts {
-            let (bytes, held) = part.blob.finish(cur);
-            blobs.push(bytes);
-            outside.extend(held);
-            childrens.push(part.children);
-        }
-        for (id, name, target) in outside.into_iter().chain(plan.refs.iter().copied()) {
-            let out = refs.op(frame::REF);
-            frame::u32(out, id);
-            frame::str(out, &name);
-            frame::u32(out, target);
-        }
         let empty = Section::default();
         let mut out = Vec::with_capacity(count);
         for (i, (blob, children)) in blobs.iter().zip(&childrens).enumerate() {
@@ -786,31 +899,8 @@ impl Sub {
             }
         }
 
-        // what the subscriber holds once the frame applies
-        let mut next = cur.clone();
-        for &id in &absent {
-            next.put(id, None);
-        }
-        for &id in &plan.keep {
-            next.put(id, known.arc(id).cloned());
-        }
-        for &root in &self.verify {
-            // a root waiting for its first verify (a connect while isolating) is not held at all; one held already
-            // took this frame's diff like any other
-            if known.get(root).is_none() {
-                for id in subtree(&next, root) {
-                    next.put(id, known.arc(id).cloned());
-                }
-            }
-        }
-        if self.role == Role::Server {
-            for id in cur.ids().collect::<Vec<_>>() {
-                if !self.tracked(cur, id) {
-                    next.put(id, None);
-                }
-            }
-        }
-        self.sent = Some(Sent { generation, prev: known, inserted, reconciled, consumers, hello });
+        let lost = FxHashSet::default();
+        self.sent = Some(Sent { generation, prev: known, inserted, reconciled, force, lost, hello });
         self.known = next;
         self.base = generation;
         out
@@ -830,7 +920,7 @@ impl Sub {
         if failed.is_empty() {
             return false;
         }
-        let mut blob_failures = 0;
+        let mut threw = false;
         // ids failing in this ack: a second failure of one node in the same frame does not park it
         let mut now: FxHashSet<Id> = FxHashSet::default();
         // subtrees Studio no longer holds, whose inbound refs are sent again
@@ -878,23 +968,15 @@ impl Sub {
                     drop_subtree(&mut self.known, id);
                 }
                 frame::CHILDREN => {
-                    blob_failures += 1;
+                    threw |= message.starts_with(BLOB_THREW);
                     match sent.reconciled.get(&id) {
-                        // a reconcile pairs live content: inserting it again would duplicate it, so the root is
-                        // verified again, unless the node is parked (then it is left out until it changes)
-                        Some(_) if parked => {
-                            drop_subtree(&mut self.known, id);
-                        }
-                        Some(&root) => {
-                            if cur.root_of(root) == Some(root) && !self.verify.contains(&root) {
-                                self.verify.push(root);
-                            }
-                        }
+                        Some(&root) => self.reconcile_failed(cur, id, root, parked, true),
                         // the blob-made part of the subtree leaves the known tree and is inserted again
                         None => {
                             for d in subtree(&self.known, id) {
                                 if d == id || sent.inserted.contains(&d) {
                                     self.known.put(d, None);
+                                    gone.insert(d);
                                 }
                             }
                         }
@@ -902,12 +984,13 @@ impl Sub {
                 }
                 frame::MOVE | frame::REMOVE => {
                     let from = sent.prev.get(id).map_or(NONE, |n| n.parent);
-                    if *tag == frame::MOVE && cur.get(from).is_none() {
-                        // its old parent was removed in the same frame, and it with it: inserted again
+                    if sent.lost.contains(&id) || (*tag == frame::MOVE && cur.get(from).is_none()) {
+                        // gone from Studio (lost meanwhile, or its old parent was removed in the same frame, and it
+                        // with it): inserted again
                         gone.extend(drop_subtree(&mut self.known, id));
                     } else {
                         for d in subtree(&sent.prev, id) {
-                            if self.known.get(d).is_none() || d == id {
+                            if (self.known.get(d).is_none() && !sent.lost.contains(&d)) || d == id {
                                 self.known.put(d, sent.prev.arc(d).cloned());
                             }
                         }
@@ -915,12 +998,17 @@ impl Sub {
                     }
                 }
                 frame::PROPS => {
-                    blob_failures += 1;
-                    *self.force.entry(id).or_default() |= FORCE_PROPS;
+                    threw |= message.starts_with(BLOB_THREW);
+                    match sent.reconciled.get(&id) {
+                        // the props a reconcile lists are more than a `props` op would resend (a script's Source, the
+                        // defaults it resets): its root is verified again
+                        Some(&root) => self.reconcile_failed(cur, id, root, parked, false),
+                        None => *self.force.entry(id).or_default() |= FORCE_PROPS,
+                    }
                 }
                 frame::SOURCE => *self.force.entry(id).or_default() |= FORCE_SOURCE,
                 frame::SWAP => {
-                    blob_failures += 1;
+                    threw |= message.starts_with(BLOB_THREW);
                     *self.force.entry(id).or_default() |= FORCE_SOURCE;
                 }
                 frame::REF => *self.force.entry(id).or_default() |= FORCE_REFS,
@@ -928,10 +1016,24 @@ impl Sub {
             }
         }
         self.refs_into(cur, &gone);
-        if sent.consumers > 1 && blob_failures >= sent.consumers {
+        if threw {
             self.isolate = true;
         }
         true
+    }
+
+    /// A reconcile node failed: it pairs live content, so inserting it again would duplicate it. Its root is verified
+    /// again; once parked it stays paired with its live instance until it changes (left out of the known tree when
+    /// its shape failed), and its root unstamped.
+    fn reconcile_failed(&mut self, cur: &Tree, id: Id, root: Id, parked: bool, shape: bool) {
+        if parked {
+            if shape {
+                drop_subtree(&mut self.known, id);
+            }
+            self.paired.insert(id, root);
+        } else if cur.root_of(root) == Some(root) && !self.verify.contains(&root) {
+            self.verify.push(root);
+        }
     }
 }
 
@@ -1054,6 +1156,98 @@ mod tests {
         assert!(added.tops.is_empty());
         let removed = plan(&mut sub, &cur, &known, false);
         assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn a_verify_moves_back_what_stays_while_its_known_ancestor_leaves() {
+        let gen1 = tree(&[
+            ("ReplicatedStorage/shared/keep", ScriptKind::Module, "return 0"),
+            ("ReplicatedStorage/shared/f/c", ScriptKind::Module, "return 1"),
+            ("ReplicatedStorage/shared/f/e", ScriptKind::Module, "return 2"),
+            ("ReplicatedStorage/client/x", ScriptKind::Module, "return 3"),
+        ]);
+        // f moves to client whole (it claims its ids by hash), then c moves back to shared alone
+        let mut cur = gen1.clone();
+        cur.update(tree(&[
+            ("ReplicatedStorage/shared/keep", ScriptKind::Module, "return 0"),
+            ("ReplicatedStorage/client/f/c", ScriptKind::Module, "return 1"),
+            ("ReplicatedStorage/client/f/e", ScriptKind::Module, "return 2"),
+            ("ReplicatedStorage/client/x", ScriptKind::Module, "return 3"),
+        ]));
+        cur.update(tree(&[
+            ("ReplicatedStorage/shared/keep", ScriptKind::Module, "return 0"),
+            ("ReplicatedStorage/shared/c", ScriptKind::Module, "return 1"),
+            ("ReplicatedStorage/client/f/e", ScriptKind::Module, "return 2"),
+            ("ReplicatedStorage/client/x", ScriptKind::Module, "return 3"),
+        ]));
+        let id = |t: &Tree, p: &str| t.find(p).unwrap();
+        let (shared, f, c) = (
+            id(&cur, "ReplicatedStorage/shared"),
+            id(&gen1, "ReplicatedStorage/shared/f"),
+            id(&gen1, "ReplicatedStorage/shared/f/c"),
+        );
+        assert_eq!((id(&cur, "ReplicatedStorage/client/f"), id(&cur, "ReplicatedStorage/shared/c")), (f, c));
+
+        // the subscriber still holds gen1 when shared is verified
+        let mut sub = Sub::new();
+        sub.role = Role::Edit;
+        let mut known = gen1.clone();
+        let mut plan = Plan::default();
+        sub.verify_root(&cur, shared, &mut known, &mut plan);
+        // c stays in the verified root, but its known ancestor f leaves it: c stays known and moves, never reconciled
+        // as a second copy beside the one f carries out
+        assert_eq!(known.get(c).map(|n| n.parent), Some(f));
+        assert!(plan.foreign.contains(&c));
+        assert!(!preorder_where(&cur, shared, &|n| !plan.foreign.contains(&n)).contains(&c));
+        let quiet = |_: String| {};
+        let cx = Context { cur: &cur, ring: &[], hot_reload: false, notice: &quiet, say: &quiet };
+        sub.diff(&cx, &known, &mut plan);
+        let mut moves = plan.moves.clone();
+        moves.sort_unstable();
+        assert_eq!(moves, [f.min(c), f.max(c)]);
+        assert!(plan.tops.is_empty() && plan.removes.is_empty());
+    }
+
+    #[test]
+    fn an_instance_lost_while_a_frame_is_in_flight_comes_back_once() {
+        let quiet = |_: String| {};
+        let id = |t: &Tree, p: &str| t.find(p).unwrap();
+        let gen1 = tree(&[
+            ("ReplicatedStorage/shared/a/x", ScriptKind::Module, "return 1"),
+            ("ReplicatedStorage/shared/b/y", ScriptKind::Module, "return 2"),
+        ]);
+        let (shared, x) = (id(&gen1, "ReplicatedStorage/shared"), id(&gen1, "ReplicatedStorage/shared/a/x"));
+
+        // the connect verifies shared, placing x by reconcile; x's old instance is reported lost meanwhile: the
+        // frame puts x back itself, so the root is verified again rather than x inserted a second time
+        let cx = Context { cur: &gen1, ring: &[], hot_reload: false, notice: &quiet, say: &quiet };
+        let mut sub = Sub::new();
+        sub.hello(Role::Edit, Vec::new(), false);
+        sub.frame(&cx, 1).unwrap();
+        sub.lost(&gen1, &[x]);
+        assert!(sub.known.get(x).is_some() && sub.verify.contains(&shared));
+        sub.ack(&cx, 1, &[]);
+        sub.frame(&cx, 2).unwrap();
+        let sent = sub.sent.as_ref().unwrap();
+        assert!(sent.reconciled.contains_key(&x) && sent.inserted.is_empty());
+        sub.ack(&cx, 2, &[]);
+
+        // a frame moves x to b, and x is deleted before it applies: the failed move does not put x back where the
+        // known tree had it, so the next frame inserts it
+        let mut cur = gen1.clone();
+        cur.update(tree(&[
+            ("ReplicatedStorage/shared/a/z", ScriptKind::Module, "return 0"),
+            ("ReplicatedStorage/shared/b/x", ScriptKind::Module, "return 1"),
+            ("ReplicatedStorage/shared/b/y", ScriptKind::Module, "return 2"),
+        ]));
+        assert_eq!(id(&cur, "ReplicatedStorage/shared/b/x"), x);
+        let cx = Context { cur: &cur, ring: &[], hot_reload: false, notice: &quiet, say: &quiet };
+        sub.frame(&cx, 3).unwrap();
+        sub.lost(&cur, &[x]);
+        sub.ack(&cx, 3, &[(x, frame::MOVE, format!("id {x} is not mapped"))]);
+        assert!(sub.known.get(x).is_none());
+        sub.frame(&cx, 4).unwrap();
+        assert!(sub.sent.as_ref().unwrap().inserted.contains(&x));
     }
 
     #[test]

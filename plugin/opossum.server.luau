@@ -47,9 +47,9 @@ local function work()
 			-- the rest of its generation is dropped too, so this verify is the generation's only answer
 			warn(`opossum: a frame failed to apply: {result}`)
 			apply.drop()
-			send(`\{"t":"verify"}`)
+			send(apply.verify())
 		elseif result == "dropped" then
-			send(`\{"t":"verify"}`)
+			send(apply.verify())
 		elseif result == "part" then
 			task.wait()
 		elseif result == "done" then
@@ -65,14 +65,10 @@ local function work()
 end
 
 local function hello(server: Hello): string
-	local roots: { [string]: string } = {}
-	if ROLE == "edit" or (ROLE == "server" and server.hotReload) then
-		for path, root in apply.roots() do
-			local stamp = root:GetAttribute("opossum")
-			roots[apply.clean(path)] = if type(stamp) == "string" then stamp else ""
-		end
-	end
-	return `\{"t":"hello","role":"{ROLE}","place":{game.PlaceId},"roots":{if next(roots) then HttpService:JSONEncode(roots) else "{}"}}`
+	local found = apply.roots()
+	watch.scan(found)
+	local roots = if ROLE == "edit" or (ROLE == "server" and server.hotReload) then apply.listing(found) else "{}"
+	return `\{"t":"hello","role":"{ROLE}","place":{game.PlaceId},"roots":{roots}}`
 end
 
 local lines: { { string } } = {}
@@ -157,7 +153,6 @@ local function connect(port: number): "live" | "next" | "busy"
 	socket = client
 	project = server.project
 	state = "live"
-	watch.refresh()
 	send(hello(server))
 	show()
 	print(`opossum: syncing {project} ({ROLE}) from port {port}`)
@@ -198,7 +193,7 @@ if ROLE == "edit" then
 	resync.ClickableWhenViewportHidden = true
 	resync.Click:Connect(function()
 		resync:SetActive(false)
-		if socket then send(`\{"t":"verify"}`) end
+		if socket then send(apply.verify()) end
 	end)
 end
 

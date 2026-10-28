@@ -4,6 +4,7 @@
 -- DataModel. It owns the id map, the stamps and the record of the plugin's own writes that watch.luau reads.
 
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
+local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ScriptEditorService = game:GetService("ScriptEditorService")
 local SerializationService = game:GetService("SerializationService")
@@ -37,11 +38,17 @@ local M = {
 	failed = {} :: { Failure },
 	-- Set when the last generation inserted, moved or removed anything, so the watched roots may have changed.
 	structural = false,
+	-- Roots the plugin inserted, adopted, paired or moved in since the watcher last looked (edit only).
+	found = {} :: { Instance },
 	-- True while a frame writes synchronously: every ItemChanged then is the plugin's own (it fires synchronously).
 	writing = false,
 	-- Set when an edit frame applied without a recording: its writes ride the next waypoint anyone makes, so an
 	-- undo may revert them.
 	unrecorded = false,
+	-- Set when the plugin answers an undo or redo with a verify: the generation that answers it applies unrecorded,
+	-- so it leaves no waypoint for the user's next Ctrl+Z to land on again (a recorded one always would, since the
+	-- verify rewrites the stamps the step cleared).
+	quiet = false,
 }
 
 -- The plugin's structural writes, by the token of the generation that made them, so the deferred Descendant*
@@ -49,6 +56,10 @@ local M = {
 -- `own_item` instances an async write (UpdateSourceAsync, ApplyMesh) changes after the synchronous apply.
 local own_tree = setmetatable({}, { __mode = "k" }) :: { [Instance]: number }
 local own_item = setmetatable({}, { __mode = "k" }) :: { [Instance]: number }
+-- Play server: each root's stamp as the frames it applied left it ("" while one failed under it). It never writes
+-- the attribute, which still says what it inherited at Play; its hello lists these, so a reconnect hydrates from the
+-- tree it holds now.
+local played = setmetatable({}, { __mode = "k" }) :: { [Instance]: string }
 local token = 0
 -- True between a generation's first part and its end.
 local in_gen = false
@@ -72,6 +83,17 @@ local running: { [Job]: true } = {}
 local held: { [Instance]: true } = {}
 local stamps: { { root: Instance, hash: string } } = {}
 local reloads: { Instance } = {}
+-- Set by a `reload` op: the reload attribute is written even when no Script restarts (only modules swapped).
+local reload_due = false
+-- Ids bound with class "" (stamped instances that are no longer roots), and those of them `remove` takes: removed
+-- like strays, with `Parent = nil` in a waypoint of their own.
+local orphans: { [number]: true } = {}
+local orphaned: { Instance } = {}
+-- Play server: the instances the generation inserted (each blob root) and moved, so a generation that throws part
+-- way takes its inserts back before the verify that answers it, and the server's resend from before it
+-- duplicates nothing.
+local made: { Instance } = {}
+local moved: { Instance } = {}
 -- The recording the frame part in progress writes under, if any.
 local recording: string? = nil
 
@@ -141,13 +163,13 @@ function M.root_of(inst: Instance?): Instance?
 	return nil
 end
 
--- Every root, by its `/`-joined path from the DataModel (a service by its class name).
-function M.roots(): { [string]: Instance }
+-- Every root with its `/`-joined path from the DataModel (a service by its class name), duplicates included.
+function M.roots(): { { path: string, root: Instance } }
 	local found = {}
 	local function scan(frame: Instance, path: string)
 		for _, child in frame:GetChildren() do
 			if child:GetAttribute("opossum") ~= nil then
-				found[`{path}/{child.Name}`] = child
+				table.insert(found, { path = `{path}/{child.Name}`, root = child })
 			elseif NESTED[child.ClassName] then
 				scan(child, `{path}/{child.Name}`)
 			end
@@ -157,6 +179,23 @@ function M.roots(): { [string]: Instance }
 		pcall(scan, service, service.ClassName)
 	end
 	return found
+end
+
+-- Every root's stamp by path, JSON, as `hello` and `verify` list them (`found` defaults to a fresh scan). Two
+-- stamped roots at one path list "", so the root is verified, which keeps one and removes the other.
+function M.listing(found: { { path: string, root: Instance } }?): string
+	local roots: { [string]: string } = {}
+	for _, r in found or M.roots() do
+		local path = M.clean(r.path)
+		local stamp = played[r.root] or r.root:GetAttribute("opossum")
+		roots[path] = if roots[path] == nil and type(stamp) == "string" then stamp else ""
+	end
+	return if next(roots) then HttpService:JSONEncode(roots) else "{}"
+end
+
+-- The `verify` message: it lists the roots, so stamped instances that are no longer roots go too.
+function M.verify(): string
+	return `\{"t":"verify","roots":{M.listing()}}`
 end
 
 -- True when the plugin inserted, moved or removed `inst` or an ancestor of it in a generation not yet drained.
@@ -229,6 +268,11 @@ function M.abort()
 	table.clear(held)
 	table.clear(stamps)
 	table.clear(reloads)
+	reload_due = false
+	table.clear(orphans)
+	table.clear(orphaned)
+	table.clear(made)
+	table.clear(moved)
 	drain()
 end
 
@@ -237,6 +281,24 @@ end
 function M.drop()
 	M.applied = nil
 	skip = gen_now
+	-- what a move put inside an insert is older: it steps out, still mapped, and the resent move puts it back
+	for _, inst in moved do
+		for _, top in made do
+			if inst:IsDescendantOf(top) then
+				pcall(function()
+					inst.Parent = nil
+				end)
+				break
+			end
+		end
+	end
+	for _, top in made do
+		M.unmap(top)
+		for _, below in top:GetDescendants() do
+			M.unmap(below)
+		end
+		pcall(top.Destroy, top)
+	end
 	M.abort()
 end
 
@@ -261,6 +323,11 @@ local function fail(id: number, tag: number, message: string, at: Instance?)
 	end
 end
 
+-- A new root of the generation, for the watcher.
+local function found(root: Instance)
+	if M.role == "edit" then table.insert(M.found, root) end
+end
+
 -- A failure because `what` is not mapped; nothing at all when `what`'s bind found nothing this generation.
 local function fail_unmapped(id: number, tag: number, what: number, at: Instance?)
 	if not unbound[what] then fail(id, tag, `id {what} is not mapped`, at) end
@@ -268,11 +335,15 @@ end
 
 -- Clears the stamp of `inst`'s root before the generation's first write under it.
 local function touch(inst: Instance)
-	if M.role ~= "edit" then return end
+	if M.role == "client" then return end
 	local root = M.root_of(inst)
 	if root and not cleared[root] then
 		cleared[root] = true
-		if root:GetAttribute("opossum") ~= "" then root:SetAttribute("opossum", "") end
+		if M.role == "server" then
+			played[root] = ""
+		elseif root:GetAttribute("opossum") ~= "" then
+			root:SetAttribute("opossum", "")
+		end
 	end
 end
 
@@ -307,11 +378,13 @@ local function find_root(frame: Instance, name: string, class: string): Instance
 	return nil
 end
 
--- Pairs blob roots with the live children of frame of reference `frame` by (name, class): a stamped child first,
--- else an unstamped non-exempt one, which is adopted (left by `opossum build`, an older sync, or made by hand).
--- Returns each blob's partner (false when none) and the stamped, unmapped children named like a blob that pair
--- with none: a duplicate, or a root whose class changed. The user's other children are never looked at.
-local function pair_roots(frame: Instance, blobs: { Instance }): ({ Instance | false }, { Instance })
+-- Pairs blob roots with the live children of frame of reference `frame` by (name, class): the child already mapped
+-- to the node's id, else an unmapped stamped one, else an unstamped non-exempt one, which is adopted (left by
+-- `opossum build`, an older sync, or made by hand). A stamped child mapped to another id belongs to a later op of
+-- the generation. Returns each blob's partner (false when none) and the stamped, unmapped children named like a
+-- blob that pair with none: a duplicate, or a root whose class changed. The user's other children are never looked
+-- at.
+local function pair_roots(frame: Instance, blobs: { Instance }, nodes: { Node }): ({ Instance | false }, { Instance })
 	local named: { [string]: true } = {}
 	for _, blob in blobs do
 		named[blob.Name] = true
@@ -337,13 +410,15 @@ local function pair_roots(frame: Instance, blobs: { Instance }): ({ Instance | f
 	local partners: { Instance | false } = table.create(#blobs, false :: Instance | false)
 	local function free(group: { Instance }?): Instance?
 		for _, child in group or {} do
-			if not taken[child] then return child end
+			if not taken[child] and not M.id_of[child] then return child end
 		end
 		return nil
 	end
 	for i, blob in blobs do
 		local key = `{blob.Name}\0{blob.ClassName}`
-		local child = free(stamped[key]) or free(loose[key])
+		local mine = M.by_id[nodes[i].id]
+		local own = mine and mine.Parent == frame and not taken[mine] and `{mine.Name}\0{mine.ClassName}` == key
+		local child = if own then mine else free(stamped[key]) or free(loose[key])
 		if child then
 			partners[i] = child
 			taken[child] = true
@@ -434,13 +509,21 @@ local function take(): (Instance?, string?)
 end
 
 -- Runs `work` as an async write the generation joins before its stamps; it returns its failure messages, which
--- are acked against `job` unless the join already gave up on it.
+-- are acked against `job` unless the join already gave up on it. One that lands after that wrote what no stamp
+-- vouches for, maybe over a later generation's values: its root is dirty until a verify.
 local function spawn_job(job: Job, work: () -> { string })
 	running[job] = true
 	own_item[job.at] = token
 	task.spawn(function()
 		local errors = work()
-		if not running[job] then return end
+		if not running[job] then
+			local root = if M.role == "edit" then M.root_of(job.at) else nil
+			if root then
+				M.dirty[root] = true
+				if root:GetAttribute("opossum") ~= "" then root:SetAttribute("opossum", "") end
+			end
+			return
+		end
 		running[job] = nil
 		for _, message in errors do
 			fail(job.id, job.tag, message, job.at)
@@ -523,12 +606,14 @@ local function write(live: Instance, carrier: Instance, kind: number, name: stri
 	end
 end
 
--- `__mesh`/`__csg` first, then the rest, each under its own pcall; returns the failures.
-local function write_all(live: Instance, carrier: Instance, kind: number, names: { string }, id: number): { string }
+-- `__mesh`/`__csg` first, then the rest, each under its own pcall; returns the failures. As `job`, it stops once the
+-- join gave up on it (ApplyMesh yields): a later generation may be writing `live` by then.
+local function write_all(live: Instance, carrier: Instance, kind: number, names: { string }, id: number, job: Job?): { string }
 	local errors = {}
 	for pass = 1, 2 do
 		for _, name in names do
 			if (name == "__mesh" or name == "__csg") == (pass == 1) then
+				if job and not running[job] then return errors end
 				local ok, err = pcall(write, live, carrier, kind, name, id)
 				if not ok then table.insert(errors, `{name}: {err}`) end
 			end
@@ -546,8 +631,9 @@ local function copy(live: Instance, carrier: Instance, kind: number, names: { st
 			top = top.Parent
 		end
 		held[top] = true
-		spawn_job({ id = id, tag = 4, at = live }, function()
-			return write_all(live, carrier, kind, names, id)
+		local job = { id = id, tag = 4, at = live }
+		spawn_job(job, function()
+			return write_all(live, carrier, kind, names, id, job)
 		end)
 	else
 		for _, message in write_all(live, carrier, kind, names, id) do
@@ -582,7 +668,9 @@ local function insert(parent: Instance, inst: Instance, node: Node)
 	if is_frame(parent) then
 		inst:SetAttribute("opossum", "")
 		if #M.failed > before then bad_roots[inst] = true end
+		found(inst)
 	end
+	if M.role == "server" then table.insert(made, inst) end
 	own_tree[inst] = token
 	inst.Parent = parent
 end
@@ -615,7 +703,7 @@ function reconcile_children(parent: Instance, blobs: { Instance }, nodes: { Node
 	local frame = is_frame(parent)
 	local partners, rest
 	if frame then
-		partners, rest = pair_roots(parent, blobs)
+		partners, rest = pair_roots(parent, blobs, nodes)
 	else
 		local keys: { string } = {}
 		for i, blob in blobs do
@@ -636,6 +724,10 @@ function reconcile_children(parent: Instance, blobs: { Instance }, nodes: { Node
 			end
 			M.dirty[live] = nil
 			touch(live)
+			found(live)
+		elseif live:GetAttribute("opossum") ~= nil then
+			-- a root once (a move that left it nested kept the attribute): the files give it none
+			live:SetAttribute("opossum", nil)
 		end
 		reconcile(live, blob, nodes[i])
 	end
@@ -647,8 +739,24 @@ function reconcile_children(parent: Instance, blobs: { Instance }, nodes: { Node
 end
 
 -- Removes (authoritative, under a recording of their own so Ctrl+Z gives them back) or reports the strays the
--- generation's reconciles found. A stray that cannot be removed leaves its root unstamped.
+-- generation's reconciles found and the orphans it was told to remove. A stray that cannot be removed leaves its
+-- root unstamped.
 local function settle_strays(record: boolean)
+	for _, inst in orphaned do
+		if inst.Parent == nil then continue end
+		if record then
+			print(`opossum: removed {inst:GetFullName()}, which is no longer a root (without its opossum attribute it stays)`)
+			own_tree[inst] = token
+			inst.Parent = nil
+			M.unmap(inst)
+			for _, below in inst:GetDescendants() do
+				M.unmap(below)
+			end
+		else
+			print(`opossum: kept {inst:GetFullName()}, which is no longer a root (Resync removes it)`)
+		end
+	end
+	table.clear(orphaned)
 	for _, stray in strays do
 		local inst = stray.inst
 		if claimed[inst] or inst.Parent ~= stray.parent then continue end
@@ -673,8 +781,16 @@ local function op_bind()
 	local id, parent_id, class, name = u32(), u32(), str(), str()
 	local inst: Instance?
 	if parent_id == NIL then
-		local ok, service = pcall(game.GetService, game, class)
-		inst = if ok then service else nil
+		local ok, found_service = pcall(game.FindService, game, class)
+		inst = if ok then found_service else nil
+		if not inst then
+			-- A service the place lacks is made in a waypoint of its own: unrecorded, its creation would ride the
+			-- user's next one. Undoing it leaves the service where it is (its Parent is locked).
+			local services = if M.role == "edit" then ChangeHistoryService:TryBeginRecording("opossum: services") else nil
+			local made_ok, service = pcall(game.GetService, game, class)
+			if services then ChangeHistoryService:FinishRecording(services, Enum.FinishRecordingOperation.Commit) end
+			inst = if made_ok then service else nil
+		end
 	else
 		local parent = M.by_id[parent_id]
 		if not parent then
@@ -696,9 +812,11 @@ local function op_bind()
 	end
 	if inst then
 		map(id, inst)
+		if class == "" then orphans[id] = true end
 	else
 		unbound[id] = true
-		table.insert(M.failed, { id, 1, M.clean(`no {class} {name}`) })
+		-- an orphan (class "") that is already gone is what its removal wanted
+		if class ~= "" then table.insert(M.failed, { id, 1, M.clean(`no {class} {name}`) }) end
 	end
 end
 
@@ -776,6 +894,8 @@ local function op_hydrate()
 				M.unmap(inst)
 			end
 			fail(node.id, 2, err, live)
+		elseif is_frame(parent) then
+			found(live)
 		end
 	end
 end
@@ -851,6 +971,7 @@ local function op_move()
 	touch(live)
 	touch(parent)
 	own_tree[live] = token
+	if M.role == "server" then table.insert(moved, live) end
 	local ok, err = pcall(function()
 		-- A parent that is still inside `live` (a parent/child swap) steps out first; its own move places it.
 		if parent:IsDescendantOf(live) then
@@ -858,9 +979,20 @@ local function op_move()
 			parent.Parent = nil
 		end
 		if live.Name ~= name then live.Name = name end
+		-- moving under a frame of reference makes it a root, unstamped until the frame's stamp; a root moving below
+		-- another is a root no more
+		if is_frame(parent) then
+			if live:GetAttribute("opossum") == nil then live:SetAttribute("opossum", "") end
+		elseif live:GetAttribute("opossum") ~= nil then
+			live:SetAttribute("opossum", nil)
+		end
 		if live.Parent ~= parent then live.Parent = parent end
 	end)
-	if not ok then fail(id, 6, tostring(err), live) end
+	if not ok then
+		fail(id, 6, tostring(err), live)
+	elseif is_frame(parent) then
+		found(live)
+	end
 end
 
 local function op_ref()
@@ -880,6 +1012,7 @@ local function op_remove()
 	local live = M.by_id[id]
 	if not live then return end
 	M.structural = true
+	if orphans[id] then return table.insert(orphaned, live) end
 	touch(live)
 	own_tree[live] = token
 	local gone = live:GetDescendants()
@@ -899,7 +1032,7 @@ local function op_stamp()
 	local root = M.by_id[id]
 	if not root then
 		if not unbound[id] then table.insert(M.failed, { id, 9, `id {id} is not mapped` }) end
-	elseif M.role == "edit" then
+	elseif M.role ~= "client" then
 		table.insert(stamps, { root = root, hash = hash })
 	end
 end
@@ -914,13 +1047,18 @@ local function op_swap()
 		return fail(id, 10, err :: string, old)
 	end
 	M.structural = true
+	touch(old)
 	local ok, swap_err = pcall(function()
 		own_tree[old] = token
 		own_tree[new] = token
 		local parent = old.Parent
 		-- a swapped root stays a root
 		local stamp = old:GetAttribute("opossum")
-		if stamp ~= nil then new:SetAttribute("opossum", stamp) end
+		if stamp ~= nil then
+			new:SetAttribute("opossum", stamp)
+			played[new] = played[old]
+			found(new)
+		end
 		old.Name ..= " (replaced)"
 		for _, child in old:GetChildren() do
 			child.Parent = new
@@ -933,6 +1071,7 @@ local function op_swap()
 end
 
 local function op_reload()
+	reload_due = true
 	for _ = 1, u32() do
 		local id = u32()
 		local script = M.by_id[id]
@@ -972,7 +1111,7 @@ end
 -- In edit, opens the recording the next writes go under; nil (applied unrecorded) when another recording is open.
 local function record(name: string): string?
 	if M.role ~= "edit" then return nil end
-	local id = ChangeHistoryService:TryBeginRecording(name)
+	local id = if M.quiet then nil else ChangeHistoryService:TryBeginRecording(name)
 	if not id then M.unrecorded = true end
 	return id
 end
@@ -980,14 +1119,19 @@ end
 local function write_stamps()
 	for _, stamp in stamps do
 		local root = stamp.root
-		if not poisoned and not bad_roots[root] and not M.dirty[root] and root.Parent then root:SetAttribute("opossum", stamp.hash) end
+		if poisoned or bad_roots[root] or M.dirty[root] or not root.Parent then continue end
+		if M.role == "server" then
+			played[root] = stamp.hash
+		else
+			root:SetAttribute("opossum", stamp.hash)
+		end
 	end
 end
 
--- Ends a generation: joins its async writes, settles its strays and writes its stamps. Without async writes or
--- strays the stamps go into the frame's own recording, so a leaf edit is one waypoint.
+-- Ends a generation: joins its async writes, settles its strays and orphans and writes its stamps. Without any of
+-- them the stamps go into the frame's own recording, so a leaf edit is one waypoint.
 local function finish(gen: number)
-	if next(running) == nil and #strays == 0 then
+	if next(running) == nil and #strays == 0 and #orphaned == 0 then
 		write_stamps()
 		M.writing = false
 		commit()
@@ -996,7 +1140,7 @@ local function finish(gen: number)
 		commit()
 		join()
 		-- async writes that landed during the join ride this waypoint, unless someone made one meanwhile
-		local removing = authoritative and #strays > 0
+		local removing = (authoritative and #strays > 0) or #orphaned > 0
 		recording = record(if removing then RESYNC else SYNC)
 		M.writing = true
 		settle_strays(recording ~= nil)
@@ -1007,12 +1151,13 @@ local function finish(gen: number)
 	for root in held do
 		if root.Parent == nil then root:Destroy() end
 	end
-	if #reloads > 0 then reload(gen) end
+	if reload_due then reload(gen) end
 	local failed = M.failed
 	M.failed = {}
 	M.abort()
 	M.failed = failed
 	M.applied = gen
+	M.quiet = false
 end
 
 -- Applies one frame. "dropped": its base is not the last generation applied (answer with verify); "skipped": a
@@ -1033,8 +1178,6 @@ function M.frame(data: string): "dropped" | "skipped" | "part" | "done"
 		token += 1
 		gen_now = gen
 	end
-	recording = record(SYNC)
-	M.writing = true
 	local blob_len = u32()
 	roots, next_root, blob_error = {}, 1, nil
 	if blob_len > 0 then
@@ -1048,7 +1191,16 @@ function M.frame(data: string): "dropped" | "skipped" | "part" | "done"
 			blob_error = `the blob does not load: {result}`
 		end
 	end
-	for _ = 1, u32() do
+	local count = u32()
+	-- Binds lead a frame and run before its recording opens, so it never holds a service they create.
+	while count > 0 and buffer.readu8(buf, pos) == 1 do
+		pos += 1
+		op_bind()
+		count -= 1
+	end
+	recording = record(SYNC)
+	M.writing = true
+	for _ = 1, count do
 		local op = OPS[u8()]
 		if not op then error("unknown op") end
 		op()

@@ -30,7 +30,8 @@ pub enum Event {
     /// The generation applied, and its failures.
     Ack(u32, Vec<(Id, u8, String)>),
     Lost(Vec<Id>),
-    Verify,
+    /// The plugin's stamped roots, as in its hello.
+    Verify(Vec<(String, String)>),
     Pong(Vec<u8>),
 }
 
@@ -41,6 +42,7 @@ struct Inbox {
 }
 
 pub struct State {
+    /// What a socket is told at its hello; [`State::close`] makes every plugin connect again after a change.
     pub info: Info,
     pub generation: u32,
     pub tree: Tree,
@@ -57,6 +59,15 @@ pub struct Shared {
     pub state: Mutex<State>,
     pub wake: Condvar,
     noticed: Mutex<FxHashSet<String>>,
+}
+
+impl State {
+    /// Closes every socket: each plugin connects again and checks the place in the server's new hello.
+    pub fn close(&mut self) {
+        for inbox in self.inboxes.values_mut() {
+            inbox.closed = true;
+        }
+    }
 }
 
 impl Shared {
@@ -119,28 +130,27 @@ fn socket(mut stream: TcpStream, shared: &Arc<Shared>) {
             return;
         }
     };
-    let hello = {
-        let state = shared.lock();
+    // the inbox exists from the hello on, so a reconfigure after it closes this socket too
+    let (hello, conn) = {
+        let mut state = shared.lock();
         let info = &state.info;
-        json!({
+        let hello = json!({
             "t": "hello",
             "project": info.project,
             "place": info.place,
             "unpublished": info.unpublished,
             "session": shared.session,
             "hotReload": info.hot_reload,
-        })
-    };
-    if ws::write(&mut stream, ws::TEXT, hello.to_string().as_bytes()).is_err() {
-        return;
-    }
-    let conn = {
-        let mut state = shared.lock();
+        });
         state.next += 1;
         let conn = state.next;
         state.inboxes.insert(conn, Inbox::default());
-        conn
+        (hello, conn)
     };
+    if ws::write(&mut stream, ws::TEXT, hello.to_string().as_bytes()).is_err() {
+        shared.lock().inboxes.remove(&conn);
+        return;
+    }
     let writer = stream.try_clone().ok().and_then(|out| {
         let shared = shared.clone();
         thread::Builder::new().name("sync-writer".into()).spawn(move || write_loop(out, &shared, conn)).ok()
@@ -180,13 +190,7 @@ fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) {
                             Role::Server => Realm::Server,
                             Role::Client => Realm::Client,
                         };
-                        let roots = message["roots"].as_object().map_or_else(Vec::new, |roots| {
-                            roots
-                                .iter()
-                                .map(|(path, stamp)| (path.clone(), stamp.as_str().unwrap_or("").to_owned()))
-                                .collect()
-                        });
-                        shared.push(conn, Event::Hello(role, roots));
+                        shared.push(conn, Event::Hello(role, roots(&message)));
                     }
                     Some("ack") => {
                         let failed = message["failed"].as_array().map_or_else(Vec::new, |list| {
@@ -208,7 +212,7 @@ fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) {
                         });
                         shared.push(conn, Event::Lost(ids));
                     }
-                    Some("verify") => shared.push(conn, Event::Verify),
+                    Some("verify") => shared.push(conn, Event::Verify(roots(&message))),
                     Some("log") => {
                         let Some(log) = &shared.log else { continue };
                         for line in message["lines"].as_array().into_iter().flatten() {
@@ -230,9 +234,16 @@ fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) {
     }
 }
 
+/// A hello's or verify's `roots`: stamp by path.
+fn roots(message: &Value) -> Vec<(String, String)> {
+    message["roots"].as_object().map_or_else(Vec::new, |roots| {
+        roots.iter().map(|(path, stamp)| (path.clone(), stamp.as_str().unwrap_or("").to_owned())).collect()
+    })
+}
+
 /// Log and failure text from Studio with control characters other than newlines and tabs removed, so it cannot
 /// drive the terminal.
-fn clean(text: &str) -> String {
+pub fn clean(text: &str) -> String {
     text.chars().filter(|&c| !c.is_control() || c == '\n' || c == '\t').collect()
 }
 
@@ -248,6 +259,8 @@ fn write_loop(mut out: TcpStream, shared: &Shared, conn: u64) {
                 let generation = state.generation;
                 let Some(inbox) = state.inboxes.get_mut(&conn) else { return };
                 if inbox.closed {
+                    // unblocks the reader when the server closed the socket
+                    let _ = out.shutdown(Shutdown::Both);
                     return;
                 }
                 if ready && (!inbox.events.is_empty() || (sub.sent.is_none() && generation > seen)) {
@@ -269,7 +282,7 @@ fn write_loop(mut out: TcpStream, shared: &Shared, conn: u64) {
                     sub.ack(&cx, generation, &failed);
                 }
                 Event::Lost(ids) => sub.lost(&tree, &ids),
-                Event::Verify => sub.resync(&tree),
+                Event::Verify(roots) => sub.resync(&tree, &roots),
                 Event::Pong(payload) => {
                     if ws::write(&mut out, ws::PONG, &payload).is_err() {
                         return;

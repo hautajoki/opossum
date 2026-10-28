@@ -1,5 +1,5 @@
 //! One socket end to end, with tungstenite as the plugin: the handshake, the hello exchange, an adopting verify, an
-//! edit, a repair after a failed ack, and a late ack after a verify.
+//! edit, a repair after a failed ack, a late ack after a verify, an orphan a verify lists, and a reconfigure.
 
 use std::net::TcpStream;
 use std::sync::Arc;
@@ -40,7 +40,7 @@ struct Frame {
     ops: Vec<(u8, Vec<Field>)>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum Field {
     U(u32),
     S(String),
@@ -189,9 +189,14 @@ fn socket_session() {
     // rather than inserting a second one beside it
     assert_eq!(tags(&verify), [sync::BIND, sync::CHILDREN, sync::STAMP]);
     let (_, children) = &verify.ops[1];
-    // reconcile + authoritative under ReplicatedStorage: `shared` (no properties), then `a` with its Source
-    assert_eq!(children[..4], [Field::U(rs), Field::U(3), Field::U(shared), Field::U(a)]);
-    assert!(children.contains(&Field::S("Source".into())));
+    // reconcile + authoritative under ReplicatedStorage: `shared`, then `a` with its Source; a verify lists every
+    // property it copies, the ones the files leave unset included, so the blob copy's defaults reset someone's edit
+    assert_eq!(children[..3], [Field::U(rs), Field::U(3), Field::U(shared)]);
+    let at = 3 + children[3..].iter().position(|f| *f == Field::U(a)).unwrap();
+    assert!(children[3..at].contains(&Field::S("Archivable".into())));
+    assert!(
+        children[at..].contains(&Field::S("Source".into())) && children[at..].contains(&Field::S("Archivable".into()))
+    );
     assert_eq!(verify.blob, ["Folder"]);
     let stamp = &verify.ops[2].1;
     assert_eq!(stamp[1], Field::S(sync::hex(cur.get(shared).unwrap().hash)));
@@ -227,4 +232,18 @@ fn socket_session() {
     let next = frame(&mut socket);
     assert_eq!(next.base, reverify.generation);
     assert_eq!(next.ops[0].1, [Field::U(a), Field::S("return 3".into())]);
+    send(&mut socket, serde_json::json!({"t": "ack", "gen": next.generation, "failed": []}));
+
+    // a verify lists the stamped roots: one that is no longer a root is bound by its stamp alone and removed
+    let roots = serde_json::json!({"ReplicatedStorage/shared": "", "ReplicatedStorage/old": "00"});
+    send(&mut socket, serde_json::json!({"t": "verify", "roots": roots}));
+    let orphan = frame(&mut socket);
+    let bind = orphan.ops.iter().find(|(t, f)| *t == sync::BIND && f[2] == Field::S(String::new())).unwrap();
+    assert_eq!(bind.1[1..], [Field::U(rs), Field::S(String::new()), Field::S("old".into())]);
+    assert!(orphan.ops.contains(&(sync::REMOVE, vec![bind.1[0].clone()])));
+    send(&mut socket, serde_json::json!({"t": "ack", "gen": orphan.generation, "failed": []}));
+
+    // the plugin checks the place only at hello: another place closes the socket, and the plugin connects again
+    server.configure("test".into(), 42, false, false);
+    assert!(matches!(socket.read(), Err(_) | Ok(Message::Close(_))));
 }

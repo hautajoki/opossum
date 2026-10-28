@@ -55,8 +55,10 @@ folder, and every module a `*` route puts directly into a service.
 - A service's other children are the user's and are never touched. A map built in Workspace stays.
 - Each root carries an `opossum` attribute: its **stamp**. The stamp marks ownership and says "this subtree is exactly
   the tree with this hash" (32 hex), or is `""` when the root is dirty. A root the plugin inserts or adopts gets `""`
-  before its first write. An instance with the attribute that is no longer a root (its route or folder went away) is
-  removed on connect, and so is a stamped duplicate of a root, or a stamped instance where the root's class changed.
+  before its first write, and so does a root the plugin moves under a frame of reference; a move that nests a root
+  inside another removes its attribute, and a verify clears a leftover one on nested instances. An instance with the
+  attribute that is no longer a root (its route or folder went away) is removed on connect and on every edit verify,
+  and so is a stamped duplicate of a root, or a stamped instance where the root's class changed.
 
 **Stamps.** The edit plugin clears the stamp of every root a frame touches before its first write (a move touches
 both roots), and writes the new hash only after the frame, if no op under that root failed and every async write has
@@ -71,10 +73,11 @@ deferred and run after the apply):
   so someone else's attribute or tag edit is caught only by a Resync;
 - `ScriptEditorService.TextDocumentDidChange` for a script under the root, ignoring the plugin's own updates;
 - `ChangeHistoryService.OnRecordingFinished` (not the plugin's own recording) when the selection is under a root;
-- `OnUndo`/`OnRedo` of an opossum waypoint, or any undo after an unrecorded frame: every stamp, and undoing an
-  "opossum: sync" waypoint also sends `verify`.
+- `OnUndo`/`OnRedo` of an opossum waypoint, or any undo after an unrecorded frame: every stamp, and a `verify`.
 
 The listeners start with the plugin, not with the connection, so edits made while `opossum dev` is down are caught.
+The edit plugin watches the roots it inserts, adopts, pairs or moves in; a full scan of the frames runs only at start
+and at hello.
 
 A dirty root keeps `""`, so it is never re-stamped until a verify. Stamps travel into playtests (Play Solo copies the
 edit DataModel) and survive restarts. The server keeps its last 16 generations' trees, indexed by root hash.
@@ -102,12 +105,13 @@ plugin tries each port in turn, `Close()`ing every client that fails before the 
 {"t":"hello", "role":"edit"|"server"|"client", "place":<PlaceId>, "roots":{"<path>":"<stamp>", ...}}
 {"t":"ack", "gen":G, "failed":[[id,tag,"message"], ...]}
 {"t":"lost", "ids":[...]}            # mapped instances removed by someone else
-{"t":"verify"}                       # the Resync button
+{"t":"verify", "roots":{...}}        # Resync, an undo over a sync, a dropped or failed frame
 {"t":"log", "lines":[["output"|"warning"|"error","text"], ...]}
 ```
 
 The `hello` lists every instance carrying an `opossum` attribute that sits directly under a service or nested
-container, by `/`-joined path from the DataModel, with its stamp. Each generation gets exactly one `ack` or one
+container, by `/`-joined path from the DataModel, with its stamp; a path that appears twice goes out as `""`, so its
+root is verified and the duplicate removed. `verify` carries the same `roots`. Each generation gets exactly one `ack` or one
 `verify`; an ack for another generation than the one in flight is printed and otherwise ignored. The plugin `Close()`s
 every socket it drops.
 
@@ -117,7 +121,8 @@ The first message is JSON text: `{"t":"hello","project","place","unpublished","s
 closes the socket unless `place == game.PlaceId`, or `PlaceId == 0` and `unpublished`; otherwise it drops its id map
 and queue, waits for any apply in flight, and answers with its own `hello`. Every later server message is a binary
 **frame**. The server sends no frame before its first publish, so a Studio that connects during the first build is
-never answered from an empty tree.
+never answered from an empty tree. A config change to `placeId`, `unpublished` or `hotReload` closes every socket, so
+each plugin checks the new hello; other changes keep them.
 
 ## Frames
 
@@ -145,7 +150,7 @@ fills it in).
 
 | tag | op | fields | meaning |
 |---|---|---|---|
-| 1 | `bind` | `id, parent, str class, str name` | a frame of reference: `GetService(class)` when `parent` is `0xFFFFFFFF`, else the child of `parent` named `name` with class `class`. With class `""`, an orphan: the stamped child of `parent` named `name`, any class |
+| 1 | `bind` | `id, parent, str class, str name` | a frame of reference: `GetService(class)` when `parent` is `0xFFFFFFFF`, else the child of `parent` named `name` with class `class`. With class `""`, an orphan: the stamped child of `parent` named `name`, any class, removed by a later `remove` like a stray |
 | 2 | `hydrate` | `parent, u32 n, n × node` | map existing children of `parent` to ids, no writes; under a frame of reference only stamped children pair |
 | 3 | `children` | `parent, u8 flags, u32 n, n × node` | reconcile or insert `n` blob roots under `parent` |
 | 4 | `props` | `id, u8 carrier, u16 n, n × str name` | copy `name`s from the next blob root onto `id` |
@@ -175,13 +180,15 @@ failure is acked as `[id, tag, message]`:
 - a failed `move` restores the known parent and name;
 - a failed `props`, `source` or `ref` marks those values unknown, so they are sent in full;
 - a failed `remove` (a `Destroy` that throws, acked with tag 8) keeps the node.
-The server sends the repair at once. A failed reconcile node verifies its root again instead, or is left out of the known tree if it is parked. A failed
-`move` whose old parent was removed in the same frame is inserted again. A node that fails again, in a later frame,
-with unchanged content is parked: its
-failure prints once, then once more with a parked note, until its content changes or Resync. A blob that throws makes
-the server re-send each failed subtree (or verify each root) in its own frame once, so the bad one is isolated and
-parked. Failures print in
-the dev terminal against the nearest ancestor's source file, with the instance path.
+The server sends the repair at once. A failed reconcile node (`children` or `props`, a reconciled `Source` included)
+verifies its root again instead; once parked it stays paired with its live instance, its root unstamped, and its root
+is verified again when the node changes. A failed `move` or `remove` whose node's old parent was removed in the same
+frame, or that was reported lost while the frame was in flight, is inserted again. A node that fails again, in a later
+frame, with unchanged content is parked: its failure prints once, then once more with a parked note, until its content
+changes or Resync. Any blob that fails to load starts isolation: the server re-sends each failed subtree (or verifies
+each root) in its own frame once, so the bad one is isolated and parked. A ref whose target the subscriber will not
+hold after the frame is held back, its root unstamped; refs from elsewhere into reconciled or re-inserted nodes are
+sent again. Failures print in the dev terminal against the nearest ancestor's source file, with the instance path.
 
 **Big frames.** The server splits a frame above ~10k new instances or 16 MB into parts that share `gen` (only the last
 has `last = 1`). Leading parts carry only `bind`, `hydrate` and `children`; everything else rides the last part. An
@@ -195,7 +202,11 @@ gets a part of its own.
   skipping exempt live children (`Archivable = false`, non-creatable classes) unless a node names them. At a frame of
   reference a stamped child pairs first, else (edit only) an unstamped one is adopted; the user's other children are
   never looked at.
-  - A pair: `copy` the listed properties plus `Attributes` and `Tags`, then recurse into the children. Refs of
+  - A pair: `copy` the listed properties plus `Attributes` and `Tags`, then recurse into the children. A reconcile
+    node lists its explicit properties plus every property of its class that is canonical, serialized, not
+    deprecated and writable (`ReadWrite`, or a special write kind such as Model `Scale`), less the special groups,
+    `Name`, `Source`, `Attributes`, `Tags` and the refs it holds; the blob copy holds class defaults, so a verify
+    resets any drift, nil refs included (about 2.6% more frame on a large project). An unset pivot is not verified. Refs of
     reconciled nodes, and refs into them, always arrive as `ref` ops, never inside the blob.
   - A blob root with no live partner: parent the blob instance itself in. Its whole subtree is new.
   - A live child with no partner, below a root (never directly below a frame of reference), that is not mapped: a
@@ -213,10 +224,18 @@ Ctrl+Z would revert every sync since their last edit. In edit each frame is ther
 recording (~0.04 ms a frame): the user's Ctrl+Z reverts only their own work until they step back over a sync
 waypoint. A frame with async writes or strays records twice: the sync waypoint, then the join, then a second waypoint
 ("opossum: sync", or "opossum: resync" with strays) holding strays, removed with `Parent = nil` so Ctrl+Z gives them
-back, and stamps. Frames of reference are bound before the recording opens, so an undo never tries to unparent a
-service. Measured: an empty recording leaves no waypoint, and Undo does not revert `.Source` writes. When
-`TryBeginRecording` returns nil (the play server, or another recording is open) the frame applies unrecorded, strays
-are kept and their root stays unstamped. Every removed stray's path is printed in the dev terminal.
+back, and stamps. A service the place lacks is created in its own "opossum: services" waypoint before the frame's
+recording opens (an unrecorded `GetService` would ride the frame's waypoint, and `SetEnabled(false)` wipes the user's
+history); undoing it leaves the service with a harmless "Parent is locked" warning. Measured: an empty recording
+leaves no waypoint, and Undo does not revert `.Source` writes. When `TryBeginRecording` returns nil (the play server,
+or another recording is open) the frame applies unrecorded, strays are kept and their root stays unstamped. Every
+removed stray's path is printed in the dev terminal.
+
+A verify sent because of an undo or redo applies unrecorded and removes no strays, so it leaves no waypoint and the
+next Ctrl+Z continues to the user's waypoint below instead of landing on the verify it just caused. Its writes ride
+the next waypoint, so every later undo or redo verifies again (50–90 ms on a large project), and what the step removed is not
+reported lost. Unrecorded writes by anyone (Studio's lazily created services, other plugins) before opossum's first
+waypoint ride that one.
 
 ### `copy`
 
@@ -232,7 +251,7 @@ first, then the rest:
 - `__materialColors` (Terrain): `SetMaterialColor` per material, from the carrier Folder's Color3 attributes.
 - `Source`: set if different; `ScriptEditorService:UpdateSourceAsync` when the script is open in an editor or the
   source is 200 000 characters or more (`.Source` refuses those). Those run last, in parallel, and the frame joins them,
-  giving up after 20 s.
+  giving up after 20 s; a job the join gave up on stops writing and, if it lands later, leaves its root dirty.
 - `Attributes`: make `live`'s attributes the carrier's (set changed, clear missing), never touching `opossum`.
 - `Tags`: make `live`'s tags the carrier's.
 - anything else: `if live[name] ~= carrier[name] then live[name] = carrier[name] end` (both are engine-normalized, so
@@ -264,8 +283,9 @@ frame of reference, which carrier 1 cannot reset. A `props` op with no names is 
   the blob root: never a duplicate. A verify sends `remove` for mapped nodes the tree dropped, and nodes held under
   another root arrive by `move`, keeping their identity. In edit a root that appears during a session is reconciled
   the same way;
-- a stamped instance that is no longer a root: `bind` with class `""` (the `hello` carries none), then `remove`,
-  printed; one that is already gone is silently fine;
+- a stamped instance that is no longer a root: `bind` with class `""` (the `hello` carries none), then `remove` with
+  `Parent = nil` inside the "opossum: resync" waypoint, so Ctrl+Z gives it back, printed (kept and reported when no
+  recording opens); one that is already gone is silently fine;
 - a frame of reference that appears in a later generation (a service newly given `[place]` properties) is bound and
   its properties copied. A frame of reference that leaves the tree is never removed, only its former children.
 
@@ -282,7 +302,8 @@ of the topmost. Per changed root, a `stamp`. The known tree becomes the current 
 
 **Lost instances.** When something other than the plugin removes a mapped instance (the user deletes a synced module),
 the edit plugin unmaps it and its descendants and sends `lost`; the server drops them from the known tree, so the next
-frame puts them back. The files are the truth. The play server never sends `lost`: game code destroys and reparents
+frame puts them back. The files are the truth. A lost id the in-flight frame places anew verifies its root instead.
+The play server never sends `lost`: game code destroys and reparents
 synced instances at runtime; the server ignores a `lost` from it as a backstop. After `lost`, refs from elsewhere
 into the restored subtree are sent again.
 
@@ -293,11 +314,14 @@ is server, which includes Run mode, and the rest is client). Ids are `u32`; `0xF
 - **edit** keeps syncing straight through a playtest: `IsRunning()` is false there in Play Solo, and its writes
   persist after Stop.
 - **server** always connects, to forward the play server's output, including what it printed before the socket
-  opened (`LogService:GetLogHistory()` plus a buffer of up to 1000 lines; the client does the same). Only with `hotReload` does its `hello` list roots
-  and does it receive frames. It hydrates from the stamps it inherited, tolerantly: extra live
-  children are runtime state, a node that does not pair is dropped from that subscriber's tree and logged. It never
-  verifies, never prunes, never stamps, never watches, and receives only changes made after its hydrate. When it
-  answers a frame with `verify`, it is sent everything again from its known tree before that frame.
+  opened (`LogService:GetLogHistory()` plus a buffer of up to 1000 lines; the client does the same). Only with
+  `hotReload` does its `hello` list roots and does it receive frames. It hydrates from the stamps it inherited,
+  tolerantly: extra live children are runtime state, a node that does not pair is dropped from that subscriber's tree
+  and logged. It never verifies, never prunes, never watches, and receives only changes made after its hydrate. It
+  keeps the stamps it applies in memory, never in the attribute, and lists them in its `hello` and `verify`, so a
+  reconnect hydrates from where it is; a failure clears its remembered stamp. When it answers a frame that threw with
+  `verify`, it first destroys that generation's inserts and detaches what moved into them, then is sent everything
+  again from its known tree before that frame.
 - **client** only forwards logs: the play server's writes to replicated containers reach it by replication (Source,
   new instances, destroyed scripts, all measured), and client code lives in ReplicatedStorage.
 
@@ -306,7 +330,7 @@ in the play server a changed script is swapped, never edited: the server sends `
 (node alone, Scripts carried `Disabled = true`), and the plugin renames the old instance out of the way, moves its
 children into the new one, parents it, points the id at it and destroys the old one. The server swaps every transitive
 importer the same way, up to the Scripts, using the compiler's require graph (each module's runtime require targets,
-recorded at render; `require("…")` parsed in `.luau`). After the frame the plugin writes the reload list
+recorded at render; `require("…")` parsed in `.luau`). After every frame carrying `reload`, even one that swapped only modules, the plugin writes the reload list
 (`gen|full.name,...`) to the `reload` attribute of a Configuration `ReplicatedStorage.OpossumReload` it creates, which
 replicates to the client, and then, in a `task.defer` so the deferred handlers run first, enables the Scripts `reload`
 lists. A project's dev runtime can watch that attribute to dispose what modules created: module side effects (connections,
@@ -319,10 +343,10 @@ from the play-server plugin (measured). A ref held elsewhere to a swapped instan
 | | target | measured on a large project (2026-10-28) |
 |---|---|---|
 | server publish after a leaf edit | ≤ 2 ms (a few µs of tree work) | 0.11–0.16 ms; 0.41 ms for a hub edit re-lowering 285 modules |
-| frame for one changed source | one `source` op, no blob | one 13 KB `source` op and a `stamp` |
-| plugin apply of a leaf edit | < 1 ms, or one frame when the script is open in an editor | 0.59 ms; 16.6 ms open in an editor |
-| clean reconnect (every root stamped) | hydrate only, < 20 ms | 14.7 ms, 101 KB, no writes |
-| full verify | one frame, < 300 ms | 130 ms, no writes; first insert 5.88 MB in 142 ms |
+| frame for one changed source | one `source` op, no blob | one `source` op and a `stamp` |
+| plugin apply of a leaf edit | < 1 ms, or one frame when the script is open in an editor | 0.4–0.6 ms; 16.6 ms open in an editor |
+| clean reconnect (every root stamped) | hydrate only, < 20 ms | 9.7 ms, 101 KB, no writes |
+| full verify | < 300 ms | 6.03 MB; 42 ms server, 53 ms apply, no content writes; first insert ~80 ms |
 
 A file save reaches Studio in 50–250 ms, almost all of it the macOS file watcher; the sync itself takes about a
 millisecond.

@@ -108,9 +108,18 @@ impl Server {
         generation
     }
 
-    /// A reloaded `opossum.toml`: what the next sockets are told.
+    /// A reloaded `opossum.toml`: what the next sockets are told. A plugin checks the place, and the play server
+    /// learns hot reload, only at hello, so a change to either closes every socket and each plugin connects again.
     pub fn configure(&self, project: String, place: u64, unpublished: bool, hot_reload: bool) {
-        self.shared.lock().info = server::Info { project, place, unpublished, hot_reload };
+        let mut state = self.shared.lock();
+        let old = &state.info;
+        let again = old.place != place || old.unpublished != unpublished || old.hot_reload != hot_reload;
+        state.info = server::Info { project, place, unpublished, hot_reload };
+        if again {
+            state.close();
+        }
+        drop(state);
+        self.shared.wake.notify_all();
     }
 }
 
