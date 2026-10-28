@@ -545,10 +545,10 @@ fn map_strings(value: &mut Value, index: &LogIndex) {
     }
 }
 
-/// Rewrites each `Instance.Path:line` of routed modules in `text` to `file:line`, the line mapped to the
-/// TypeScript for compiled modules (None when that output line maps to no statement); also returns the first place
-/// it mapped. A client script's runtime copy (`Players.<name>.PlayerScripts...`) maps to its StarterPlayerScripts
-/// original.
+/// Rewrites each `Instance.Path:line` (or a stack line's `Script 'Instance.Path', Line line`) of routed modules in
+/// `text` to `file:line` (`Script 'file', Line line`), the line mapped to the TypeScript for compiled modules (None
+/// when that output line maps to no statement); also returns the first place it mapped. A client script's runtime
+/// copy (`Players.<name>.PlayerScripts...`) maps to its StarterPlayerScripts original.
 fn map_log(text: &str, index: &LogIndex) -> (String, Option<(String, Option<u32>)>) {
     let is_name = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '@');
     let mut first = None;
@@ -559,8 +559,11 @@ fn map_log(text: &str, index: &LogIndex) -> (String, Option<(String, Option<u32>
         rest = &rest[start..];
         let end = rest.find(|c: char| !is_name(c)).unwrap_or(rest.len());
         let (name, after) = rest.split_at(end);
-        let digits = after.strip_prefix(':').map_or(0, |a| a.find(|c: char| !c.is_ascii_digit()).unwrap_or(a.len()));
-        let line: Option<u32> = (digits > 0).then(|| after[1..=digits].parse().ok()).flatten();
+        // `name:12`, or a stack line's `Script 'name', Line 12`
+        let sep = [":", "', Line "].into_iter().find(|s| after.starts_with(s)).unwrap_or("");
+        let at = &after[sep.len()..];
+        let digits = if sep.is_empty() { 0 } else { at.find(|c: char| !c.is_ascii_digit()).unwrap_or(at.len()) };
+        let line: Option<u32> = (digits > 0).then(|| at[..digits].parse().ok()).flatten();
         let copied = name
             .strip_prefix("Players.")
             .and_then(|p| p.split_once('.'))
@@ -570,11 +573,11 @@ fn map_log(text: &str, index: &LogIndex) -> (String, Option<(String, Option<u32>
             (Some((file, lines)), Some(line)) => {
                 let mapped = lines.as_ref().map_or(Some(line), |l| l.source_line(line));
                 match mapped {
-                    Some(ts) => out.push_str(&format!("{file}:{ts}")),
-                    None => out.push_str(&format!("{file}:?")),
+                    Some(ts) => out.push_str(&format!("{file}{sep}{ts}")),
+                    None => out.push_str(&format!("{file}{sep}?")),
                 }
                 first.get_or_insert_with(|| (file.clone(), mapped));
-                rest = &after[1 + digits..];
+                rest = &at[digits..];
             }
             _ => {
                 out.push_str(name);
@@ -605,6 +608,8 @@ mod tests {
         let at = Some(("src/app.ts".to_owned(), Some(6)));
         assert_eq!(map_log(text, &index), ("src/app.ts:6: boom\nsrc/m.luau:7 function f".to_owned(), at));
         assert_eq!(map_log("StarterPlayer.StarterPlayerScripts.client.app:99", &index).0, "src/app.ts:30");
+        let stack = "Script 'ReplicatedStorage.shared.m', Line 7 - function f";
+        assert_eq!(map_log(stack, &index).0, "Script 'src/m.luau', Line 7 - function f");
 
         // a hexagon failure names its suite by instance, and its place as a bare source and a Luau line: expect's own
         // when it failed an assertion, so the trace's first project frame says where
