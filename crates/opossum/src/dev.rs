@@ -442,8 +442,10 @@ impl Dev<'_> {
     }
 }
 
-/// What answers `POST /exec`, `/play`, `/stop` and `/pull`: the newest DataModel of the asked realm runs the code once it holds
-/// every save made before the request (the module doc), with Studio's output and errors mapped like log lines.
+/// What answers every `POST` dev takes. `/exec`, and the execs dev writes itself for `/play`, `/stop` and `/pull`, are
+/// this project's only: the newest DataModel of the asked realm runs the code once it holds every save made before the
+/// request (the module doc), with Studio's output and errors mapped like log lines. `/status` and `/release` run nothing
+/// in Studio and answer any project.
 #[derive(Clone)]
 struct Execs {
     server: sync::Server,
