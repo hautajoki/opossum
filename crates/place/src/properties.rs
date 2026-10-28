@@ -13,7 +13,8 @@
 //! ```
 //!
 //! Values take the same shorthand as model.json properties. Files are read in name order, and a path belongs to
-//! one file: setting it in a second is `place.pathClash`.
+//! one file: setting it in a second is `place.pathClash`. Entries apply parents first, so a file may set or make
+//! children of an instance another file makes, whatever the files are called.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,7 +33,8 @@ pub struct PlaceEntry {
     pub file: PathBuf,
 }
 
-/// Every properties file of a `place/` and the entries they hold, files in name order, entries in file order.
+/// Every properties file of a `place/` and the entries they hold: files in name order, entries by path depth, then in
+/// file order.
 #[derive(Default)]
 pub struct Properties {
     pub files: Vec<PathBuf>,
@@ -81,6 +83,7 @@ pub fn read_properties(dir: &Path, diags: &mut Vec<Diag>) -> Properties {
         }
         props.files.push(file);
     }
+    props.entries.sort_by_key(|e| e.path.matches('/').count());
     props
 }
 
