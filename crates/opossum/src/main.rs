@@ -5,6 +5,7 @@ mod config;
 mod dev;
 mod diag;
 mod editor;
+mod event;
 mod inputs;
 mod packages;
 
@@ -23,7 +24,7 @@ static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 const USAGE: &str = "usage: opossum [-C <dir>] <command>
   build [--profile <name>] [-o <file.rbxl>] [--emit <dir>]   build the place (.opossum/place.rbxl)
   check [--profile <name>] [--json]                          diagnostics, no output
-  dev                                                        watch, rebuild and sync to Studio
+  dev [--json]                                               watch, rebuild and sync to Studio
   where <file | Instance.Path[:line]>                        a file's instance, or an instance's file
   sourcemap                                                  .opossum/sourcemap.json for luau-lsp
   plugin install [<path>]                                    the Studio plugin .rbxm
@@ -32,7 +33,7 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
 enum Command {
     Build { profile: Option<String>, out: Option<PathBuf>, emit: Option<PathBuf> },
     Check { profile: Option<String>, json: bool },
-    Dev,
+    Dev { json: bool },
     Where(String),
     Sourcemap,
     Plugin(Option<PathBuf>),
@@ -66,7 +67,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     let command = match (rest.first().copied(), positional.as_slice()) {
         (Some("build"), []) if !json => Command::Build { profile, out, emit },
         (Some("check"), []) if out.is_none() && emit.is_none() => Command::Check { profile, json },
-        (Some("dev"), []) => Command::Dev,
+        (Some("dev"), []) if profile.is_none() && out.is_none() && emit.is_none() => Command::Dev { json },
         (Some("where"), [target]) => Command::Where((*target).to_owned()),
         (Some("sourcemap"), []) => Command::Sourcemap,
         (Some("plugin"), ["install"]) => Command::Plugin(None),
@@ -123,7 +124,7 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
     match command {
         Command::Build { profile, out, emit } => build(cfg, profile.as_deref(), out, emit),
         Command::Check { profile, json } => check(cfg, profile.as_deref(), json),
-        Command::Dev => dev::run(cfg),
+        Command::Dev { json } => dev::run(cfg, json),
         Command::Where(target) => where_(cfg, &cwd, &target),
         Command::Sourcemap => sourcemap(cfg),
         Command::Plugin(_) | Command::Migrate => unreachable!("handled above"),

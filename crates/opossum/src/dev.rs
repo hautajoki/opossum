@@ -7,7 +7,7 @@
 //! The session keeps one [`place::Tree`] for its whole life. An edit that only changed sources sets them on it
 //! (a few µs); anything that changed the shape builds a fresh tree and pairs it in, then rewrites the sourcemap and
 //! the log index. Studio's output comes back over the socket and prints with compiled lines mapped to their
-//! TypeScript.
+//! TypeScript. Everything the session says is an [`Event`], text or (`--json`) JSON lines.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -18,10 +18,12 @@ use std::time::{Duration, Instant};
 use notify::{RecursiveMode, Watcher};
 use place::Tree;
 use rustc_hash::FxHashMap;
-use sync::{LogKind, Report};
+use sync::Report;
 
 use crate::build::{LineMap, RUNTIME, Session, script_class, script_kind, slashed};
 use crate::config::{self, Config};
+use crate::diag::Severity;
+use crate::event::{Event, Out};
 use crate::{editor, project_path};
 
 const QUIET: Duration = Duration::from_millis(30);
@@ -30,24 +32,37 @@ const QUIET: Duration = Duration::from_millis(30);
 /// module the map from output lines to TypeScript lines.
 type LogIndex = FxHashMap<String, (String, Option<Arc<LineMap>>)>;
 
-pub fn run(cfg: Config) -> Result<bool, String> {
-    let (log_tx, log_rx) = mpsc::channel();
+/// Runs until a fatal error, which with `--json` is an event too.
+pub fn run(cfg: Config, json: bool) -> Result<bool, String> {
+    let out = Out { json, root: cfg.root.clone() };
+    let result = session(cfg, &out);
+    if let Err(message) = &result
+        && json
+    {
+        out.emit(&Event::Error { message, fatal: true });
+    }
+    result
+}
+
+fn session(cfg: Config, out: &Out) -> Result<bool, String> {
+    let (report_tx, reports) = mpsc::channel();
     let server = sync::Server::start(sync::Config {
         project: cfg.name.clone(),
         place: cfg.place.unwrap_or(0),
         unpublished: cfg.place.is_none(),
         hot_reload: cfg.hot_reload,
         port: sync::DEFAULT_PORT,
-        reports: log_tx,
+        reports: report_tx,
     })
     .map_err(|e| format!("sync server: {e}"))?;
-    println!("syncing {} on 127.0.0.1:{}", cfg.name, server.port());
+    let port = server.port();
+    out.emit(&Event::Serving { project: &cfg.name, port });
 
     let index: Arc<Mutex<LogIndex>> = Arc::default();
-    let printer = Arc::clone(&index);
+    let (printer, studio) = (Arc::clone(&index), out.clone());
     std::thread::Builder::new()
-        .name("studio-log".into())
-        .spawn(move || print_reports(log_rx, &printer))
+        .name("studio-reports".into())
+        .spawn(move || show_reports(reports, &printer, &studio, port))
         .map_err(|e| e.to_string())?;
 
     let (tx, events) = mpsc::channel();
@@ -57,7 +72,7 @@ pub fn run(cfg: Config) -> Result<bool, String> {
     let mut tree = Tree::new();
     loop {
         watch(&mut watcher, &cfg)?;
-        let reload = serve(cfg, &server, &mut tree, &index, &events)?;
+        let reload = serve(cfg, &server, &mut tree, &index, &events, out)?;
         cfg = reload;
         server.configure(cfg.name.clone(), cfg.place.unwrap_or(0), cfg.place.is_none(), cfg.hot_reload);
         let _ = editor::write(&cfg.root, &cfg.ts);
@@ -81,6 +96,7 @@ struct Dev<'a> {
     server: &'a sync::Server,
     tree: &'a mut Tree,
     index: &'a Mutex<LogIndex>,
+    out: &'a Out,
     shown: Vec<String>,
 }
 
@@ -91,21 +107,17 @@ fn serve(
     tree: &mut Tree,
     index: &Mutex<LogIndex>,
     events: &Receiver<notify::Result<notify::Event>>,
+    out: &Out,
 ) -> Result<Config, String> {
     let start = Instant::now();
     let mut session = Session::new(cfg, None)?;
     let stats = session.build()?;
-    let mut dev = Dev { server, tree, index, shown: Vec::new() };
-    let generation = dev.reshape(&mut session);
-    println!(
-        "built {} modules in {} ms ({} lowered), generation {generation}",
-        session.scan.modules.len(),
-        start.elapsed().as_millis(),
-        stats.lowered
-    );
+    let mut dev = Dev { server, tree, index, out, shown: Vec::new() };
+    dev.reshape(&mut session);
+    dev.publish(&session, false, start, &stats.times, 0, stats.lowered);
 
     loop {
-        let paths = settle(events)?;
+        let paths = settle(events, out)?;
         let start = Instant::now();
         let root = session.cfg.root.clone();
         let src = session.cfg.src();
@@ -123,11 +135,11 @@ fn serve(
             {
                 match config::load(&root.join(config::FILE)) {
                     Ok(cfg) => {
-                        println!("{name} changed, starting over");
+                        out.emit(&Event::Restart { file: &name });
                         return Ok(cfg);
                     }
                     // keep serving the last good configuration until the file is fixed
-                    Err(e) => eprintln!("opossum: {e}"),
+                    Err(message) => out.emit(&Event::Error { message: &message, fatal: false }),
                 }
             }
             if rel.starts_with("place") {
@@ -164,17 +176,14 @@ fn serve(
         };
         let t = Instant::now();
         let shape = shape || rescan || !session.packages.iter().map(|(p, _)| &p.dir).eq(packages.iter());
-        let generation = if shape { dev.reshape(&mut session) } else { dev.edit(&mut session, &luau) };
-        let mut phases: Vec<String> = stats.times.iter().map(|(p, ms)| format!("{p} {ms:.0}")).collect();
-        phases.push(format!("publish {:.2}", t.elapsed().as_secs_f64() * 1000.0));
-        let errors = session.diagnostics().iter().filter(|d| d.is_error()).count();
-        println!(
-            "rebuilt in {} ms ({} ms): {} changed, {} lowered, {errors} errors, generation {generation}",
-            start.elapsed().as_millis(),
-            phases.join(", "),
-            changed.len() + luau.len(),
-            stats.lowered
-        );
+        if shape {
+            dev.reshape(&mut session);
+        } else {
+            dev.edit(&mut session, &luau);
+        }
+        let mut phases = stats.times;
+        phases.push(("publish", t.elapsed().as_secs_f64() * 1000.0));
+        dev.publish(&session, true, start, &phases, changed.len() + luau.len(), stats.lowered);
     }
 }
 
@@ -183,12 +192,12 @@ fn is_hidden(path: &Path, src: &Path) -> bool {
 }
 
 /// The paths of the next burst of events: blocks for the first, then takes more until none came for [`QUIET`].
-fn settle(events: &Receiver<notify::Result<notify::Event>>) -> Result<BTreeSet<PathBuf>, String> {
+fn settle(events: &Receiver<notify::Result<notify::Event>>, out: &Out) -> Result<BTreeSet<PathBuf>, String> {
     let mut paths = BTreeSet::new();
     let first = events.recv().map_err(|_| "the watcher stopped".to_owned())?;
     let mut take = |event: notify::Result<notify::Event>| match event {
         Ok(event) => paths.extend(event.paths),
-        Err(e) => eprintln!("watcher: {e}"),
+        Err(e) => out.emit(&Event::Error { message: &format!("watcher: {e}"), fatal: false }),
     };
     take(first);
     loop {
@@ -202,8 +211,8 @@ fn settle(events: &Receiver<notify::Result<notify::Event>>) -> Result<BTreeSet<P
 
 impl Dev<'_> {
     /// The shape changed (or this is the first build): pairs a fresh tree into the long-lived one, rewrites the
-    /// sourcemap and the log index, publishes. Returns the generation.
-    fn reshape(&mut self, session: &mut Session) -> u32 {
+    /// sourcemap and the log index.
+    fn reshape(&mut self, session: &mut Session) {
         session.rendered.clear();
         let fresh = session.tree(false);
         self.tree.update(fresh);
@@ -214,16 +223,14 @@ impl Dev<'_> {
         }
         *self.index.lock().unwrap_or_else(|e| e.into_inner()) = map;
         let sourcemap = editor::dir(&root).join("sourcemap.json");
-        if let Err(e) = editor::write_if_changed(&sourcemap, &self.tree.sourcemap_json(Some(&root))) {
-            eprintln!("{e}");
+        if let Err(message) = editor::write_if_changed(&sourcemap, &self.tree.sourcemap_json(Some(&root))) {
+            self.out.emit(&Event::Error { message: &message, fatal: false });
         }
-        self.show(session);
-        self.server.publish(self.tree.clone())
     }
 
-    /// Only sources changed: sets them on the tree and publishes, unless the shape changed after all: a module that
-    /// had no output gained one (its node is a folder, or nothing), or the runtime library came or went.
-    fn edit(&mut self, session: &mut Session, luau: &[PathBuf]) -> u32 {
+    /// Only sources changed: sets them on the tree, unless the shape changed after all: a module that had no output
+    /// gained one (its node is a folder, or nothing), or the runtime library came or went.
+    fn edit(&mut self, session: &mut Session, luau: &[PathBuf]) {
         let mut files: Vec<PathBuf> = session.rendered.drain(..).map(PathBuf::from).collect();
         files.extend(luau.iter().cloned());
         let root = session.cfg.root.clone();
@@ -251,25 +258,44 @@ impl Dev<'_> {
         }
         self.tree.set_sources(edits);
         self.index.lock().unwrap_or_else(|e| e.into_inner()).extend(entries);
-        self.show(session);
-        self.server.publish(self.tree.clone())
     }
 
-    /// Prints the errors and warnings when they differ from the last ones shown.
-    fn show(&mut self, session: &Session) {
+    /// Shows the build's errors and warnings when they differ from the last ones shown, and says it built; then
+    /// publishes the tree, so Studio's acks of the generation always come after. The session is the only publisher,
+    /// so the generation is the next one.
+    fn publish(
+        &mut self,
+        session: &Session,
+        rebuilt: bool,
+        start: Instant,
+        phases: &[(&'static str, f64)],
+        changed: usize,
+        lowered: usize,
+    ) {
         let root = &session.cfg.root;
-        let diags: Vec<String> = session
-            .diagnostics()
-            .iter()
-            .filter(|d| d.severity != crate::diag::Severity::Note)
-            .map(|d| d.human(root))
-            .collect();
-        if diags != self.shown {
+        let diags: Vec<_> = session.diagnostics().into_iter().filter(|d| d.severity != Severity::Note).collect();
+        let text: Vec<String> = diags.iter().map(|d| d.human(root)).collect();
+        if text != self.shown {
             for d in &diags {
-                println!("{d}");
+                self.out.emit(&Event::Diag(d));
             }
-            self.shown = diags;
+            self.shown = text;
         }
+        let errors = diags.iter().filter(|d| d.is_error()).count();
+        let generation = self.server.generation() + 1;
+        self.out.emit(&Event::Build {
+            rebuilt,
+            generation,
+            ms: start.elapsed().as_secs_f64() * 1000.0,
+            phases,
+            modules: session.scan.modules.len(),
+            changed,
+            lowered,
+            errors,
+            warnings: diags.len() - errors,
+        });
+        let published = self.server.publish(self.tree.clone());
+        debug_assert_eq!(published, generation);
     }
 }
 
@@ -278,45 +304,33 @@ fn log_entry(session: &Session, root: &Path, file: &Path) -> (String, Option<Arc
     (rel, session.compiled.get(&slashed(file)).map(|c| Arc::clone(&c.lines)))
 }
 
-/// Prints what the sync server reports, Studio's output mapped to the files it came from.
-fn print_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>) {
+/// Shows what the sync server reports until it stops, Studio's output mapped to the files it came from.
+fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, out: &Out, port: u16) {
     for report in reports {
         match report {
             Report::Log(line) => {
-                let text = map_log(&line.text, &index.lock().unwrap_or_else(|e| e.into_inner()));
-                match line.kind {
-                    LogKind::Output => println!("[{}] {text}", line.realm.name()),
-                    kind => println!("[{}] {}: {text}", line.realm.name(), kind.name()),
-                }
+                let (text, at) = map_log(&line.text, &index.lock().unwrap_or_else(|e| e.into_inner()));
+                let at = at.as_ref().map(|(file, line)| (file.as_str(), *line));
+                out.emit(&Event::Log { realm: line.realm, kind: line.kind, text: &text, at });
             }
-            Report::Connected { realm, place } => println!("[{}] connected: place {place}", realm.name()),
-            Report::Disconnected { realm, .. } => println!("[{}] disconnected", realm.name()),
+            Report::Connected { realm, place } => out.emit(&Event::Connected { realm, place, port }),
+            Report::Disconnected { realm, place } => out.emit(&Event::Disconnected { realm, place, port }),
             Report::Applied { realm, generation, ms, failed } => {
-                let failed = if failed > 0 { format!(", {failed} failed") } else { String::new() };
-                println!("applied generation {generation} in {} ({ms:.1} ms{failed})", realm.name());
+                out.emit(&Event::Applied { realm, generation, ms, failed });
             }
-            Report::Verify { realm, generation, quiet } => {
-                let why = if quiet { " (an undo's)" } else { "" };
-                println!("generation {generation} in {} answered by a verify{why}", realm.name());
-            }
-            Report::Failed(f) => {
-                let at = match (&f.file, &f.path) {
-                    (Some(file), Some(path)) => format!("{} ({path})", file.display()),
-                    (None, Some(path)) => path.clone(),
-                    _ => format!("instance {}", f.id),
-                };
-                let parked = if f.parked { " (failed again unchanged; parked until it changes or Resync)" } else { "" };
-                println!("[sync] error: {at}: {}{parked}", f.message);
-            }
+            Report::Verify { realm, generation, quiet } => out.emit(&Event::Verify { realm, generation, quiet }),
+            Report::Failed(failure) => out.emit(&Event::Failed(&failure)),
         }
     }
 }
 
 /// Rewrites each `Instance.Path:line` of routed modules in `text` to `file:line`, the line mapped to the
-/// TypeScript for compiled modules. A client script's runtime copy (`Players.<name>.PlayerScripts...`) maps to
-/// its StarterPlayerScripts original.
-fn map_log(text: &str, index: &LogIndex) -> String {
+/// TypeScript for compiled modules (None when that output line maps to no statement); also returns the first place
+/// it mapped. A client script's runtime copy (`Players.<name>.PlayerScripts...`) maps to its StarterPlayerScripts
+/// original.
+fn map_log(text: &str, index: &LogIndex) -> (String, Option<(String, Option<u32>)>) {
     let is_name = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '@');
+    let mut first = None;
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find(is_name) {
@@ -338,6 +352,7 @@ fn map_log(text: &str, index: &LogIndex) -> String {
                     Some(ts) => out.push_str(&format!("{file}:{ts}")),
                     None => out.push_str(&format!("{file}:?")),
                 }
+                first.get_or_insert_with(|| (file.clone(), mapped));
                 rest = &after[1 + digits..];
             }
             _ => {
@@ -347,7 +362,7 @@ fn map_log(text: &str, index: &LogIndex) -> String {
         }
     }
     out.push_str(rest);
-    out
+    (out, first)
 }
 
 #[cfg(test)]
@@ -366,7 +381,8 @@ mod tests {
         index.insert("ReplicatedStorage.shared.m".into(), ("src/m.luau".into(), None));
         let text = "Players.Bob.PlayerScripts.client.app:4: boom\nReplicatedStorage.shared.m:7 function f";
         // line 4 is one line into the statement from line 5; line 12 stays inside the one from 20..30
-        assert_eq!(map_log(text, &index), "src/app.ts:6: boom\nsrc/m.luau:7 function f");
-        assert_eq!(map_log("StarterPlayer.StarterPlayerScripts.client.app:99", &index), "src/app.ts:30");
+        let at = Some(("src/app.ts".to_owned(), Some(6)));
+        assert_eq!(map_log(text, &index), ("src/app.ts:6: boom\nsrc/m.luau:7 function f".to_owned(), at));
+        assert_eq!(map_log("StarterPlayer.StarterPlayerScripts.client.app:99", &index).0, "src/app.ts:30");
     }
 }
