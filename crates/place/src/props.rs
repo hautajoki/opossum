@@ -3,7 +3,7 @@
 
 use rbx_dom_weak::types::Variant;
 use rbx_dom_weak::{Ustr, ustr};
-use rbx_reflection::{ClassTag, PropertyKind, PropertySerialization, Scriptability};
+use rbx_reflection::{ClassTag, PropertyKind, PropertySerialization, PropertyTag, Scriptability};
 
 use crate::value::{db, descriptor};
 
@@ -113,6 +113,32 @@ pub fn write_kind(class: &str, name: &str) -> Write {
         // a property the database does not know is copied under pcall
         _ => Write::Name,
     }
+}
+
+/// Every property of `class` a verify copies whether or not a node sets it, so the blob instance's defaults reset
+/// what someone changed: the ones a plugin can write by name (a Model's `Scale` through `ScaleTo`) and rbx_binary
+/// serializes, by canonical name, not deprecated. Metadata, the groups (an unset pivot is not verified), `Name`,
+/// `Source`, `Attributes` and `Tags` have their own paths and are left out.
+pub fn verified(class: &str) -> Vec<Ustr> {
+    let db = db();
+    let mut out = Vec::new();
+    let mut at = db.classes.get(class);
+    while let Some(c) = at {
+        for prop in c.properties.values() {
+            let PropertyKind::Canonical { serialization } = &prop.kind else { continue };
+            if matches!(serialization, PropertySerialization::DoesNotSerialize | PropertySerialization::Migrate(_))
+                || prop.tags.contains(&PropertyTag::Deprecated)
+                || matches!(prop.name, "Name" | "Source" | "Attributes" | "Tags")
+                || write_kind(class, prop.name) != Write::Name
+            {
+                continue;
+            }
+            out.push(ustr(prop.name));
+        }
+        at = c.superclass.and_then(|s| db.classes.get(s));
+    }
+    out.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
+    out
 }
 
 /// A property as a node holds it: the name rbx_binary serializes under, ContentId migrated to Content. A script's

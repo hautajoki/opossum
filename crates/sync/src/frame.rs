@@ -1,7 +1,7 @@
 //! Frame encoding (SYNC.md, Frames): little-endian ops in fixed order, and the blob, a subset `WeakDom` written by
 //! rbx_binary whose roots are the inserted subtrees, then the swapped instances, then the property carriers.
 
-use place::props::{Write, is_a, write_kind};
+use place::props::{Write, is_a, verified, write_kind};
 use place::rbx_dom_weak::types::{Attributes, Color3, EnumItem, Ref, Tags, Variant};
 use place::rbx_dom_weak::{InstanceBuilder, WeakDom};
 use place::{Id, NONE, Node, Tree, Ustr, Variant as V, descriptor, ustr};
@@ -147,6 +147,8 @@ pub struct Blob {
     held: Vec<(Id, Ref, Ustr, Id)>,
     /// Refs of reconciled instances, which are all `ref` ops: a paired live instance takes nothing from its blob copy.
     reconciled: Vec<(Id, Ustr, Id)>,
+    /// [`verified`] by class.
+    classes: FxHashMap<Ustr, Vec<Ustr>>,
 }
 
 impl Blob {
@@ -154,9 +156,10 @@ impl Blob {
         self.dom.get_or_insert_with(|| WeakDom::new(InstanceBuilder::new("DataModel")))
     }
 
-    /// Places `top` and the descendants `include` admits as one root, writing its `children` node record with every
-    /// node's properties listed; returns the ids it placed. A `reconcile` placement may pair with live instances,
-    /// so nothing refers to its blob copies: its refs and the refs into it become `ref` ops.
+    /// Places `top` and the descendants `include` admits as one root, writing its `children` node record; returns the
+    /// ids it placed. A `reconcile` placement may pair with live instances, so nothing refers to its blob copies: its
+    /// refs and the refs into it become `ref` ops, and each record lists every property a verify copies, so the blob
+    /// copy's defaults reset what the node leaves unset (a nil ref included).
     pub fn insert(
         &mut self,
         tree: &Tree,
@@ -193,7 +196,12 @@ impl Blob {
             self.held.extend(node.refs.iter().map(|&(name, target)| (id, r, name, target)));
         }
         u32(record, id);
-        let list = copy_names(node);
+        let mut list = copy_names(node);
+        if reconcile {
+            let all = self.classes.entry(node.class).or_insert_with(|| verified(&node.class));
+            let set = |n: &Ustr| node.prop(n).is_some() || node.refs.iter().any(|(r, _)| r == n);
+            list.extend(all.iter().filter(|n| !set(n)));
+        }
         record.extend_from_slice(&(list.len() as u16).to_le_bytes());
         for name in &list {
             str(record, name);
