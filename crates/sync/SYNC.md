@@ -11,7 +11,8 @@ in Studio 0.745 (2026-10-28).
 within a server session), `Arc<Node { parent, name, class, props, refs, source, children, hash }>`. It changes by
 deltas, never by a rebuild: a re-rendered module sets one node's source; a `place/` file event re-reads that entry with
 its same-named siblings (an event on a service directory, on a nested container's own directory or under a service
-directory that went away re-reads the whole place; loose top-level files are never content), re-applies `[place]`, resolves
+directory that went away or on a properties file (`place/*.toml`) re-reads the whole place; other loose top-level files
+are never content), re-applies the properties files, resolves
 again every ref that was unresolved or pointed into what was re-read, and pairs ids again (7–10 ms on a large project); entries
 sort by directory name, so a re-read orders and hashes exactly like a fresh read; a rescan adds and removes module nodes. Hashes are recomputed up the dirty
 ancestors only, and unchanged nodes keep their `Arc`, so two trees differ exactly where their pointers differ and a
@@ -313,7 +314,7 @@ frame of reference, which carrier 1 cannot reset. A `props` op with no names is 
 - a stamped instance that is no longer a root: `bind` with class `""` (the `hello` carries none), then `remove` with
   `Parent = nil` inside the "opossum: resync" waypoint, so Ctrl+Z gives it back, printed (kept and reported when no
   recording opens); one that is already gone is silently fine;
-- a frame of reference that appears in a later generation (a service newly given `[place]` properties) is bound and
+- a frame of reference that appears in a later generation (a service a properties file newly sets) is bound and
   its properties copied. A frame of reference that leaves the tree is never removed, only its former children.
 
 A connect frame that never applied (dropped, or failed) is answered by connecting again. Hydrate pairs by

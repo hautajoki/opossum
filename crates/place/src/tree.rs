@@ -44,7 +44,7 @@ pub enum ScriptKind {
 /// Who made a node, which decides what mounting may replace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
-    /// `place/`, `[place]`, or a service or nested container.
+    /// `place/`, a properties file, or a service or nested container.
     Place,
     /// Made to hold mounted scripts; a script mounted at its path takes it over.
     Folder,

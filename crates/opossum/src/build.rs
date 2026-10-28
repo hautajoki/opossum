@@ -526,13 +526,13 @@ impl Session {
         }
     }
 
-    /// `place/` changed at `path`: re-reads that entry, replacing the diagnostics of what it re-read, every `[place]`
-    /// one and every unresolved ref (a re-read reports those whole). None when `path` is no content; Some(true) when
+    /// `place/` changed at `path`: re-reads that entry, replacing the diagnostics of what it re-read (the properties
+    /// files among it) and every unresolved ref (a re-read reports those whole). None when `path` is no content; Some(true) when
     /// all of `place/` was read again, which covers every other event of the burst.
     pub fn place_changed(&mut self, path: &Path) -> Option<bool> {
         let dir = self.cfg.root.join("place");
         let place = self.place.as_mut()?;
-        let Some((scopes, diags)) = place.replace_entry(&dir, path, &self.cfg.place_props) else {
+        let Some((scopes, diags)) = place.replace_entry(&dir, path) else {
             // a top-level directory that named no service and went away takes its error along
             let top = dir.join(path.strip_prefix(&dir).ok()?.components().next()?);
             let before = self.place_diags.len();
@@ -542,19 +542,19 @@ impl Session {
         self.place_diags.retain(|d| {
             let file = d.file.as_deref();
             let scoped = file.is_some_and(|f| scopes.iter().any(|s| f.starts_with(s)));
-            !scoped && d.code != "place.badRef" && file != Some(Path::new("opossum.toml"))
+            !scoped && d.code != "place.badRef"
         });
         self.place_diags.extend(diags.iter().map(diag::from_place));
         Some(scopes == [dir])
     }
 
-    /// A fresh tree of the whole DataModel: `place/` with the `[place]` properties, every routed module, the packages
+    /// A fresh tree of the whole DataModel: `place/` with its properties files, every routed module, the packages
     /// and the runtime. With `shapes`, a TypeScript module with no output mounts empty (the sourcemap needs only the
     /// tree).
     pub fn tree(&mut self, shapes: bool) -> place::Tree {
         let dir = self.cfg.root.join("place");
         if self.place.is_none() {
-            let (place, mut place_diags) = place::read_place(&dir, &self.cfg.place_props);
+            let (place, mut place_diags) = place::read_place(&dir);
             if !dir.exists() {
                 // no place/ is an empty place, not an error
                 place_diags.retain(|d| d.code != "place.io" || d.path != dir);

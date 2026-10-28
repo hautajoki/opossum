@@ -1,4 +1,4 @@
-//! JSON property values (model.json `properties` and `attributes`, `[place]` tables) resolved against the
+//! JSON property values (model.json `properties` and `attributes`, properties-file tables) resolved against the
 //! reflection database into typed variants. The shorthand forms are Rojo's: `[x, y, z]` is whatever the
 //! property's type says, an enum is its item name, and `{"Vector3": [...]}` names the type outright.
 

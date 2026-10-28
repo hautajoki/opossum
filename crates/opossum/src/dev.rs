@@ -1,7 +1,7 @@
 //! `opossum dev`: a full build, then the Studio sync server and a file watcher. Each settled burst of edits
 //! (~30 ms quiet) rebuilds what it touched: TypeScript edits reuse the program and re-lower only the files they can
 //! affect, a file a `$file` macro reads re-lowers its readers, added or removed files route `src/` again, a `place/`
-//! edit re-reads that entry, and an edit to `opossum.toml`, `package.json`, bun's lockfile or a `.env` file starts
+//! edit re-reads that entry (an edit to a properties file, the whole place), and an edit to `opossum.toml`, `package.json`, bun's lockfile or a `.env` file starts
 //! the session over.
 //!
 //! The session keeps one [`place::Tree`] for its whole life. An edit that only changed sources sets them on it

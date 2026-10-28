@@ -1,9 +1,9 @@
-//! The DataModel and everything that reads or writes it: the `place/` folder reader, the `[place]` property
-//! table, the [`Tree`] opossum owns (mounting, stable ids, hashes, the sourcemap), how each property reaches Studio,
-//! and the `.rbxl`/`.rbxm` writers with texture packs.
+//! The DataModel and everything that reads or writes it: the `place/` folder reader and its properties files, the
+//! [`Tree`] opossum owns (mounting, stable ids, hashes, the sourcemap), how each property reaches Studio, the
+//! `.rbxl`/`.rbxm` writers with texture packs, and `opossum migrate`'s conversion of a Rojo-era `place/`.
 
-mod config;
 mod migrate;
+mod properties;
 pub mod props;
 mod read;
 mod tree;
@@ -13,8 +13,8 @@ mod write;
 use std::fmt;
 use std::path::PathBuf;
 
-pub use config::{PlaceConfig, PlaceEntry, config_from_toml, config_to_toml};
-pub use migrate::{config_from_meta, convert_rojo_refs, model_json_text};
+pub use migrate::{Write, plan_migration};
+pub use properties::{PlaceEntry, entries_from_toml};
 pub use rbx_dom_weak::{self, Instance, Ustr, WeakDom, types::Ref, types::Variant, ustr};
 pub use read::{Place, read_place, resolve_ref, service_for_dir};
 pub use tree::{

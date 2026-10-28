@@ -17,8 +17,6 @@ pub struct Config {
     /// `[ts]`: strictness flags by their tsconfig names.
     pub ts: Vec<(String, bool)>,
     pub profiles: Vec<Profile>,
-    /// `[place]`: service and instance properties.
-    pub place_props: place::PlaceConfig,
     /// `[dev] hotReload`: a running playtest's server swaps the modules an edit changed.
     pub hot_reload: bool,
 }
@@ -69,7 +67,6 @@ fn parse(text: &str, root: PathBuf) -> Result<Config, String> {
         native: Vec::new(),
         ts: Vec::new(),
         profiles: Vec::new(),
-        place_props: Vec::new(),
         hot_reload: false,
     };
     for (key, value) in &doc {
@@ -110,7 +107,7 @@ fn parse(text: &str, root: PathBuf) -> Result<Config, String> {
                     config.profiles.push(profile);
                 }
             }
-            "place" => config.place_props = place::config_from_toml(table(value, key)?)?,
+            "place" => return Err(MOVED.into()),
             "dev" => {
                 for (k, v) in table(value, key)? {
                     match k.as_str() {
@@ -135,6 +132,39 @@ fn parse(text: &str, root: PathBuf) -> Result<Config, String> {
     Ok(config)
 }
 
+const MOVED: &str = "[place] moved to properties files, place/*.toml; `opossum migrate` moves it there";
+
+/// opossum.toml's text without its `[place]` sections, and the table they held; None when it has none. Every other
+/// byte stays, comments included. Err when `[place]` is spelled in a way a section cut does not remove.
+pub fn cut_place(text: &str) -> Result<Option<(String, toml::Table)>, String> {
+    let doc: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    let Some(place) = doc.get("place") else { return Ok(None) };
+    let place = table(place, "place")?.clone();
+    let mut out = String::with_capacity(text.len());
+    let mut cutting = false;
+    for line in text.split_inclusive('\n') {
+        // a header line parses on its own as the table it opens
+        if line.trim_start().starts_with('[')
+            && let Ok(header) = line.parse::<toml::Table>()
+        {
+            cutting = header.contains_key("place");
+        }
+        if !cutting {
+            out.push_str(line);
+        }
+    }
+    // the blank line that set the cut section apart now ends the file
+    while out.ends_with("\n\n") {
+        out.pop();
+    }
+    let mut rest = doc;
+    rest.remove("place");
+    if out.parse::<toml::Table>().ok() != Some(rest) {
+        return Err("[place] is not only whole sections; move it to place/*.toml by hand".into());
+    }
+    Ok(Some((out, place)))
+}
+
 fn unknown(path: &str) -> String {
     format!("unknown key `{path}`")
 }
@@ -150,4 +180,21 @@ fn string(value: &toml::Value, path: &str) -> Result<String, String> {
 fn strings(value: &toml::Value, path: &str) -> Result<Vec<String>, String> {
     let list = value.as_array().ok_or_else(|| format!("`{path}` must be a list of strings"))?;
     list.iter().map(|v| string(v, path)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cutting_place_keeps_the_rest_byte_for_byte() {
+        let text = "name = \"x\"  # the name\n\n[place.Lighting]   # sky\nClockTime = 16.9\n\n[place.\"Workspace/Terrain\"]\nWaterColor = [1, 2, 3]\n\n[routes]\n# shared code\nshared = \"ReplicatedStorage/shared\"\n\n[place]\nHttpService = { HttpEnabled = true }\n";
+        let (rest, place) = cut_place(text).unwrap().unwrap();
+        assert_eq!(
+            rest,
+            "name = \"x\"  # the name\n\n[routes]\n# shared code\nshared = \"ReplicatedStorage/shared\"\n"
+        );
+        assert_eq!(place.keys().collect::<Vec<_>>(), ["Lighting", "Workspace/Terrain", "HttpService"]);
+        assert!(cut_place(&rest).unwrap().is_none());
+    }
 }

@@ -1,7 +1,8 @@
 //! The `place/` folder reader. Each top-level directory is a service named in kebab case (`replicated-storage`
 //! is ReplicatedStorage; `starter-player-scripts` is StarterPlayer's StarterPlayerScripts). Inside, directories
 //! are Folders, `.model.json` files are instance trees, `.rbxm`/`.rbxmx` files are Roblox models and `.txt`
-//! files are StringValues. `place/assets` (tessera's upload root) and loose top-level files are not content.
+//! files are StringValues. Loose top-level `*.toml` files are properties files ([`crate::properties`]); `place/assets`
+//! (tessera's upload root) and other loose top-level files are not content.
 //!
 //! `dev` keeps the [`Place`] it read and re-reads only the entry a file event touched ([`Place::replace_entry`]).
 //! Entry order is not kept in the dom: a re-read entry lands last among its siblings, so [`Place::entry_name`] gives
@@ -17,7 +18,7 @@ use rbx_dom_weak::{InstanceBuilder, WeakDom};
 use rbx_reflection::ClassTag;
 use serde_json::Value;
 
-use crate::config::PlaceConfig;
+use crate::properties::{PlaceEntry, is_properties_file, read_properties};
 use crate::tree::NESTED;
 use crate::value::{self, Resolved, db};
 use crate::{Diag, Severity};
@@ -32,7 +33,7 @@ pub struct Place {
     refs: Vec<RefSpec>,
 }
 
-/// A Ref property as written in a model file or `[place]`: a path from its holder.
+/// A Ref property as written in a model file or a properties file: a path from its holder.
 struct RefSpec {
     holder: Ref,
     property: &'static str,
@@ -99,7 +100,7 @@ impl Place {
     }
 
     /// The directory entry an instance was read from (`boat.model.json`, `models`), None for anything else: services,
-    /// nested containers, what `[place]` made and what is inside a model file. Siblings that are entries sort by it.
+    /// nested containers, what a properties file made and what is inside a model file. Siblings that are entries sort by it.
     pub fn entry_name(&self, r: Ref) -> Option<&str> {
         self.entries.get(&r).map(String::as_str)
     }
@@ -129,7 +130,7 @@ pub fn service_for_dir(dir: &str) -> Option<String> {
 }
 
 /// `ReplicatedStorage` -> `replicated-storage`, `VRService` -> `vr-service`.
-fn kebab(name: &str) -> String {
+pub(crate) fn kebab(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
     let mut out = String::with_capacity(name.len() + 4);
     for (i, &c) in chars.iter().enumerate() {
@@ -152,11 +153,12 @@ struct Reader<'a> {
     refs: Vec<RefSpec>,
 }
 
-/// Reads `dir` (a project's `place/`) into a fresh DataModel, applies the `[place]` properties and resolves
-/// every Ref. Problems come back as diagnostics; whatever could be read is in the place.
-pub fn read_place(dir: &Path, config: &PlaceConfig) -> (Place, Vec<Diag>) {
+/// Reads `dir` (a project's `place/`) into a fresh DataModel, applies its properties files and resolves every Ref.
+/// Problems come back as diagnostics; whatever could be read is in the place.
+pub fn read_place(dir: &Path) -> (Place, Vec<Diag>) {
     let mut place = Place::new();
     let mut r = Reader { place: &mut place, diags: Vec::new(), refs: Vec::new() };
+    let props = read_properties(dir, &mut r.diags);
     for (name, path, is_dir) in entries(dir, &mut r.diags) {
         if !is_dir || name.starts_with('.') || name == "assets" {
             continue;
@@ -170,7 +172,7 @@ pub fn read_place(dir: &Path, config: &PlaceConfig) -> (Place, Vec<Diag>) {
             Err(e) => r.diags.push(Diag::error("place.unknownService", &path, e)),
         }
     }
-    r.apply(config);
+    r.apply(&props.entries);
     r.resolve_refs();
     let mut diags = r.diags;
     diags.extend(place.ref_diags());
@@ -182,21 +184,18 @@ impl Place {
     /// Re-reads what changed at `path` (a file or directory under `dir`, the project's `place/`): the shallowest entry
     /// on its way that is new, gone or not a directory, together with every sibling entry that makes the same instance
     /// name (the first, by name, wins, as in a full read). An event on a service directory or `place/` itself reads
-    /// everything again. Afterwards the `[place]` properties are applied again and every ref that pointed into the
+    /// everything again, and so does one on a properties file (rare: properties may make instances, which only a full
+    /// read orders). Afterwards the properties files are read and applied again and every ref that pointed into the
     /// re-read entries, or did not resolve, is resolved again.
     ///
-    /// Returns the files and directories re-read, whose diagnostics the returned ones replace, together with every
-    /// `[place]` diagnostic (file `opossum.toml`) and every `place.badRef`; None when `path` is no content.
-    pub fn replace_entry(
-        &mut self,
-        dir: &Path,
-        path: &Path,
-        config: &PlaceConfig,
-    ) -> Option<(Vec<PathBuf>, Vec<Diag>)> {
+    /// Returns the files and directories re-read, whose diagnostics the returned ones replace (the properties files
+    /// among them), together with every `place.badRef`; None when `path` is no content.
+    pub fn replace_entry(&mut self, dir: &Path, path: &Path) -> Option<(Vec<PathBuf>, Vec<Diag>)> {
         let rel = path.strip_prefix(dir).ok()?;
         let parts: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
-        let Some(top) = parts.first() else {
-            let (place, diags) = read_place(dir, config);
+        let full = parts.len() == 1 && is_properties_file(&parts[0]);
+        let Some(top) = parts.first().filter(|_| !full) else {
+            let (place, diags) = read_place(dir);
             *self = place;
             return Some((vec![dir.to_path_buf()], diags));
         };
@@ -213,13 +212,13 @@ impl Place {
         };
         if !dir.join(top).is_dir() && parts.len() > 1 {
             // a service directory that went away with what was in it
-            let (place, diags) = read_place(dir, config);
+            let (place, diags) = read_place(dir);
             *self = place;
             return Some((vec![dir.to_path_buf()], diags));
         }
         if parts.len() == 1 {
             // a service directory came or went: rare, and only a full read orders services and nested containers
-            let (place, diags) = read_place(dir, config);
+            let (place, diags) = read_place(dir);
             *self = place;
             return Some((vec![dir.to_path_buf()], diags));
         }
@@ -247,13 +246,13 @@ impl Place {
         let parent_class = r.place.dom.get_by_ref(parent).map(|i| i.class.to_string()).unwrap_or_default();
         if NESTED.contains(&(parent_class.as_str(), name.as_str())) {
             // a nested container's own directory came, went or holds the event: its children may also come from
-            // a top-level directory (`place/terrain`) and `[place]` may make it, which only a full read orders
-            let (place, diags) = read_place(dir, config);
+            // a top-level directory (`place/terrain`) and a properties file may make it, which only a full read orders
+            let (place, diags) = read_place(dir);
             *self = place;
             return Some((vec![dir.to_path_buf()], diags));
         }
         let folder = at.parent().map(Path::to_path_buf).unwrap_or_else(|| dir.to_path_buf());
-        // what made `name` here before: entries, or `[place]` (made again below)
+        // what made `name` here before: entries, or a properties file (made again below)
         let old: Vec<Ref> = r
             .place
             .dom
@@ -276,10 +275,12 @@ impl Place {
                 }
             }
         }
-        // what pointed into the forgotten instances now dangles; config refs are read again with `[place]`
-        r.place.refs.retain(|s| s.file != Path::new(TOML) && r.place.dom.get_by_ref(s.holder).is_some());
-        r.apply(config);
+        // what pointed into the forgotten instances now dangles; properties refs are read again with their files
+        r.place.refs.retain(|s| s.file.parent() != Some(dir) && r.place.dom.get_by_ref(s.holder).is_some());
+        let props = read_properties(dir, &mut r.diags);
+        r.apply(&props.entries);
         r.resolve_refs();
+        scopes.extend(props.files);
         let mut diags = r.diags;
         self.resolve_again();
         diags.extend(self.ref_diags());
@@ -330,9 +331,6 @@ impl Place {
     }
 }
 
-/// `[place]` diagnostics name this file.
-const TOML: &str = "opossum.toml";
-
 /// The instance a directory entry makes: a directory's own name, a file's name without its content extension.
 fn instance_name(entry: &str, is_dir: bool) -> String {
     if is_dir {
@@ -367,7 +365,7 @@ fn settle_pivots(place: &mut Place) {
 }
 
 /// Directory entries sorted by name: (name, path, is_dir).
-fn entries(dir: &Path, diags: &mut Vec<Diag>) -> Vec<(String, PathBuf, bool)> {
+pub(crate) fn entries(dir: &Path, diags: &mut Vec<Diag>) -> Vec<(String, PathBuf, bool)> {
     let read = match fs::read_dir(dir) {
         Ok(read) => read,
         Err(e) => {
@@ -443,7 +441,7 @@ impl Reader<'_> {
                 Err(e) => self.diags.push(Diag::error("place.io", path, e.to_string())),
             }
         } else if name.ends_with(".meta.json") {
-            self.diags.push(Diag::note("place.ignored", path, "properties come from [place] in opossum.toml"));
+            self.diags.push(Diag::note("place.ignored", path, "properties come from place/*.toml"));
         } else {
             self.diags.push(Diag::note("place.ignored", path, "not place content"));
         }
@@ -580,15 +578,15 @@ impl Reader<'_> {
         Ok(self.place.dom.insert(parent, InstanceBuilder::new(class).with_name(name)))
     }
 
-    /// Applies the `[place]` entries. Each re-read applies all of them again (there are few, and setting a property
-    /// twice changes nothing), so their diagnostics are always the whole set.
-    fn apply(&mut self, config: &PlaceConfig) {
-        let toml = PathBuf::from(TOML);
-        for entry in config.iter() {
+    /// Applies the properties files' entries. Each re-read applies all of them again (there are few, and setting a
+    /// property twice changes nothing), so their diagnostics are always the whole set.
+    fn apply(&mut self, entries: &[PlaceEntry]) {
+        for entry in entries {
+            let toml = &entry.file;
             let r = match self.instance_at(&entry.path, entry.class.as_deref()) {
                 Ok(r) => r,
                 Err(e) => {
-                    self.diags.push(Diag::error("place.unknownInstance", &toml, format!("[place] {e}")));
+                    self.diags.push(Diag::error("place.unknownInstance", toml, e));
                     continue;
                 }
             };
@@ -596,23 +594,19 @@ impl Reader<'_> {
             if let Some(class) = &entry.class
                 && inst.class != class.as_str()
             {
-                // A directory gives a Folder; [place] may say what it really is.
+                // A directory gives a Folder; a properties file may say what it really is.
                 if inst.class == "Folder" && inst.properties.is_empty() && value::is_class(class) {
                     inst.class = ustr(class);
                 } else {
-                    let message = format!("[place] {} is a {}, not a {class}", entry.path, inst.class);
-                    self.diags.push(Diag::error("place.badProperty", &toml, message));
+                    let message = format!("{} is a {}, not a {class}", entry.path, inst.class);
+                    self.diags.push(Diag::error("place.badProperty", toml, message));
                     continue;
                 }
             }
             let class = inst.class.to_string();
             for (prop, json) in &entry.props {
-                if let Err(e) = self.set_property(r, &class, prop, json, &toml) {
-                    self.diags.push(Diag::error(
-                        "place.badProperty",
-                        &toml,
-                        format!("[place] {}.{prop}: {e}", entry.path),
-                    ));
+                if let Err(e) = self.set_property(r, &class, prop, json, toml) {
+                    self.diags.push(Diag::error("place.badProperty", toml, format!("{}.{prop}: {e}", entry.path)));
                 }
             }
         }
@@ -691,7 +685,7 @@ mod tests {
             ]
         }"#;
         fs::write(models.join("boat.model.json"), boat).unwrap();
-        let (place, diags) = read_place(&dir, &Vec::new());
+        let (place, diags) = read_place(&dir);
         fs::remove_dir_all(&dir).unwrap();
 
         let get = |path: &str| place.find(path).unwrap();
@@ -734,17 +728,16 @@ mod tests {
             { "name": "weld", "className": "Weld", "properties": { "Part1": "../../frame" } }
         ] }"#;
         fs::write(models.join("door.model.json"), door).unwrap();
-        let config = Vec::new();
-        let (mut place, diags) = read_place(&dir, &config);
+        let (mut place, diags) = read_place(&dir);
         assert_eq!(diags.iter().map(|d| d.code).collect::<Vec<_>>(), ["place.badRef"]);
 
         // the ref's target appears in an entry of its own, and an earlier sibling is edited
         fs::write(models.join("frame.model.json"), r#"{ "className": "Part" }"#).unwrap();
         fs::write(models.join("a.txt"), "a2").unwrap();
-        let (_, diags) = place.replace_entry(&dir, &models.join("frame.model.json"), &config).unwrap();
+        let (_, diags) = place.replace_entry(&dir, &models.join("frame.model.json")).unwrap();
         assert!(diags.is_empty(), "{diags:?}");
-        place.replace_entry(&dir, &models.join("a.txt"), &config).unwrap();
-        let (full, _) = read_place(&dir, &config);
+        place.replace_entry(&dir, &models.join("a.txt")).unwrap();
+        let (full, _) = read_place(&dir);
         fs::remove_dir_all(&dir).unwrap();
 
         let weld = place.find("ReplicatedStorage/models/door/weld").unwrap();

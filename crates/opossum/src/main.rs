@@ -26,7 +26,8 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
   dev                                                        watch, rebuild and sync to Studio
   where <file | Instance.Path[:line]>                        a file's instance, or an instance's file
   sourcemap                                                  .opossum/sourcemap.json for luau-lsp
-  plugin install [<path>]                                    the Studio plugin .rbxm";
+  plugin install [<path>]                                    the Studio plugin .rbxm
+  migrate                                                    convert Rojo meta files and refs, and [place]";
 
 enum Command {
     Build { profile: Option<String>, out: Option<PathBuf>, emit: Option<PathBuf> },
@@ -35,6 +36,7 @@ enum Command {
     Where(String),
     Sourcemap,
     Plugin(Option<PathBuf>),
+    Migrate,
 }
 
 fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
@@ -69,6 +71,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         (Some("sourcemap"), []) => Command::Sourcemap,
         (Some("plugin"), ["install"]) => Command::Plugin(None),
         (Some("plugin"), ["install", path]) => Command::Plugin(Some(PathBuf::from(path))),
+        (Some("migrate"), []) if profile.is_none() && out.is_none() && emit.is_none() && !json => Command::Migrate,
         _ => return Err(USAGE.to_owned()),
     };
     Ok((dir, command))
@@ -111,6 +114,10 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Some(dir) => std::path::absolute(&dir).map_err(|e| format!("{}: {e}", dir.display()))?,
         None => cwd.clone(),
     };
+    if let Command::Migrate = command {
+        // before loading: the config it fixes does not load
+        return migrate(&config::find(&start)?);
+    }
     let cfg = config::load(&config::find(&start)?)?;
     editor::write(&cfg.root, &cfg.ts)?;
     match command {
@@ -119,7 +126,7 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Command::Dev => dev::run(cfg),
         Command::Where(target) => where_(cfg, &cwd, &target),
         Command::Sourcemap => sourcemap(cfg),
-        Command::Plugin(_) => unreachable!("handled above"),
+        Command::Plugin(_) | Command::Migrate => unreachable!("handled above"),
     }
 }
 
@@ -205,6 +212,53 @@ fn sourcemap(cfg: Config) -> Result<bool, String> {
     let path = editor::dir(root).join("sourcemap.json");
     editor::write_if_changed(&path, &tree.sourcemap_json(Some(root)))?;
     println!("wrote {}", path.display());
+    Ok(true)
+}
+
+/// `opossum migrate`: converts a Rojo-era `place/` in place (`init.meta.json` files into properties files, Rojo
+/// ref attributes into paths) and moves opossum.toml's `[place]` into properties files, printing each file it
+/// changed. The whole conversion is planned first, so a conflict changes nothing and a second run finds nothing.
+fn migrate(file: &Path) -> Result<bool, String> {
+    let root = file.parent().unwrap_or(Path::new("."));
+    let shown = |path: &Path| path.strip_prefix(root).unwrap_or(path).display().to_string();
+    let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let cut = config::cut_place(&text).map_err(|e| format!("{}: {e}", file.display()))?;
+    let moved = match &cut {
+        Some((_, table)) => {
+            place::entries_from_toml(table, file).map_err(|e| format!("{}: [place] {e}", file.display()))?
+        }
+        None => Vec::new(),
+    };
+    let writes = match place::plan_migration(&root.join("place"), moved) {
+        Ok(writes) => writes,
+        Err(diags) => {
+            report(&diags.iter().map(diag::from_place).collect::<Vec<_>>(), root);
+            println!("nothing changed");
+            return Ok(false);
+        }
+    };
+    let io = |path: &Path, e: std::io::Error| format!("{}: {e}", path.display());
+    for write in &writes {
+        match &write.text {
+            Some(text) => {
+                if let Some(dir) = write.path.parent() {
+                    std::fs::create_dir_all(dir).map_err(|e| io(dir, e))?;
+                }
+                std::fs::write(&write.path, text).map_err(|e| io(&write.path, e))?;
+                println!("wrote {}", shown(&write.path));
+            }
+            None => {
+                std::fs::remove_file(&write.path).map_err(|e| io(&write.path, e))?;
+                println!("removed {}", shown(&write.path));
+            }
+        }
+    }
+    if let Some((rest, _)) = cut {
+        std::fs::write(file, rest).map_err(|e| io(file, e))?;
+        println!("wrote {}", shown(file));
+    } else if writes.is_empty() {
+        println!("nothing to migrate");
+    }
     Ok(true)
 }
 
