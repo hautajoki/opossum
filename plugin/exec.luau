@@ -1,0 +1,249 @@
+--!strict
+-- Runs what `opossum exec` and `opossum test` send (crates/sync/SYNC.md, "Exec"): Luau as a fresh ModuleScript chunk
+-- whose print and warn are its own, under a time limit, leaving nothing in the DataModel.
+--
+-- Studio's require caches a result per instance for the life of this VM: a Source change, rename, reparent or
+-- UpdateSourceAsync leaves it returning the first result (measured), and sync writes Source in place. So each exec
+-- loads every ModuleScript it requires afresh: a nil-parented copy of its current Source, placed in a mirror of its
+-- ancestors' names so chunk names and tracebacks read like the original's, its first line given `script` (the
+-- original) and a `require` that does the same. Nothing is cached between execs, module state included.
+
+local ChangeHistoryService = game:GetService("ChangeHistoryService")
+local HttpService = game:GetService("HttpService")
+local ScriptContext = game:GetService("ScriptContext")
+local ScriptEditorService = game:GetService("ScriptEditorService")
+
+local apply = require("./apply")
+
+-- `.Source` refuses sources this long; UpdateSourceAsync takes them.
+local SOURCE_LIMIT = 200000
+-- Traceback lines from the plugin itself, below the exec's own frames.
+local OWN = script.Parent and script.Parent:GetFullName() or "opossum"
+local LOADING = table.freeze {}
+
+export type Request = { id: number, name: string, source: string, modules: { [string]: string }?, timeout: number? }
+
+-- The copy loading now, by token: the original it stands for and the require it gets. Read by the copy's first line.
+local pending: { [number]: { any } } = {}
+local token = 0
+_G.__opossum_exec = function(n: number): (Instance, (any) -> any)
+	local entry = pending[n]
+	pending[n] = nil
+	return entry[1], entry[2]
+end
+
+-- The byte where the first token that is not a comment starts, or nil: directives (--!native) stay in front of it.
+local function first_code(source: string): number?
+	local at = 1
+	while true do
+		local s = string.find(source, "%S", at)
+		if not s then return nil end
+		if string.sub(source, s, s + 1) ~= "--" then return s end
+		local level = string.match(source, "^%[(=*)%[", s + 2)
+		if level then
+			local close = string.find(source, `]{level}]`, s + 4 + #level, true)
+			if not close then return nil end
+			at = close + #level + 2
+		else
+			local eol = string.find(source, "\n", s, true)
+			if not eol then return nil end
+			at = eol + 1
+		end
+	end
+end
+
+-- `path` (a string require: @self/, @game/, ./ or ../, then names) from the module `from`.
+local function resolve(from: Instance, path: string): Instance
+	local at: Instance?, rest: string
+	if string.sub(path, 1, 5) == "@self" then
+		at, rest = from, string.sub(path, 6)
+	elseif string.sub(path, 1, 5) == "@game" then
+		at, rest = game, string.sub(path, 6)
+	elseif string.sub(path, 1, 2) == "./" then
+		at, rest = from.Parent, string.sub(path, 3)
+	elseif string.sub(path, 1, 3) == "../" then
+		at, rest = from.Parent and from.Parent.Parent, string.sub(path, 4)
+	else
+		error(`unsupported require path {path} from {from:GetFullName()}`, 3)
+	end
+	for name in string.gmatch(rest, "[^/]+") do
+		if not at then break end
+		if name == ".." then
+			at = at.Parent
+		elseif name ~= "." then
+			at = at:FindFirstChild(name)
+		end
+	end
+	if not at then error(`could not find {path} from {from:GetFullName()}`, 3) end
+	return at
+end
+
+type Session = { cache: { [Instance]: any }, folders: { [string]: Instance }, tops: { Instance } }
+
+local load: (session: Session, original: ModuleScript) -> any
+
+local function bound(session: Session, from: Instance): (any) -> any
+	return function(target: any): any
+		if type(target) == "string" then target = resolve(from, target) end
+		if typeof(target) == "Instance" and target:IsA("ModuleScript") then return load(session, target) end
+		-- an asset id, or whatever require makes of it
+		return (require :: any)(target)
+	end
+end
+
+-- The mirror folder a copy of `original` goes in, made on first use; nil for a module without a parent.
+local function folder_for(session: Session, original: Instance): Instance?
+	local names: { string } = {}
+	local at = original.Parent
+	while at and at ~= game do
+		table.insert(names, 1, at.Name)
+		at = at.Parent
+	end
+	local parent: Instance? = nil
+	for i, name in names do
+		local key = table.concat(names, "\0", 1, i)
+		local folder = session.folders[key]
+		if not folder then
+			local made = Instance.new("Folder")
+			made.Name = name
+			made.Parent = parent
+			if not parent then table.insert(session.tops, made) end
+			session.folders[key] = made
+			folder = made
+		end
+		parent = folder
+	end
+	return parent
+end
+
+load = function(session: Session, original: ModuleScript): any
+	local cached = session.cache[original]
+	if cached == LOADING then error(`{original:GetFullName()} was required recursively`, 3) end
+	if cached ~= nil then return cached end
+	session.cache[original] = LOADING
+	token += 1
+	pending[token] = { original, bound(session, original) }
+	local source = original.Source
+	local line = `local script, require = _G.__opossum_exec({token}); `
+	local at = first_code(source)
+	source = if at then string.sub(source, 1, at - 1) .. line .. string.sub(source, at) else source .. "\n" .. line
+	local copy = Instance.new("ModuleScript")
+	copy.Name = original.Name
+	if #source < SOURCE_LIMIT then
+		copy.Source = source
+	else
+		ScriptEditorService:UpdateSourceAsync(copy, function()
+			return source
+		end)
+	end
+	local parent = folder_for(session, original)
+	if parent then
+		copy.Parent = parent
+	else
+		table.insert(session.tops, copy)
+	end
+	-- a module that throws makes require say only "Requested module experienced an error while loading" (measured):
+	-- ScriptContext.Error has a runtime error's own message, synchronously, and a syntax error compiles again to say it
+	local failure: string? = nil
+	local listen = ScriptContext.Error:Connect(function(message, _, at)
+		if at == copy then failure = message end
+	end)
+	local ok, result = pcall(require, copy)
+	listen:Disconnect()
+	pending[token] = nil
+	if not ok then
+		session.cache[original] = nil
+		if not failure and loadstring then
+			local _, syntax = loadstring(source, `={copy:GetFullName()}`)
+			failure = syntax
+		end
+		error(failure or result, 0)
+	end
+	session.cache[original] = result
+	return result
+end
+
+local function encode(value: unknown): string
+	local kind = type(value)
+	if value == nil then return "null" end
+	local plain = kind == "boolean" or kind == "table" or (kind == "number" and value == value and math.abs(value :: number) ~= math.huge)
+	if kind == "string" or plain then
+		local ok, text = pcall(HttpService.JSONEncode, HttpService, if kind == "string" then apply.clean(value :: string) else value)
+		if ok then return text end
+	end
+	return HttpService:JSONEncode(apply.clean(tostring(value)))
+end
+
+-- `trace` without the plugin's own frames.
+local function trim(trace: string): string
+	local lines: { string } = {}
+	for line in string.gmatch(trace, "[^\n]+") do
+		if string.sub(line, 1, #OWN) ~= OWN then table.insert(lines, line) end
+	end
+	return table.concat(lines, "\n")
+end
+
+-- Runs one exec and returns the upstream `result` message.
+local function run(request: Request): string
+	local started = os.clock()
+	local output: { { string } } = {}
+	local function capture(kind: string): (...any) -> ()
+		return function(...)
+			local parts = table.pack(...)
+			for i = 1, parts.n do
+				parts[i] = tostring(parts[i])
+			end
+			table.insert(output, { kind, apply.clean(table.concat(parts :: { any }, " ", 1, parts.n)) })
+		end
+	end
+	local chunk = Instance.new("ModuleScript")
+	chunk.Name = request.name
+	-- one line in front, so the user's lines keep their numbers; print and warn are this exec's own
+	chunk.Source = `return function(print, warn) {request.source}\nend`
+	for name, source in request.modules or {} do
+		local module = Instance.new("ModuleScript")
+		module.Name = name
+		module.Source = source
+		module.Parent = chunk
+	end
+	local session: Session = { cache = {}, folders = {}, tops = {} }
+	-- in edit, what the script writes is one waypoint of its own, so Ctrl+Z takes it back
+	local recording = if apply.role == "edit" then ChangeHistoryService:TryBeginRecording("opossum: exec") else nil
+	local result: { n: number, [number]: any }? = nil
+	local thread = task.spawn(function()
+		result = table.pack(xpcall(function()
+			return load(session, chunk)(capture("output"), capture("warning"))
+		end, function(e: unknown)
+			return { message = if type(e) == "string" then e else tostring(e), trace = trim(debug.traceback(nil, 2)) }
+		end))
+	end)
+	local deadline = started + (request.timeout or 60)
+	while not result and os.clock() < deadline do
+		task.wait()
+	end
+	if not result then pcall(task.cancel, thread) end
+	if recording then ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit) end
+	chunk:Destroy()
+	for _, top in session.tops do
+		top:Destroy()
+	end
+	local message = { t = "result", id = request.id, ok = false, output = output, ms = (os.clock() - started) * 1000 } :: { [string]: any }
+	local values: { string } = {}
+	if not result then
+		message.error = `timed out after {request.timeout or 60} s`
+	elseif result[1] then
+		message.ok = true
+		for i = 2, result.n do
+			values[i - 1] = encode(result[i])
+		end
+	else
+		local failure = result[2] :: { message: string, trace: string }
+		message.error = apply.clean(failure.message)
+		message.trace = apply.clean(failure.trace)
+	end
+	-- values may hold nils, which a Luau array cannot: spliced in as JSON
+	local body = HttpService:JSONEncode(message)
+	return `{string.sub(body, 1, -2)},"values":[{table.concat(values, ",")}]}`
+end
+
+return table.freeze { run = run }

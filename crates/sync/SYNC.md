@@ -98,7 +98,8 @@ One WebSocket per DataModel, `ws://127.0.0.1:<port>/`, port 34900 or the next fr
 free only when nothing answers on `127.0.0.1:port`: std binds with `SO_REUSEADDR`, which on macOS succeeds beside a
 wildcard listener and would take its loopback traffic. The plugin tries each port in turn, closing every client that
 fails before the next and disconnecting its handlers (a WebStreamClient with live connections is never collected,
-measured), so a plugin that loses a front proxy falls back to opossum's own port. The server speaks first.
+measured), so a plugin that loses a front proxy falls back to opossum's own port. The server speaks first. The same
+listener answers one plain `POST /exec` per connection (Exec, below).
 
 - Studio allows 5 `RequestAsync` in flight per process, shared by every plugin and DataModel, and the play client may
   not use it at all. Plugins get 4 WebStreamClients per DataModel and other plugins use some. So: no HTTP, one socket
@@ -107,6 +108,8 @@ measured), so a plugin that loses a front proxy falls back to opossum's own port
   socket), so upstream messages are JSON and the plugin replaces invalid UTF-8 in log text before encoding.
 - The handshake is refused unless `Host` is `127.0.0.1`/`localhost` with our port and there is no `Origin`: Studio
   sends none (measured), and pages in a browser, which can open local WebSockets with CORS not applying, always do.
+  A `POST` passes the same two checks: a page's cross-site POST always carries `Origin`, and `Host` defeats DNS
+  rebinding.
   Log text has control characters stripped before it is printed.
 - Threads: `publish` swaps an `Arc<Tree>` and notifies. Each socket has a reader and a writer thread; the writer builds
   its subscriber's frame when it is ready to send (after the previous frame's ack), diffing that subscriber's known
@@ -121,6 +124,8 @@ measured), so a plugin that loses a front proxy falls back to opossum's own port
 {"t":"lost", "ids":[...]}            # mapped instances removed by someone else
 {"t":"verify", "quiet":bool, "roots":{...}}   # Resync, an undo over a sync, a dropped or failed frame
 {"t":"log", "lines":[["output"|"warning"|"error","text"], ...]}
+{"t":"result", "id":N, "ok":bool, "output":[["output"|"warning","text"], ...], "values":[...], "error":"...",
+ "trace":"...", "ms":M}           # an exec's answer
 ```
 
 The `hello` lists every instance carrying an `opossum` attribute that sits directly under a service or nested
@@ -143,7 +148,8 @@ the frame's own number, which a repair takes past the last publish. A late ack r
 The first message is JSON text: `{"t":"hello","project","place","unpublished","session","hotReload"}`. The plugin
 closes the socket unless `place == game.PlaceId`, or `PlaceId == 0` and `unpublished`; otherwise it drops its id map
 and queue, waits for any apply in flight, and answers with its own `hello`. Every later server message is a binary
-**frame**. The server sends no frame before its first publish, so a Studio that connects during the first build is
+**frame**, or an exec: four zero bytes (generation 0, which no frame has), then
+`{"t":"exec","id","name","source","modules","timeout"}`. The server sends no frame before its first publish, so a Studio that connects during the first build is
 never answered from an empty tree. A config change to `placeId`, `unpublished` or `hotReload` closes every socket, so
 each plugin checks the new hello; other changes keep them.
 
@@ -373,6 +379,48 @@ lists. A project's dev runtime can watch that attribute to dispose what modules 
 threads made at require time) outlive their module (measured), and a module nothing requires statically (one a loader
 finds through `GetDescendants`) is re-required only by such a runtime. `DeserializeInstancesAsync` works
 from the play-server plugin (measured). A ref held elsewhere to a swapped instance is not repointed.
+
+## Exec
+
+`opossum exec` and `opossum test` run Luau in a connected DataModel (DESIGN.md, Exec): the CLI posts to `opossum dev`,
+which makes sure its build covers every file saved before the request (its fence) and hands the server the plugin's
+`exec` message for the newest DataModel of the asked realm, failing at once when none is connected.
+
+**When.** The socket's writer sends the exec only once nothing is in flight and nothing is left to send: the DataModel
+has acked the newest published tree (edit, or the play server with hot reload), so it holds every build up to the
+request. A DataModel that takes no frames (the play server without hot reload, the client) gets it at once and runs
+the code it connected with; the answer says so (`fresh: false`) when a build was published since its hello. The
+plugin queues the exec behind the frames that arrived before it, and the frames after it wait for it: one worker, so
+no frame applies while the code runs. Its `result` goes back up the same socket.
+
+**Running.** The chunk is a nil-parented ModuleScript named after the file, holding `return function(print, warn) `
+in front of the source on its first line (line numbers stay the user's) and `\nend` after it; `modules` become its
+children (`@self/<name>`). Its print and warn record into the answer's `output`, so only its own output is captured;
+what the modules it requires print goes to Output and the dev terminal as usual. It runs in a thread under `xpcall`:
+an error answers with its message and `debug.traceback` less the plugin's own frames; returned values are JSON when
+`JSONEncode` takes them (nil as null), `tostring` otherwise (Instances, Vector3, inf, nan). After `timeout` seconds
+(default 60) the thread is cancelled; a loop that never yields holds the plugin until Studio's script timeout stops
+it. The chunk and everything below are destroyed after, so nothing is left in the DataModel. In edit the run is one
+"opossum: exec" ChangeHistory recording: what the script writes is a waypoint of its own that Ctrl+Z takes back (and
+the stamps watch.luau keeps catch any synced instance it touched).
+
+**Require.** Studio caches a ModuleScript's result per instance for the life of the plugin's VM: after a `Source`
+write, a rename, a reparent or `UpdateSourceAsync`, `require` of the same instance returns the first result, and only
+a new instance loads anew (measured in Studio 0.745, 2026-10-28). Sync writes `Source` in place, so the plugin's
+`require` would run stale code from the second exec on. So the chunk, its modules and everything they require load
+through exec.luau's own `require`: each ModuleScript is copied (its current `Source`) into a nil-parented mirror of its
+ancestors' names, so chunk names, errors and tracebacks read `ReplicatedStorage.shared.x:12` as the original's would
+and map to files the same way; the copy's first code line (after leading comments, so `--!native` stays a directive)
+gets `local script, require = ...;` binding `script` to the original and `require` to the loader, which resolves
+instances and `@self`/`@game`/`./`/`../` paths against the original. Each exec has its own cache, so module state never
+leaks from one run into the next. A module that throws while loading makes Studio's `require` say only "Requested
+module experienced an error while loading" (measured); the loader takes the real message from `ScriptContext.Error`,
+which fires synchronously, and a syntax error from compiling the source again with `loadstring` (plugins have it;
+`debug.loadmodule` is not enabled). The traceback of a loading error stops at the require that loaded it.
+
+Measured on a test project in the blank place: 20 of 20 "write a module's return value, immediately exec a require of
+it" runs saw the new value, for a `.luau` module and for a TypeScript one, 61–71 ms per run end to end; new files 85–94
+ms; the play server with hot reload 5 of 5. `opossum test` over a large project's 1,203 cases: 13.8 s in edit.
 
 ## Budgets
 

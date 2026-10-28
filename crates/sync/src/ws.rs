@@ -1,5 +1,6 @@
 //! The server half of RFC 6455 over a blocking `TcpStream`, small enough to split: the handshake, then a reader
-//! that takes masked client frames and a writer (another handle of the same stream) that sends unmasked ones.
+//! that takes masked client frames and a writer (another handle of the same stream) that sends unmasked ones. The
+//! same listener answers one plain HTTP `POST` per connection (`opossum exec`), behind the same checks.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -18,11 +19,21 @@ pub const PONG: u8 = 10;
 /// Origins Studio sends on its WebSocket handshake. A browser page always sends its own, so any other is refused.
 pub const STUDIO_ORIGINS: &[&str] = &[];
 
-/// Reads the upgrade request and answers it: 101 when `Host` is this machine on `port` and `Origin` is absent or
-/// Studio's, 403 (with the reason) otherwise.
-pub fn accept(stream: &mut TcpStream, port: u16) -> Result<BufReader<TcpStream>, String> {
+/// What a connection asked for.
+pub enum Request {
+    /// A WebSocket, upgraded: its reader.
+    Socket(BufReader<TcpStream>),
+    /// A plain HTTP POST to `path`, its body read; the caller answers it with [`respond`].
+    Post { path: String, body: Vec<u8> },
+}
+
+/// Reads the request head and answers an upgrade with 101, when `Host` is this machine on `port` and `Origin` is
+/// absent or Studio's; a POST passes the same checks. Anything else gets 403 or 400 with the reason. A browser
+/// always sends `Origin` on a cross-site POST, and `Host` defeats DNS rebinding.
+pub fn accept(stream: &mut TcpStream, port: u16) -> Result<Request, String> {
     let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
-    let (mut host, mut origin, mut key, mut upgrade) = (None, None, None, false);
+    let (mut host, mut origin, mut key, mut upgrade, mut length) = (None, None, None, false, 0);
+    let mut post = None;
     let mut size = 0;
     let mut first = true;
     loop {
@@ -35,7 +46,9 @@ pub fn accept(stream: &mut TcpStream, port: u16) -> Result<BufReader<TcpStream>,
         let line = line.trim_end();
         if first {
             first = false;
-            if !line.starts_with("GET ") {
+            if let Some(rest) = line.strip_prefix("POST ") {
+                post = rest.split(' ').next().map(str::to_owned);
+            } else if !line.starts_with("GET ") {
                 return refuse(stream, 400, "expected a WebSocket upgrade");
             }
             continue;
@@ -50,6 +63,7 @@ pub fn accept(stream: &mut TcpStream, port: u16) -> Result<BufReader<TcpStream>,
             "origin" => origin = Some(value),
             "sec-websocket-key" => key = Some(value),
             "upgrade" => upgrade = value.eq_ignore_ascii_case("websocket"),
+            "content-length" => length = value.parse().unwrap_or(usize::MAX),
             _ => {}
         }
     }
@@ -65,6 +79,14 @@ pub fn accept(stream: &mut TcpStream, port: u16) -> Result<BufReader<TcpStream>,
     {
         return refuse(stream, 403, &format!("refused a socket from {origin}"));
     }
+    if let Some(path) = post {
+        if length > MAX_MESSAGE {
+            return refuse(stream, 400, "the body is too big");
+        }
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body).map_err(|e| e.to_string())?;
+        return Ok(Request::Post { path, body });
+    }
     let (Some(key), true) = (key, upgrade) else {
         return refuse(stream, 400, "expected a WebSocket upgrade");
     };
@@ -73,15 +95,28 @@ pub fn accept(stream: &mut TcpStream, port: u16) -> Result<BufReader<TcpStream>,
         "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
     );
     stream.write_all(head.as_bytes()).map_err(|e| e.to_string())?;
-    Ok(reader)
+    Ok(Request::Socket(reader))
 }
 
 fn refuse<T>(stream: &mut TcpStream, status: u16, reason: &str) -> Result<T, String> {
-    let text = if status == 403 { "Forbidden" } else { "Bad Request" };
-    let head =
-        format!("HTTP/1.1 {status} {text}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reason}", reason.len());
-    let _ = stream.write_all(head.as_bytes());
+    respond(stream, status, "text/plain", reason);
     Err(reason.to_owned())
+}
+
+/// Answers a request and closes the connection.
+pub fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &str) {
+    let text = match status {
+        200 => "OK",
+        403 => "Forbidden",
+        404 => "Not Found",
+        503 => "Service Unavailable",
+        _ => "Bad Request",
+    };
+    let head = format!(
+        "HTTP/1.1 {status} {text}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let _ = stream.write_all(head.as_bytes()).and_then(|()| stream.write_all(body.as_bytes()));
 }
 
 /// The next whole message (fragments joined) as (opcode, payload). Control frames come back as they arrive.

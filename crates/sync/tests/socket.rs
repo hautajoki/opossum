@@ -1,7 +1,8 @@
 //! One socket end to end, with tungstenite as the plugin: the handshake, the hello exchange, an adopting verify, an
-//! edit, a repair after a failed ack, a late ack after a verify, an orphan a verify lists, and a reconfigure, with
-//! what the server reports to the dev session along the way.
+//! edit, a repair after a failed ack, a late ack after a verify, an exec held back until the frame in flight is
+//! acked, an orphan a verify lists, and a reconfigure, with what the server reports to the dev session along the way.
 
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
@@ -160,6 +161,7 @@ fn tags(frame: &Frame) -> Vec<u8> {
 #[test]
 fn socket_session() {
     let (tx, reports) = std::sync::mpsc::channel();
+    let (requests, _requests) = std::sync::mpsc::channel();
     let server = sync::Server::start(sync::Config {
         project: "test".into(),
         place: 0,
@@ -167,17 +169,28 @@ fn socket_session() {
         hot_reload: false,
         port: 0,
         reports: tx,
+        requests,
     })
     .unwrap();
     let port = server.port();
+
+    // a page can POST to localhost too, and always says where from
+    let mut post = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let head = format!(
+        "POST /exec HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://evil.example\r\nContent-Length: 2\r\n\r\n{{}}"
+    );
+    post.write_all(head.as_bytes()).unwrap();
+    let mut answer = String::new();
+    post.read_to_string(&mut answer).unwrap();
+    assert!(answer.starts_with("HTTP/1.1 403"));
+    assert!(matches!(report(&reports), Report::Log(l) if l.realm == Realm::Sync && l.text.starts_with("refused")));
     let mut cur = tree("return 1");
 
-    // a browser page names its origin
+    // a browser page names its origin (the notice is said once)
     match connect(port, Some("http://evil.example")) {
         Err(tungstenite::Error::Http(response)) => assert_eq!(response.status(), 403),
         other => panic!("expected a 403, got {:?}", other.map(|_| ())),
     }
-    assert!(matches!(report(&reports), Report::Log(l) if l.realm == Realm::Sync && l.text.starts_with("refused")));
 
     let mut socket = connect(port, None).unwrap();
     let hello: serde_json::Value = match socket.read().unwrap() {
@@ -266,7 +279,27 @@ fn socket_session() {
     assert_eq!(next.base, reverify.generation);
     assert!(!next.quiet);
     assert_eq!(next.ops[0].1, [Field::U(a), Field::S("return 3".into())]);
+
+    // an exec asked while that frame is in flight runs only once Studio holds it: nothing comes before the ack
+    let execs = server.clone();
+    let message = serde_json::json!({"t": "exec", "name": "x", "source": "return 1"});
+    let exec = std::thread::spawn(move || execs.exec(Realm::Edit, message, Duration::from_secs(5)));
+    socket.get_mut().set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+    assert!(socket.read().is_err(), "the exec went out before the ack");
+    socket.get_mut().set_read_timeout(None).unwrap();
     send(&mut socket, serde_json::json!({"t": "ack", "gen": next.generation, "failed": []}));
+    // generation 0, which no frame has, leads a JSON message
+    let request: serde_json::Value = match socket.read().unwrap() {
+        Message::Binary(bytes) if bytes[..4] == [0; 4] => serde_json::from_slice(&bytes[4..]).unwrap(),
+        other => panic!("expected the exec, got {other:?}"),
+    };
+    assert_eq!(request["source"], "return 1");
+    send(&mut socket, serde_json::json!({"t": "result", "id": request["id"], "ok": true, "values": [1]}));
+    let ran = exec.join().unwrap().unwrap();
+    assert_eq!(
+        (ran.generation, ran.fresh, &ran.result["values"]),
+        (server.generation(), true, &serde_json::json!([1]))
+    );
 
     // a verify lists the stamped roots: one that is no longer a root is bound by its stamp alone and removed
     let roots = serde_json::json!({"ReplicatedStorage/shared": "", "ReplicatedStorage/old": "00"});

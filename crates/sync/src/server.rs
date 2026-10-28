@@ -1,11 +1,12 @@
 //! Sockets: an acceptor thread, then per socket a reader (the plugin's JSON) and a writer that builds its subscriber's
-//! frame when the last one is acked. `publish` only swaps the tree under the lock and wakes the writers.
+//! frame when the last one is acked. `publish` only swaps the tree under the lock and wakes the writers. A connection
+//! that is a `POST /exec` instead goes to the dev session as a [`Request`] and is answered with what it replies.
 
 use std::collections::VecDeque;
 use std::io::BufReader;
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 
@@ -14,7 +15,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::{Value, json};
 
 use crate::sub::{Context, Role, Sub};
-use crate::{LogKind, LogLine, Realm, Report, ws};
+use crate::{LogKind, LogLine, Realm, Reply, Report, Request, ws};
 
 /// Generations kept for hydrating a reconnect whose stamps are a little behind.
 pub const RING: usize = 16;
@@ -34,12 +35,16 @@ pub enum Event {
     /// The plugin's stamped roots, as in its hello, and whether an undo or redo asked (quiet).
     Verify(Vec<(String, String)>, bool),
     Pong(Vec<u8>),
+    /// An exec's id and its message, sent once the DataModel holds the newest tree.
+    Exec(u64, String),
 }
 
 #[derive(Default)]
-struct Inbox {
+pub struct Inbox {
     events: Vec<Event>,
-    closed: bool,
+    pub closed: bool,
+    /// Set by the plugin's hello.
+    pub realm: Option<Realm>,
 }
 
 pub struct State {
@@ -49,14 +54,18 @@ pub struct State {
     pub tree: Tree,
     /// The last generations' trees, oldest first; the current one is last.
     pub ring: VecDeque<Tree>,
-    inboxes: FxHashMap<u64, Inbox>,
-    next: u64,
+    pub inboxes: FxHashMap<u64, Inbox>,
+    /// The last connection or exec id given out.
+    pub next: u64,
+    /// Execs waiting for their result, with the connection they went to.
+    pub execs: FxHashMap<u64, (u64, Sender<Reply>)>,
 }
 
 pub struct Shared {
     pub session: String,
     pub port: u16,
     pub reports: Sender<Report>,
+    requests: Sender<Request>,
     pub state: Mutex<State>,
     pub wake: Condvar,
     noticed: Mutex<FxHashSet<String>>,
@@ -69,10 +78,16 @@ impl State {
             inbox.closed = true;
         }
     }
+
+    pub fn push(&mut self, conn: u64, event: Event) {
+        if let Some(inbox) = self.inboxes.get_mut(&conn) {
+            inbox.events.push(event);
+        }
+    }
 }
 
 impl Shared {
-    pub fn new(info: Info, session: String, port: u16, reports: Sender<Report>) -> Shared {
+    pub fn new(info: Info, session: String, port: u16, reports: Sender<Report>, requests: Sender<Request>) -> Shared {
         let state = State {
             info,
             generation: 0,
@@ -80,8 +95,10 @@ impl Shared {
             ring: VecDeque::new(),
             inboxes: FxHashMap::default(),
             next: 0,
+            execs: FxHashMap::default(),
         };
-        Shared { session, port, reports, state: Mutex::new(state), wake: Condvar::new(), noticed: Mutex::default() }
+        let (wake, noticed) = (Condvar::new(), Mutex::default());
+        Shared { session, port, reports, requests, state: Mutex::new(state), wake, noticed }
     }
 
     pub fn lock(&self) -> MutexGuard<'_, State> {
@@ -105,10 +122,15 @@ impl Shared {
     }
 
     fn push(&self, conn: u64, event: Event) {
-        if let Some(inbox) = self.lock().inboxes.get_mut(&conn) {
-            inbox.events.push(event);
-        }
+        self.lock().push(conn, event);
         self.wake.notify_all();
+    }
+
+    /// Tells an exec's waiter, if it still waits.
+    fn reply(&self, id: u64, reply: Reply) {
+        if let Some((_, tx)) = self.lock().execs.get(&id) {
+            let _ = tx.send(reply);
+        }
     }
 }
 
@@ -123,7 +145,8 @@ pub fn serve(listener: TcpListener, shared: Arc<Shared>) {
 fn socket(mut stream: TcpStream, shared: &Arc<Shared>) {
     let _ = stream.set_nodelay(true);
     let reader = match ws::accept(&mut stream, shared.port) {
-        Ok(reader) => reader,
+        Ok(ws::Request::Socket(reader)) => reader,
+        Ok(ws::Request::Post { path, body }) => return post(&mut stream, shared, &path, body),
         Err(reason) => {
             if reason.starts_with("refused") {
                 shared.notice(reason);
@@ -174,10 +197,28 @@ fn socket(mut stream: TcpStream, shared: &Arc<Shared>) {
     if let Some(writer) = writer {
         let _ = writer.join();
     }
-    shared.lock().inboxes.remove(&conn);
+    {
+        let mut state = shared.lock();
+        state.inboxes.remove(&conn);
+        // their waiters hear the disconnect
+        state.execs.retain(|_, (c, _)| *c != conn);
+    }
     if let Some((realm, place)) = hello {
         shared.report(Report::Disconnected { realm, place });
     }
+}
+
+/// Hands a `POST /exec` to the dev session and answers with its reply.
+fn post(stream: &mut TcpStream, shared: &Shared, path: &str, body: Vec<u8>) {
+    if path != "/exec" {
+        return ws::respond(stream, 404, "text/plain", "opossum dev answers POST /exec only");
+    }
+    let (reply, answer) = mpsc::channel();
+    let (status, body) = match shared.requests.send(Request { body, reply }).ok().and_then(|()| answer.recv().ok()) {
+        Some(answer) => answer,
+        None => (503, json!({"error": "this opossum dev takes no requests"}).to_string()),
+    };
+    ws::respond(stream, status, "application/json", &body);
 }
 
 /// Reads the plugin's messages until the socket closes; returns its hello's realm and place, if it sent one.
@@ -205,6 +246,9 @@ fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) -> Op
                         };
                         let place = message["place"].as_u64().unwrap_or(0);
                         hello = Some((realm, place));
+                        if let Some(inbox) = shared.lock().inboxes.get_mut(&conn) {
+                            inbox.realm = Some(realm);
+                        }
                         shared.report(Report::Connected { realm, place });
                         shared.push(conn, Event::Hello(role, roots(&message)));
                     }
@@ -227,6 +271,12 @@ fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) -> Op
                             ids.iter().filter_map(|i| u32::try_from(i.as_u64()?).ok()).collect()
                         });
                         shared.push(conn, Event::Lost(ids));
+                    }
+                    Some("result") => {
+                        let id = message["id"].as_u64().unwrap_or(0);
+                        if let Some((_, tx)) = shared.lock().execs.remove(&id) {
+                            let _ = tx.send(Reply::Done(message));
+                        }
                     }
                     Some("verify") => {
                         shared.push(conn, Event::Verify(roots(&message), message["quiet"].as_bool().unwrap_or(false)));
@@ -268,6 +318,9 @@ pub fn clean(text: &str) -> String {
 fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
     let mut sub = Sub::new();
     let mut seen = 0;
+    // execs waiting until the subscriber holds the newest tree, and the generation published at its hello
+    let mut execs: Vec<(u64, String)> = Vec::new();
+    let mut hello = 0;
     loop {
         let (events, tree, ring, generation, hot_reload) = {
             let mut state = shared.lock();
@@ -293,7 +346,11 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
         let cx = Context { cur: &tree, published: generation, ring: &ring, hot_reload, notice: &notice, fail: &fail };
         for event in events {
             match event {
-                Event::Hello(role, roots) => sub.hello(role, roots, hot_reload),
+                Event::Hello(role, roots) => {
+                    sub.hello(role, roots, hot_reload);
+                    hello = generation;
+                }
+                Event::Exec(id, text) => execs.push((id, text)),
                 Event::Ack(number, failed, ms) => {
                     // an ack the plugin sent after asking for a verify is covered by that verify's frame
                     if let Some(generation) = sub.ack(&cx, number, &failed) {
@@ -314,13 +371,26 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
                 }
             }
         }
+        if sub.sent.is_none() {
+            seen = generation;
+            for part in sub.frame(&cx, generation.max(sub.base + 1)).into_iter().flatten() {
+                if ws::write(out, ws::BINARY, &part).is_err() {
+                    return;
+                }
+            }
+        }
+        // nothing in flight and nothing left to send: the subscriber holds `generation`, or takes no frames
         if sub.sent.is_some() {
             continue;
         }
-        seen = generation;
-        let Some(parts) = sub.frame(&cx, generation.max(sub.base + 1)) else { continue };
-        for part in parts {
-            if ws::write(out, ws::BINARY, &part).is_err() {
+        let takes = sub.role == Role::Edit || (sub.role == Role::Server && hot_reload);
+        for (id, text) in execs.drain(..) {
+            let started = if takes { (generation, true) } else { (hello, hello == generation) };
+            shared.reply(id, Reply::Started { generation: started.0, fresh: started.1 });
+            // generation 0, which no frame has, marks a JSON message
+            let mut message = vec![0; 4];
+            message.extend_from_slice(text.as_bytes());
+            if ws::write(out, ws::BINARY, &message).is_err() {
                 return;
             }
         }

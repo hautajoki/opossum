@@ -1,13 +1,14 @@
 --!strict
 -- opossum's Studio plugin (crates/sync/SYNC.md). In every DataModel it finds a running `opossum dev` on one
--- WebSocket and forwards Output to it; the edit DataModel, and the play server with hot reload, also apply its
--- frames, one at a time, and ack them.
+-- WebSocket and forwards Output to it, and runs the Luau `opossum exec` sends; the edit DataModel, and the play server
+-- with hot reload, also apply its frames, one at a time, and ack them.
 
 local HttpService = game:GetService("HttpService")
 local LogService = game:GetService("LogService")
 local RunService = game:GetService("RunService")
 
 local apply = require("@self/apply")
+local exec = require("@self/exec")
 local watch = require("@self/watch")
 
 local FIRST_PORT = 34900
@@ -26,8 +27,9 @@ local links: { RBXScriptConnection } = {}
 local project = ""
 -- Bumped per socket, so an apply that outlives its socket never acks into the next one.
 local epoch = 0
--- Frames waiting for the worker, each with the os.clock() it arrived at.
-local queue: { { data: string, at: number } } = {}
+-- Frames and execs waiting for the worker, in order, each with the os.clock() it arrived at.
+type Item = { data: string, at: number, exec: exec.Request? }
+local queue: { Item } = {}
 -- When the generation being applied got its first part: its ack carries the milliseconds since.
 local started: number? = nil
 local busy = false
@@ -46,7 +48,12 @@ local function work()
 	busy = true
 	local mine = epoch
 	while queue[1] and epoch == mine do
-		local item = table.remove(queue, 1) :: { data: string, at: number }
+		local item = table.remove(queue, 1) :: Item
+		if item.exec then
+			local result = exec.run(item.exec)
+			if epoch == mine then send(result) end
+			continue
+		end
 		local since = started or item.at
 		local ok, result = pcall(apply.frame, item.data)
 		if epoch ~= mine then break end
@@ -128,7 +135,14 @@ local function connect(port: number): "live" | "next" | "busy"
 	connections[1] = client.MessageReceived:Connect(function(message)
 		if state == "live" then
 			if socket ~= client then return end
-			table.insert(queue, { data = message, at = os.clock() })
+			local item: Item = { data = message, at = os.clock() }
+			-- generation 0, which no frame has, leads a JSON message
+			if string.sub(message, 1, 4) == "\0\0\0\0" then
+				local ok, value = pcall(HttpService.JSONDecode, HttpService, string.sub(message, 5))
+				if not ok or type(value) ~= "table" or value.t ~= "exec" then return end
+				item.exec = value :: exec.Request
+			end
+			table.insert(queue, item)
 			if not busy then task.spawn(work) end
 		elseif state == "pending" then
 			local decoded, value = pcall(HttpService.JSONDecode, HttpService, message)

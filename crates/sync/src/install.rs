@@ -8,8 +8,11 @@ use rbx_dom_weak::{InstanceBuilder, WeakDom};
 pub const PLUGIN_SOURCE: &str = include_str!("../../../plugin/opossum.server.luau");
 
 /// The ModuleScripts under it, which it requires as `@self/<name>`.
-const PLUGIN_MODULES: [(&str, &str); 2] =
-    [("apply", include_str!("../../../plugin/apply.luau")), ("watch", include_str!("../../../plugin/watch.luau"))];
+const PLUGIN_MODULES: [(&str, &str); 3] = [
+    ("apply", include_str!("../../../plugin/apply.luau")),
+    ("exec", include_str!("../../../plugin/exec.luau")),
+    ("watch", include_str!("../../../plugin/watch.luau")),
+];
 
 /// The plugin as an .rbxm: a Script named `opossum` holding `PLUGIN_SOURCE`, with its ModuleScripts as children.
 pub fn plugin_rbxm() -> io::Result<Vec<u8>> {

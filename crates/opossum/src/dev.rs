@@ -46,6 +46,8 @@ pub fn run(cfg: Config, json: bool) -> Result<bool, String> {
 
 fn session(cfg: Config, out: &Out) -> Result<bool, String> {
     let (report_tx, reports) = mpsc::channel();
+    // nobody takes exec requests yet: the server answers them 503
+    let (request_tx, _) = mpsc::channel();
     let server = sync::Server::start(sync::Config {
         project: cfg.name.clone(),
         place: cfg.place.unwrap_or(0),
@@ -53,6 +55,7 @@ fn session(cfg: Config, out: &Out) -> Result<bool, String> {
         hot_reload: cfg.hot_reload,
         port: sync::DEFAULT_PORT,
         reports: report_tx,
+        requests: request_tx,
     })
     .map_err(|e| format!("sync server: {e}"))?;
     let port = server.port();
