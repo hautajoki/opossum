@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use notify::{RecursiveMode, Watcher};
 use place::Tree;
 use rustc_hash::FxHashMap;
-use sync::{LogKind, LogLine, Realm};
+use sync::{LogKind, Report};
 
 use crate::build::{LineMap, RUNTIME, Session, script_class, script_kind, slashed};
 use crate::config::{self, Config};
@@ -38,7 +38,7 @@ pub fn run(cfg: Config) -> Result<bool, String> {
         unpublished: cfg.place.is_none(),
         hot_reload: cfg.hot_reload,
         port: sync::DEFAULT_PORT,
-        log: Some(log_tx),
+        reports: log_tx,
     })
     .map_err(|e| format!("sync server: {e}"))?;
     println!("syncing {} on 127.0.0.1:{}", cfg.name, server.port());
@@ -47,7 +47,7 @@ pub fn run(cfg: Config) -> Result<bool, String> {
     let printer = Arc::clone(&index);
     std::thread::Builder::new()
         .name("studio-log".into())
-        .spawn(move || print_logs(log_rx, &printer))
+        .spawn(move || print_reports(log_rx, &printer))
         .map_err(|e| e.to_string())?;
 
     let (tx, events) = mpsc::channel();
@@ -278,22 +278,36 @@ fn log_entry(session: &Session, root: &Path, file: &Path) -> (String, Option<Arc
     (rel, session.compiled.get(&slashed(file)).map(|c| Arc::clone(&c.lines)))
 }
 
-fn print_logs(lines: Receiver<LogLine>, index: &Mutex<LogIndex>) {
-    for line in lines {
-        let text = {
-            let index = index.lock().unwrap_or_else(|e| e.into_inner());
-            map_log(&line.text, &index)
-        };
-        let realm = match line.realm {
-            Realm::Edit => "edit",
-            Realm::Server => "server",
-            Realm::Client => "client",
-            Realm::Sync => "sync",
-        };
-        match line.kind {
-            LogKind::Warning => println!("[{realm}] warning: {text}"),
-            LogKind::Error => println!("[{realm}] error: {text}"),
-            LogKind::Output => println!("[{realm}] {text}"),
+/// Prints what the sync server reports, Studio's output mapped to the files it came from.
+fn print_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>) {
+    for report in reports {
+        match report {
+            Report::Log(line) => {
+                let text = map_log(&line.text, &index.lock().unwrap_or_else(|e| e.into_inner()));
+                match line.kind {
+                    LogKind::Output => println!("[{}] {text}", line.realm.name()),
+                    kind => println!("[{}] {}: {text}", line.realm.name(), kind.name()),
+                }
+            }
+            Report::Connected { realm, place } => println!("[{}] connected: place {place}", realm.name()),
+            Report::Disconnected { realm, .. } => println!("[{}] disconnected", realm.name()),
+            Report::Applied { realm, generation, ms, failed } => {
+                let failed = if failed > 0 { format!(", {failed} failed") } else { String::new() };
+                println!("applied generation {generation} in {} ({ms:.1} ms{failed})", realm.name());
+            }
+            Report::Verify { realm, generation, quiet } => {
+                let why = if quiet { " (an undo's)" } else { "" };
+                println!("generation {generation} in {} answered by a verify{why}", realm.name());
+            }
+            Report::Failed(f) => {
+                let at = match (&f.file, &f.path) {
+                    (Some(file), Some(path)) => format!("{} ({path})", file.display()),
+                    (None, Some(path)) => path.clone(),
+                    _ => format!("instance {}", f.id),
+                };
+                let parked = if f.parked { " (failed again unchanged; parked until it changes or Resync)" } else { "" };
+                println!("[sync] error: {at}: {}{parked}", f.message);
+            }
         }
     }
 }

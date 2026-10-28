@@ -2,6 +2,7 @@
 //! tree (SYNC.md, Sessions). Its writer thread owns it, so nothing here locks.
 
 use std::collections::hash_map::Entry;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use place::props::creatable;
@@ -10,6 +11,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::frame::{self, AUTHORITATIVE, Blob, RECONCILE, Section, changed_names, copy_names, folder_carried};
 use crate::server::clean;
+use crate::{Failure, Realm};
 
 /// A frame splits above this many new instances or bytes of new content.
 const MAX_INSTANCES: usize = 10_000;
@@ -31,21 +33,35 @@ pub enum Role {
     Client,
 }
 
+impl Role {
+    pub fn realm(self) -> Realm {
+        match self {
+            Role::Edit => Realm::Edit,
+            Role::Server => Realm::Server,
+            Role::Client => Realm::Client,
+        }
+    }
+}
+
 /// What a subscriber's writer reads from the server when it builds a frame.
 pub struct Context<'a> {
     pub cur: &'a Tree,
+    /// The published generation `cur` is.
+    pub published: u32,
     /// The last generations' trees, oldest first.
     pub ring: &'a [Tree],
     pub hot_reload: bool,
     /// Prints a line in the dev terminal; the same text is printed once per server.
     pub notice: &'a dyn Fn(String),
-    /// Prints a failure in the dev terminal.
-    pub say: &'a dyn Fn(String),
+    /// Reports an op Studio could not apply.
+    pub fail: &'a dyn Fn(Failure),
 }
 
 /// A frame waiting for its ack.
 pub struct Sent {
     generation: u32,
+    /// The published generation the frame brings the subscriber to (a repair's own number is above it).
+    build: u32,
     prev: Tree,
     /// Ids the frame's blob inserted, by `children` op.
     inserted: FxHashSet<Id>,
@@ -86,6 +102,8 @@ pub struct Sub {
     temp: Id,
     /// The last `verify` was quiet (an undo's): the frame that answers it carries [`frame::QUIET`].
     quiet: bool,
+    /// The frame number and build of the frame a verify answered, which a late ack may still name.
+    answered: Option<(u32, u32)>,
 }
 
 #[derive(Default)]
@@ -164,6 +182,7 @@ impl Sub {
             hello: None,
             temp: NONE - 1,
             quiet: false,
+            answered: None,
         }
     }
 
@@ -180,11 +199,13 @@ impl Sub {
     /// its stamped paths: the wait for an ack ends. Edit verifies every root and removes the listed paths that are
     /// no longer roots. The play server, which never verifies, is sent again what the frame in flight carried; a
     /// connect frame that never applied connects again. A `quiet` verify (an undo's) is answered by a frame that
-    /// says so, unless that frame is a connect.
-    pub fn resync(&mut self, cur: &Tree, roots: &[(String, String)], quiet: bool) {
+    /// says so, unless that frame is a connect. Returns the build the frame in flight was bringing, if any.
+    pub fn resync(&mut self, cur: &Tree, roots: &[(String, String)], quiet: bool) -> Option<u32> {
         let sent = self.sent.take();
+        let build = sent.as_ref().map(|s| s.build);
+        self.answered = sent.as_ref().map(|s| (s.generation, s.build)).or(self.answered);
         if self.hello.is_some() {
-            return;
+            return build;
         }
         if let Some(hello) = sent.as_ref().and_then(|s| s.hello.clone()) {
             self.hello = Some(hello);
@@ -215,6 +236,7 @@ impl Sub {
             }
             _ => {}
         }
+        build
     }
 
     /// Instances someone else removed: they leave the known tree, so the next frame puts them back, and refs into
@@ -908,25 +930,35 @@ impl Sub {
         }
 
         let lost = FxHashSet::default();
-        self.sent = Some(Sent { generation, prev: known, inserted, reconciled, force, lost, hello });
+        let build = cx.published;
+        self.sent = Some(Sent { generation, build, prev: known, inserted, reconciled, force, lost, hello });
         self.known = next;
         self.base = generation;
         out
     }
 
     /// An ack: each failure updates the known tree so the next frame repairs it. An ack for another frame than the
-    /// one in flight (the plugin asked for a verify meanwhile, which covers it) only prints its failures. Returns
-    /// whether anything failed.
-    pub fn ack(&mut self, cx: &Context, generation: u32, failed: &[(Id, u8, String)]) -> bool {
+    /// one in flight (the plugin asked for a verify meanwhile, which covers it) only reports its failures. Returns
+    /// the build the frame brought the subscriber to when it was the one in flight.
+    pub fn ack(&mut self, cx: &Context, number: u32, failed: &[(Id, u8, String)]) -> Option<u32> {
         let cur = cx.cur;
-        let Some(sent) = self.sent.take_if(|s| s.generation == generation) else {
-            for (id, _, message) in failed {
-                (cx.say)(format!("{}: {message}", locate(&[cur, &self.known], *id)));
+        let realm = self.role.realm();
+        let in_flight = self.sent.as_ref().filter(|s| s.generation == number).map(|s| s.build);
+        let late = self.answered.filter(|&(n, _)| n == number).map(|(_, build)| build);
+        let generation = in_flight.or(late).unwrap_or(number);
+        let report = |trees: &[&Tree], id: Id, tag: u8, message: &str, parked: bool| {
+            let (file, path) = locate(trees, id);
+            let (op, message) = (frame::op_name(tag), message.to_owned());
+            (cx.fail)(Failure { realm, generation, id, op, message, file, path, parked });
+        };
+        let Some(sent) = self.sent.take_if(|s| s.generation == number) else {
+            for (id, tag, message) in failed {
+                report(&[cur, &self.known], *id, *tag, message, false);
             }
-            return !failed.is_empty();
+            return None;
         };
         if failed.is_empty() {
-            return false;
+            return in_flight;
         }
         let mut threw = false;
         // ids failing in this ack: a second failure of one node in the same frame does not park it
@@ -935,7 +967,7 @@ impl Sub {
         let mut gone: FxHashSet<Id> = FxHashSet::default();
         for (id, tag, message) in failed {
             let id = *id;
-            let at = locate(&[cur, &self.known, &sent.prev], id);
+            let trees = [cur, &self.known, &sent.prev];
             let hash = cur.get(id).map_or(0, |n| n.hash);
             let before = self.fails.insert(id, hash);
             let again = now.insert(id) && before == Some(hash);
@@ -944,11 +976,11 @@ impl Sub {
                 Entry::Occupied(_) => true,
                 Entry::Vacant(slot) if again => {
                     slot.insert(hash);
-                    (cx.say)(format!("{at}: {message} (failed again unchanged; parked until it changes or Resync)"));
+                    report(&trees, id, *tag, message, true);
                     true
                 }
                 Entry::Vacant(_) => {
-                    (cx.say)(format!("{at}: {message}"));
+                    report(&trees, id, *tag, message, false);
                     false
                 }
             };
@@ -1027,7 +1059,7 @@ impl Sub {
         if threw {
             self.isolate = true;
         }
-        true
+        in_flight
     }
 
     /// A reconcile node failed: it pairs live content, so inserting it again would duplicate it. Its root is verified
@@ -1059,19 +1091,18 @@ fn bind(plan: &mut Plan, id: Id, parent: Id, class: &str, name: &str) {
     frame::str(out, name);
 }
 
-/// Where a failure is, for the terminal: the nearest file and the instance path, from the first tree that has the
+/// Where a failure is: the nearest source file and the instance path, from the first tree that has the
 /// id (an id the plugin sent back may be in none: a throwaway, or one the tree has dropped since).
-fn locate(trees: &[&Tree], id: Id) -> String {
-    let Some(tree) = trees.iter().find(|t| t.get(id).is_some()) else { return format!("instance {id}") };
-    let path = tree.path_of(id);
+fn locate(trees: &[&Tree], id: Id) -> (Option<PathBuf>, Option<String>) {
+    let Some(tree) = trees.iter().find(|t| t.get(id).is_some()) else { return (None, None) };
     let mut at = id;
     while let Some(node) = tree.get(at) {
         if let Some(file) = &node.file {
-            return format!("{} ({path})", file.display());
+            return (Some(file.to_path_buf()), Some(tree.path_of(id)));
         }
         at = node.parent;
     }
-    path
+    (None, Some(tree.path_of(id)))
 }
 
 /// `id` and its descendants that `tree` holds, preorder; empty when it does not hold `id`.
@@ -1131,7 +1162,7 @@ mod tests {
 
     fn plan(sub: &mut Sub, known: &Tree, cur: &Tree, hot_reload: bool) -> Plan {
         let quiet = |_: String| {};
-        let cx = Context { cur, ring: &[], hot_reload, notice: &quiet, say: &quiet };
+        let cx = Context { cur, published: 0, ring: &[], hot_reload, notice: &quiet, fail: &|_| {} };
         let mut plan = Plan::default();
         sub.diff(&cx, known, &mut plan);
         plan
@@ -1208,7 +1239,7 @@ mod tests {
         assert!(plan.foreign.contains(&c));
         assert!(!preorder_where(&cur, shared, &|n| !plan.foreign.contains(&n)).contains(&c));
         let quiet = |_: String| {};
-        let cx = Context { cur: &cur, ring: &[], hot_reload: false, notice: &quiet, say: &quiet };
+        let cx = Context { cur: &cur, published: 0, ring: &[], hot_reload: false, notice: &quiet, fail: &|_| {} };
         sub.diff(&cx, &known, &mut plan);
         let mut moves = plan.moves.clone();
         moves.sort_unstable();
@@ -1228,7 +1259,7 @@ mod tests {
 
         // the connect verifies shared, placing x by reconcile; x's old instance is reported lost meanwhile: the
         // frame puts x back itself, so the root is verified again rather than x inserted a second time
-        let cx = Context { cur: &gen1, ring: &[], hot_reload: false, notice: &quiet, say: &quiet };
+        let cx = Context { cur: &gen1, published: 0, ring: &[], hot_reload: false, notice: &quiet, fail: &|_| {} };
         let mut sub = Sub::new();
         sub.hello(Role::Edit, Vec::new(), false);
         sub.frame(&cx, 1).unwrap();
@@ -1249,7 +1280,7 @@ mod tests {
             ("ReplicatedStorage/shared/b/y", ScriptKind::Module, "return 2"),
         ]));
         assert_eq!(id(&cur, "ReplicatedStorage/shared/b/x"), x);
-        let cx = Context { cur: &cur, ring: &[], hot_reload: false, notice: &quiet, say: &quiet };
+        let cx = Context { cur: &cur, published: 0, ring: &[], hot_reload: false, notice: &quiet, fail: &|_| {} };
         sub.frame(&cx, 3).unwrap();
         sub.lost(&cur, &[x]);
         sub.ack(&cx, 3, &[(x, frame::MOVE, format!("id {x} is not mapped"))]);

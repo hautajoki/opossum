@@ -26,7 +26,10 @@ local links: { RBXScriptConnection } = {}
 local project = ""
 -- Bumped per socket, so an apply that outlives its socket never acks into the next one.
 local epoch = 0
-local queue: { string } = {}
+-- Frames waiting for the worker, each with the os.clock() it arrived at.
+local queue: { { data: string, at: number } } = {}
+-- When the generation being applied got its first part: its ack carries the milliseconds since.
+local started: number? = nil
 local busy = false
 local status: PluginToolbarButton? = nil
 
@@ -43,8 +46,11 @@ local function work()
 	busy = true
 	local mine = epoch
 	while queue[1] and epoch == mine do
-		local ok, result = pcall(apply.frame, table.remove(queue, 1) :: string)
+		local item = table.remove(queue, 1) :: { data: string, at: number }
+		local since = started or item.at
+		local ok, result = pcall(apply.frame, item.data)
 		if epoch ~= mine then break end
+		started = if ok and result == "part" then since else nil
 		if not ok then
 			-- the rest of its generation is dropped too, so this verify is the generation's only answer
 			warn(`opossum: a frame failed to apply: {result}`)
@@ -55,7 +61,8 @@ local function work()
 		elseif result == "part" then
 			task.wait()
 		elseif result == "done" then
-			send(HttpService:JSONEncode { t = "ack", gen = apply.applied, failed = apply.failed })
+			local ms = (os.clock() - since) * 1000
+			send(HttpService:JSONEncode { t = "ack", gen = apply.applied, failed = apply.failed, ms = ms })
 			table.clear(apply.failed)
 			if apply.structural then
 				apply.structural = false
@@ -102,6 +109,7 @@ local function drop(client: WebStreamClient)
 		socket = nil
 		epoch += 1
 		table.clear(queue)
+		started = nil
 		show()
 		print(`opossum: disconnected from {project}`)
 	end
@@ -120,7 +128,7 @@ local function connect(port: number): "live" | "next" | "busy"
 	connections[1] = client.MessageReceived:Connect(function(message)
 		if state == "live" then
 			if socket ~= client then return end
-			table.insert(queue, message)
+			table.insert(queue, { data = message, at = os.clock() })
 			if not busy then task.spawn(work) end
 		elseif state == "pending" then
 			local decoded, value = pcall(HttpService.JSONDecode, HttpService, message)
@@ -153,6 +161,7 @@ local function connect(port: number): "live" | "next" | "busy"
 	end
 	epoch += 1
 	table.clear(queue)
+	started = nil
 	-- an apply in flight ends within its join timeout
 	while busy do
 		task.wait()

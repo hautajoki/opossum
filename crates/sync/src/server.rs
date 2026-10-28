@@ -14,7 +14,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::{Value, json};
 
 use crate::sub::{Context, Role, Sub};
-use crate::{LogKind, LogLine, Realm, ws};
+use crate::{LogKind, LogLine, Realm, Report, ws};
 
 /// Generations kept for hydrating a reconnect whose stamps are a little behind.
 pub const RING: usize = 16;
@@ -28,8 +28,8 @@ pub struct Info {
 
 pub enum Event {
     Hello(Role, Vec<(String, String)>),
-    /// The generation applied, and its failures.
-    Ack(u32, Vec<(Id, u8, String)>),
+    /// The generation applied, its failures, and the ms Studio took from its first part arriving to the ack.
+    Ack(u32, Vec<(Id, u8, String)>, f64),
     Lost(Vec<Id>),
     /// The plugin's stamped roots, as in its hello, and whether an undo or redo asked (quiet).
     Verify(Vec<(String, String)>, bool),
@@ -56,7 +56,7 @@ pub struct State {
 pub struct Shared {
     pub session: String,
     pub port: u16,
-    pub log: Option<Sender<LogLine>>,
+    pub reports: Sender<Report>,
     pub state: Mutex<State>,
     pub wake: Condvar,
     noticed: Mutex<FxHashSet<String>>,
@@ -72,7 +72,7 @@ impl State {
 }
 
 impl Shared {
-    pub fn new(info: Info, session: String, port: u16, log: Option<Sender<LogLine>>) -> Shared {
+    pub fn new(info: Info, session: String, port: u16, reports: Sender<Report>) -> Shared {
         let state = State {
             info,
             generation: 0,
@@ -81,20 +81,20 @@ impl Shared {
             inboxes: FxHashMap::default(),
             next: 0,
         };
-        Shared { session, port, log, state: Mutex::new(state), wake: Condvar::new(), noticed: Mutex::default() }
+        Shared { session, port, reports, state: Mutex::new(state), wake: Condvar::new(), noticed: Mutex::default() }
     }
 
     pub fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Tells the dev session; nobody listening is fine.
+    pub fn report(&self, report: Report) {
+        let _ = self.reports.send(report);
+    }
+
     fn say(&self, kind: LogKind, text: String) {
-        match &self.log {
-            Some(log) => {
-                let _ = log.send(LogLine { kind, realm: Realm::Sync, text });
-            }
-            None => eprintln!("opossum: {text}"),
-        }
+        self.report(Report::Log(LogLine { kind, realm: Realm::Sync, text }));
     }
 
     /// Says `text` once for the life of the server.
@@ -165,9 +165,7 @@ fn socket(mut stream: TcpStream, shared: &Arc<Shared>) {
         };
         thread::Builder::new().name("sync-writer".into()).spawn(run).ok()
     });
-    if writer.is_some() {
-        read_loop(reader, shared, conn);
-    }
+    let hello = if writer.is_some() { read_loop(reader, shared, conn) } else { None };
     if let Some(inbox) = shared.lock().inboxes.get_mut(&conn) {
         inbox.closed = true;
     }
@@ -177,15 +175,20 @@ fn socket(mut stream: TcpStream, shared: &Arc<Shared>) {
         let _ = writer.join();
     }
     shared.lock().inboxes.remove(&conn);
+    if let Some((realm, place)) = hello {
+        shared.report(Report::Disconnected { realm, place });
+    }
 }
 
-fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) {
+/// Reads the plugin's messages until the socket closes; returns its hello's realm and place, if it sent one.
+fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) -> Option<(Realm, u64)> {
     let mut realm = Realm::Edit;
+    let mut hello = None;
     loop {
-        let Ok((op, payload)) = ws::read(&mut reader) else { return };
+        let Ok((op, payload)) = ws::read(&mut reader) else { return hello };
         match op {
             ws::PING => shared.push(conn, Event::Pong(payload)),
-            ws::CLOSE => return,
+            ws::CLOSE => return hello,
             ws::TEXT => {
                 let Ok(message) = serde_json::from_slice::<Value>(&payload) else { continue };
                 match message["t"].as_str() {
@@ -200,6 +203,9 @@ fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) {
                             Role::Server => Realm::Server,
                             Role::Client => Realm::Client,
                         };
+                        let place = message["place"].as_u64().unwrap_or(0);
+                        hello = Some((realm, place));
+                        shared.report(Report::Connected { realm, place });
                         shared.push(conn, Event::Hello(role, roots(&message)));
                     }
                     Some("ack") => {
@@ -214,7 +220,7 @@ fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) {
                         });
                         // an ack without a generation matches no frame
                         let generation = message["gen"].as_u64().and_then(|g| u32::try_from(g).ok()).unwrap_or(0);
-                        shared.push(conn, Event::Ack(generation, failed));
+                        shared.push(conn, Event::Ack(generation, failed, message["ms"].as_f64().unwrap_or(0.0)));
                     }
                     Some("lost") => {
                         let ids = message["ids"].as_array().map_or_else(Vec::new, |ids| {
@@ -226,7 +232,6 @@ fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) {
                         shared.push(conn, Event::Verify(roots(&message), message["quiet"].as_bool().unwrap_or(false)));
                     }
                     Some("log") => {
-                        let Some(log) = &shared.log else { continue };
                         for line in message["lines"].as_array().into_iter().flatten() {
                             let kind = match line[0].as_str() {
                                 Some("warning") => LogKind::Warning,
@@ -234,14 +239,14 @@ fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) {
                                 _ => LogKind::Output,
                             };
                             let text = clean(line[1].as_str().unwrap_or(""));
-                            let _ = log.send(LogLine { kind, realm, text });
+                            shared.report(Report::Log(LogLine { kind, realm, text }));
                         }
                     }
                     _ => {}
                 }
             }
             // upstream is text only
-            _ => return,
+            _ => return hello,
         }
     }
 }
@@ -284,16 +289,24 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
             (events, state.tree.clone(), ring, state.generation, state.info.hot_reload)
         };
         let notice = |text: String| shared.notice(text);
-        let say = |text: String| shared.say(LogKind::Error, text);
-        let cx = Context { cur: &tree, ring: &ring, hot_reload, notice: &notice, say: &say };
+        let fail = |failure| shared.report(Report::Failed(failure));
+        let cx = Context { cur: &tree, published: generation, ring: &ring, hot_reload, notice: &notice, fail: &fail };
         for event in events {
             match event {
                 Event::Hello(role, roots) => sub.hello(role, roots, hot_reload),
-                Event::Ack(generation, failed) => {
-                    sub.ack(&cx, generation, &failed);
+                Event::Ack(number, failed, ms) => {
+                    // an ack the plugin sent after asking for a verify is covered by that verify's frame
+                    if let Some(generation) = sub.ack(&cx, number, &failed) {
+                        let (realm, failed) = (sub.role.realm(), failed.len());
+                        shared.report(Report::Applied { realm, generation, ms, failed });
+                    }
                 }
                 Event::Lost(ids) => sub.lost(&tree, &ids),
-                Event::Verify(roots, quiet) => sub.resync(&tree, &roots, quiet),
+                Event::Verify(roots, quiet) => {
+                    if let Some(generation) = sub.resync(&tree, &roots, quiet) {
+                        shared.report(Report::Verify { realm: sub.role.realm(), generation, quiet });
+                    }
+                }
                 Event::Pong(payload) => {
                     if ws::write(out, ws::PONG, &payload).is_err() {
                         return;

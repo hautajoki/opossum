@@ -117,7 +117,7 @@ measured), so a plugin that loses a front proxy falls back to opossum's own port
 
 ```
 {"t":"hello", "role":"edit"|"server"|"client", "place":<PlaceId>, "roots":{"<path>":"<stamp>", ...}}
-{"t":"ack", "gen":G, "failed":[[id,tag,"message"], ...]}
+{"t":"ack", "gen":G, "failed":[[id,tag,"message"], ...], "ms":M}
 {"t":"lost", "ids":[...]}            # mapped instances removed by someone else
 {"t":"verify", "quiet":bool, "roots":{...}}   # Resync, an undo over a sync, a dropped or failed frame
 {"t":"log", "lines":[["output"|"warning"|"error","text"], ...]}
@@ -126,9 +126,17 @@ measured), so a plugin that loses a front proxy falls back to opossum's own port
 The `hello` lists every instance carrying an `opossum` attribute that sits directly under a service or nested
 container, by `/`-joined path from the DataModel, with its stamp; a path that appears twice goes out as `""`, so its
 root is verified and the duplicate removed. `verify` carries the same `roots`. Each generation gets exactly one `ack` or one
-`verify`; an ack for another generation than the one in flight is printed and otherwise ignored. The plugin `Close()`s
-every socket it drops. A verify is `quiet` when an undo or redo asked for it, or when the frame that failed or was
+`verify`; an ack for another generation than the one in flight is reported and otherwise ignored. An ack's `ms` is the
+wall time (`os.clock`) from the generation's first part arriving to the ack, queueing and every part's apply included.
+The plugin `Close()`s every socket it drops. A verify is `quiet` when an undo or redo asked for it, or when the frame that failed or was
 dropped was itself quiet.
+
+The server reports to the dev session (`sync::Report`), in order per socket: a hello (connected, with its realm and
+place), the ack of the frame in flight (its failures one by one, then applied, with `ms` and the failure count), a
+`verify` that ends the wait for one (and whether it is quiet), log lines and the server's own notices (realm `sync`),
+and the socket closing (disconnected). Each names the published generation the frame brings the DataModel to, never
+the frame's own number, which a repair takes past the last publish. A late ack reports only its failures.
+`opossum dev` shows each report as one event (DESIGN.md, Dev events).
 
 ### Down
 

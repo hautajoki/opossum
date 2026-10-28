@@ -20,6 +20,13 @@ pub const STAMP: u8 = 9;
 pub const SWAP: u8 = 10;
 pub const RELOAD: u8 = 11;
 
+/// An op's name as SYNC.md's table spells it.
+pub fn op_name(tag: u8) -> &'static str {
+    const NAMES: [&str; 12] =
+        ["?", "bind", "hydrate", "children", "props", "source", "move", "ref", "remove", "stamp", "swap", "reload"];
+    NAMES.get(usize::from(tag)).copied().unwrap_or("?")
+}
+
 /// Frame header flags: the generation's last part, and a generation that answers a quiet `verify` (an undo's).
 pub const LAST: u8 = 1;
 pub const QUIET: u8 = 2;
