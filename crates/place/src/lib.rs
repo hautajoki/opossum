@@ -16,7 +16,7 @@ use std::path::PathBuf;
 pub use migrate::{Write, plan_migration};
 pub use properties::{PlaceEntry, entries_from_toml};
 pub use rbx_dom_weak::{self, Instance, Ustr, WeakDom, types::Ref, types::Variant, ustr};
-pub use read::{Place, frame_dir, rbxm_class, read_place, resolve_ref, service_for_dir};
+pub use read::{Place, frame_dir, instance_name, rbxm_class, read_place, resolve_ref, service_for_dir};
 pub use tree::{
     Id, NESTED, NONE, Node, Origin, PACKAGES, PackageFile, ROOT, ScriptKind, Source, Tree, package_tree_root,
 };

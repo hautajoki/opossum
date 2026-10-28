@@ -359,7 +359,7 @@ impl Place {
 }
 
 /// The instance a directory entry makes: a directory's own name, a file's name without its content extension.
-fn instance_name(entry: &str, is_dir: bool) -> String {
+pub fn instance_name(entry: &str, is_dir: bool) -> String {
     if is_dir {
         return entry.to_owned();
     }

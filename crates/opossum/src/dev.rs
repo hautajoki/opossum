@@ -695,6 +695,11 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
             },
             None => found.clone().map_err(|e| (409, e))?,
         };
+        let in_place =
+            canonical_prefix(&file).ok().zip(canonical_prefix(&place).ok()).is_some_and(|(f, p)| f.starts_with(p));
+        if in_place {
+            clash(&tree, &self.root, path, &file).map_err(|e| (409, e))?;
+        }
 
         // a copy, so a root's stamp stays out of the file
         let lookup: Vec<String> = names.iter().map(|n| luau_string(n)).collect();
@@ -755,11 +760,12 @@ return at.ClassName, buffer.tostring(game:GetService(\"EncodingService\"):Base64
             Ok(generation) => answer["gen"] = generation.into(),
             Err(e) => answer["warning"] = format!("written, but {e}").into(),
         }
+        // read back as the instance pulled, or for another file of place/ as any instance
         let tree = self.server.tree();
-        let read = tree.find(path).and_then(|id| tree.get(id)).is_some_and(|n| n.file.as_deref() == Some(&*file));
-        if into_place && answer["gen"].is_u64() && !read {
-            answer["warning"] =
-                format!("opossum dev did not read {path} back from {shown}: see its diagnostics").into();
+        let from = |id: place::Id| tree.get(id).is_some_and(|n| n.file.as_deref() == Some(&*file));
+        let read = if into_place { tree.find(path).is_some_and(from) } else { tree.preorder().into_iter().any(from) };
+        if in_place && answer["gen"].is_u64() && !read {
+            answer["warning"] = format!("opossum dev did not read {shown} back: see its diagnostics").into();
         }
         answer["ms"] = (start.elapsed().as_secs_f64() * 1000.0).into();
         Ok(answer)
@@ -883,7 +889,8 @@ fn destination(tree: &Tree, root: &Path, path: &str) -> Result<PathBuf, String> 
                 Ok(file.to_path_buf())
             }
             (_, Some((at, file))) if at == id => Err(format!(
-                "{path} comes from {}, which pull never overwrites; name an .rbxm file to write it to instead",
+                "{path} comes from {}, which pull never overwrites or writes beside; name an .rbxm file elsewhere to \
+                 export a copy",
                 shown(&file)
             )),
             (_, Some((at, file))) => Err(format!(
@@ -927,6 +934,38 @@ fn destination(tree: &Tree, root: &Path, path: &str) -> Result<PathBuf, String> 
         return Err(format!("{parent} is made by a properties file, not a directory: name a file"));
     }
     Ok(dir.join(format!("{name}.rbxm")))
+}
+
+/// Refuses a `file` of `place/` that another entry of its directory would make the same instance as: the place reader
+/// keeps only one of the two (`tree.instanceClash`), and on a case-insensitive filesystem a name differing only by case
+/// is the other entry's file itself. Only the instance's own file may be written over.
+fn clash(tree: &Tree, root: &Path, path: &str, file: &Path) -> Result<(), String> {
+    let shown = |file: &Path| file.strip_prefix(root).unwrap_or(file).display().to_string();
+    let own = tree.find(path).and_then(|id| tree.get(id)).and_then(|n| n.file.clone());
+    let (Some(dir), Some(name)) = (file.parent(), file.file_name().and_then(|n| n.to_str())) else { return Ok(()) };
+    let made = place::instance_name(name, false);
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let other = entry.file_name().to_string_lossy().into_owned();
+        let at = entry.path();
+        if other.starts_with('.') || !place::instance_name(&other, at.is_dir()).eq_ignore_ascii_case(&made) {
+            continue;
+        }
+        if other == name && own.as_deref() == Some(file) {
+            continue;
+        }
+        return Err(if other == name {
+            format!("{} is another entry's file, which pull never overwrites", shown(file))
+        } else if other.eq_ignore_ascii_case(name) {
+            format!(
+                "{} differs from {}, another instance's file, only by case (one file where names ignore it)",
+                shown(file),
+                shown(&at)
+            )
+        } else {
+            format!("{} already makes {made} there, so place/ would not read {}", shown(&at), shown(file))
+        });
+    }
+    Ok(())
 }
 
 /// Standard base64, as EncodingService:Base64Encode writes it; None for anything else.
@@ -1167,6 +1206,9 @@ mod tests {
             "Workspace/map/boat",
         ]
         .map(|path| at(path).is_err());
+        // beside a model.json making the same instance, or a file differing only by case; over its own file, or new
+        let clashes = [("door", "door.rbxm"), ("Hull", "Hull.rbxm"), ("hull", "hull.rbxm"), ("boat", "boat.rbxm")]
+            .map(|(name, file)| clash(&tree, &root, &format!("ReplicatedStorage/models/{name}"), &models.join(file)));
         std::fs::remove_dir_all(&root).unwrap();
 
         assert!(diags.is_empty(), "{diags:?}");
@@ -1183,6 +1225,7 @@ mod tests {
         );
         // a model.json and what it holds, a folder, a module, and what is under neither files nor a service
         assert_eq!(refused, [true; 7]);
+        assert_eq!(clashes.each_ref().map(Result::is_err), [true, true, false, false], "{clashes:?}");
         assert_eq!(base64("TWFueQ=="), Some(b"Many".to_vec()));
         assert_eq!(base64("TW!u"), None);
     }
