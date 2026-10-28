@@ -3,14 +3,15 @@
 //! for a script error, a failed test or an answer that never came, 2 when it never ran (dev or the DataModel cannot be
 //! reached, or holds older code than a test allows). `opossum play` and `stop` start and end a playtest the same way
 //! (`POST /play`, `/stop`; DESIGN.md, Play), and `opossum pull` writes an instance from Studio into the files
-//! (`POST /pull`; DESIGN.md, Pull). `opossum test --cloud` runs the specs on Open Cloud through tessera instead, with
-//! no dev or Studio involved (DESIGN.md, Cloud tests).
+//! (`POST /pull`; DESIGN.md, Pull). `opossum status` and `attach` ask every dev on the sync ports what it holds and
+//! move Studio between them (`POST /status`, `/release`; DESIGN.md, Attach). `opossum test --cloud` runs the specs on
+//! Open Cloud through tessera instead, with no dev or Studio involved (DESIGN.md, Cloud tests).
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
@@ -444,11 +445,21 @@ fn send(cfg: &Config, options: &Options, path: &str, mut body: Value) -> Result<
         .ok()
         .and_then(|text| text.trim().parse().ok())
         .ok_or_else(|| format!("opossum dev is not running here ({} is missing)", shown(&cfg.root, &file)))?;
-    let mut stream = TcpStream::connect(("127.0.0.1", port))
-        .map_err(|_| format!("opossum dev is not running (nothing answers on port {port})"))?;
     // dev bounds the wait itself: its fence, then the time limit and some slack
-    let limit = options.timeout.unwrap_or(60.0) + 180.0;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs_f64(limit)));
+    let limit = Duration::from_secs_f64(options.timeout.unwrap_or(60.0) + 180.0);
+    let (status, answer) = request(port, path, &body, limit)?;
+    if status != 200 {
+        return Err(answer["error"].as_str().map_or_else(|| answer.to_string(), str::to_owned));
+    }
+    Ok(answer)
+}
+
+/// One `POST` of `body` to whatever listens on `port`: its status and JSON answer.
+fn request(port: u16, path: &str, body: &Value, limit: Duration) -> Result<(u16, Value), String> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(200))
+        .map_err(|_| format!("opossum dev is not running (nothing answers on port {port})"))?;
+    let _ = stream.set_read_timeout(Some(limit));
     let body = body.to_string();
     let head = format!(
         "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
@@ -461,13 +472,173 @@ fn send(cfg: &Config, options: &Options, path: &str, mut body: Value) -> Result<
     stream.read_to_end(&mut response).map_err(io)?;
     let text = String::from_utf8_lossy(&response);
     let (head, body) = text.split_once("\r\n\r\n").ok_or_else(|| format!("port {port} did not answer like opossum"))?;
-    let status = head.split(' ').nth(1).unwrap_or("");
+    let status = head.split(' ').nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
     let answer: Value =
         serde_json::from_str(body).map_err(|_| format!("port {port} did not answer like opossum dev"))?;
-    if status != "200" {
-        return Err(answer["error"].as_str().unwrap_or(body).to_owned());
+    Ok((status, answer))
+}
+
+/// Every opossum dev on the sync ports, as its `/status` answers, port order. Other servers there are skipped.
+fn devs() -> Vec<Value> {
+    let ports = sync::DEFAULT_PORT..sync::DEFAULT_PORT + sync::PORTS;
+    let answers = ports.filter_map(|port| request(port, "/status", &json!({}), Duration::from_secs(2)).ok());
+    answers.filter(|(status, answer)| *status == 200 && answer["port"].is_u64()).map(|(_, answer)| answer).collect()
+}
+
+/// The realms connected to a dev, by its status.
+fn realms(dev: &Value) -> Vec<&str> {
+    dev["connected"].as_array().into_iter().flatten().filter_map(|c| c["realm"].as_str()).collect()
+}
+
+/// Whether `dev` serves the project at `root`.
+fn serves(dev: &Value, root: &Path) -> bool {
+    let same = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    dev["root"].as_str().is_some_and(|r| same(Path::new(r)) == same(root))
+}
+
+/// Lists every opossum dev on the sync ports with the DataModels it holds, marking this project's. Exit status 0
+/// when Studio's edit DataModel syncs from this project's dev, 1 when it does not, 2 when this project has no dev.
+pub fn status(cfg: &Config, options: &Options) -> Result<bool, String> {
+    let devs = devs();
+    let here = devs.iter().find(|d| serves(d, &cfg.root));
+    let attached = here.is_some_and(|d| realms(d).contains(&"edit"));
+    if options.json {
+        let port = here.map_or(Value::Null, |d| d["port"].clone());
+        println!("{}", json!({ "ok": attached, "here": port, "devs": devs }));
+    } else {
+        for dev in &devs {
+            let mark = if serves(dev, &cfg.root) { " (this project)" } else { "" };
+            println!(
+                "port {}, pid {}: {} ({}), generation {}{mark}",
+                dev["port"],
+                dev["pid"],
+                dev["project"].as_str().unwrap_or("?"),
+                dev["root"].as_str().unwrap_or("?"),
+                dev["gen"]
+            );
+            for c in dev["connected"].as_array().into_iter().flatten() {
+                println!("  {}: place {}, generation {}", c["realm"].as_str().unwrap_or("?"), c["place"], c["gen"]);
+            }
+            if dev["connected"].as_array().is_none_or(Vec::is_empty) {
+                println!("  no Studio connected");
+            }
+            let execs = dev["execs"].as_u64().unwrap_or(0);
+            if execs > 0 {
+                println!("  {execs} exec{} running", if execs == 1 { "" } else { "s" });
+            }
+        }
+        if devs.is_empty() {
+            println!("no opossum dev is running");
+        }
     }
-    Ok(answer)
+    if here.is_none() {
+        return Err("opossum dev is not running here".to_owned());
+    }
+    Ok(attached)
+}
+
+/// Moves Studio to this project's dev: the dev holding it tells its plugins to connect to this one's port, and this
+/// returns once edit connected here (DESIGN.md, Attach). With `force`, a running playtest moves too and a running
+/// exec loses its answer.
+pub fn attach(cfg: &Config, options: &Options, force: bool) -> Result<bool, String> {
+    let start = Instant::now();
+    let json = options.json;
+    let refused = |error: String| {
+        if json {
+            println!("{}", json!({ "ok": false, "ran": false, "error": error }));
+        }
+        error
+    };
+    let devs = devs();
+    let here = devs.iter().find(|d| serves(d, &cfg.root));
+    let here = here.ok_or_else(|| refused("opossum dev is not running here".to_owned()))?;
+    let port_of = |dev: &Value| dev["port"].as_u64().and_then(|p| u16::try_from(p).ok()).unwrap_or(0);
+    let port = port_of(here);
+    let project = here["project"].as_str().unwrap_or("?");
+    if realms(here).contains(&"edit") {
+        if json {
+            println!("{}", json!({ "ok": true, "port": port, "from": [], "realms": realms(here), "ms": 0 }));
+        } else {
+            println!("Studio is already attached to {project} on port {port}");
+        }
+        return Ok(true);
+    }
+    let holders: Vec<&Value> = devs.iter().filter(|d| !serves(d, &cfg.root) && !realms(d).is_empty()).collect();
+    if holders.is_empty() {
+        return Err(refused(
+            "no opossum dev holds Studio (is the place open, with the opossum plugin installed?)".to_owned(),
+        ));
+    }
+    // the plugin checks the place in this dev's hello: one it would refuse goes back to the first dev on the ports
+    let place = |c: &Value| (c["realm"] == "edit").then(|| c["place"].as_u64()).flatten();
+    let edit = holders.iter().flat_map(|d| d["connected"].as_array().into_iter().flatten()).find_map(place);
+    if let Some(open) = edit
+        && here["place"].as_u64() != Some(open)
+        && !(open == 0 && here["unpublished"] == true)
+    {
+        let serves =
+            if here["unpublished"] == true { "unpublished places".to_owned() } else { here["place"].to_string() };
+        return Err(refused(format!("Studio has place {open} open, and {project} syncs {serves}")));
+    }
+    let mut moved: Vec<String> = Vec::new();
+    let mut from = Vec::new();
+    for dev in &holders {
+        let (at, root) = (port_of(dev), dev["root"].as_str().unwrap_or("?"));
+        let body = json!({ "port": port, "force": force });
+        let (status, answer) = request(at, "/release", &body, Duration::from_secs(30)).map_err(refused)?;
+        let error = answer["error"].as_str().unwrap_or("it did not answer");
+        if status != 200 {
+            return Err(refused(format!("the opossum dev of {root} on port {at} keeps Studio: {error}")));
+        }
+        if answer["ok"] != true {
+            return failed(json, format!("the opossum dev of {root} on port {at}: {error}"));
+        }
+        moved.extend(answer["realms"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned));
+        from.push(json!({ "port": at, "root": root, "pid": dev["pid"] }));
+    }
+    // the plugins connect here: edit and, when a playtest moved, its DataModels
+    let limit = Duration::from_secs_f64(options.timeout.unwrap_or(60.0));
+    loop {
+        let status = request(port, "/status", &json!({}), Duration::from_secs(2)).map(|(_, s)| s);
+        let connected: Vec<String> = status.iter().flat_map(|s| realms(s)).map(str::to_owned).collect();
+        if moved.iter().all(|r| connected.contains(r)) {
+            break;
+        }
+        if start.elapsed() > limit {
+            let missing: Vec<&str> = moved.iter().filter(|r| !connected.contains(r)).map(String::as_str).collect();
+            let error = format!(
+                "Studio left, but {} did not connect here within {} s",
+                missing.join(", "),
+                limit.as_secs_f64()
+            );
+            return failed(json, error);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let ms = start.elapsed().as_secs_f64() * 1000.0;
+    if json {
+        println!("{}", json!({ "ok": true, "port": port, "from": from, "realms": moved, "ms": ms }));
+        return Ok(true);
+    }
+    let left: Vec<String> =
+        from.iter().map(|f| format!("{} on port {}", f["root"].as_str().unwrap_or("?"), f["port"])).collect();
+    println!(
+        "attached Studio ({}) to {project} on port {port}, from {} ({:.2} s)",
+        moved.join(", "),
+        left.join(" and "),
+        ms / 1000.0
+    );
+    Ok(true)
+}
+
+/// An `ok: false` answer (exit status 1): it was asked, and did not come to pass.
+fn failed(json: bool, error: String) -> Result<bool, String> {
+    if json {
+        println!("{}", json!({ "ok": false, "error": error }));
+    } else {
+        eprintln!("opossum: {error}");
+    }
+    Ok(false)
 }
 
 fn shown(root: &Path, file: &Path) -> String {

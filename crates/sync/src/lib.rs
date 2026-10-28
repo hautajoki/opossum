@@ -3,7 +3,8 @@
 //!
 //! The dev session publishes each generation's [`place::Tree`]; every socket's writer diffs what its DataModel holds
 //! against the newest tree when its last frame is acked, so a backlog collapses into one frame and a stalled Studio
-//! never holds up a publish. [`Server::exec`] runs Luau in a connected DataModel once it holds the newest tree.
+//! never holds up a publish. [`Server::exec`] runs Luau in a connected DataModel once it holds the newest tree, and
+//! [`Server::release`] hands Studio to another dev on the same ports.
 
 mod frame;
 mod install;
@@ -28,8 +29,8 @@ pub use server::clean;
 pub use sub::hex;
 
 pub const DEFAULT_PORT: u16 = 34900;
-/// Ports tried from `Config::port` upward when it is taken.
-const PORT_TRIES: u16 = 16;
+/// Ports tried from `Config::port` upward when it is taken, and the plugin's from [`DEFAULT_PORT`].
+pub const PORTS: u16 = 16;
 /// How long an exec may wait to start: in the writer until its DataModel holds the newest tree, then in the plugin's
 /// queue behind earlier work. Past it, it never runs.
 const START: Duration = Duration::from_secs(30);
@@ -48,13 +49,13 @@ pub struct Config {
     pub port: u16,
     /// Receives what each DataModel prints and does with its frames, and the server's own notices.
     pub reports: Sender<Report>,
-    /// Receives each `POST` to [`PATHS`] (`opossum exec`, `test`, `play`, `stop` and `pull`); nobody listening answers
-    /// 503.
+    /// Receives each `POST` to [`PATHS`] (`opossum exec`, `test`, `play`, `stop`, `pull`, `status` and `attach`);
+    /// nobody listening answers 503.
     pub requests: Sender<Request>,
 }
 
 /// The paths the dev session answers a `POST` on; any other is 404.
-pub const PATHS: &[&str] = &["/exec", "/play", "/stop", "/pull"];
+pub const PATHS: &[&str] = &["/exec", "/play", "/stop", "/pull", "/status", "/release"];
 
 /// A `POST` to one of [`PATHS`]: the path, its body as sent, and where its answer goes (HTTP status, JSON body).
 pub struct Request {
@@ -255,6 +256,55 @@ impl Server {
         realms
     }
 
+    /// What `opossum status` shows of this server: `{project, place, unpublished, hotReload, gen, connected, execs}`,
+    /// `gen` the last build published, `connected` each DataModel that said hello as `{realm, place, gen}` (the build
+    /// it holds, 0 before it applied one), `execs` how many wait to run or are running.
+    pub fn status(&self) -> Value {
+        let state = self.shared.lock();
+        let mut connected: Vec<(Realm, u64, u32)> =
+            state.inboxes.values().filter(|i| !i.closed).filter_map(|i| Some((i.realm?, i.place, i.held))).collect();
+        connected.sort_by_key(|c| c.0 as u8);
+        let connected: Vec<Value> = connected
+            .into_iter()
+            .map(|(realm, place, held)| json!({ "realm": realm.name(), "place": place, "gen": held }))
+            .collect();
+        let info = &state.info;
+        json!({
+            "project": info.project,
+            "place": info.place,
+            "unpublished": info.unpublished,
+            "hotReload": info.hot_reload,
+            "gen": state.generation,
+            "connected": connected,
+            "execs": state.execs.len(),
+        })
+    }
+
+    /// Tells the plugin of every connected DataModel to connect to the dev on `port` instead (`opossum attach`), and
+    /// returns their realms; the sockets close once the plugins read it. Refused while a playtest runs (the play
+    /// DataModels would move under its feet) or an exec waits or runs, unless `force`.
+    pub fn release(&self, port: u16, force: bool) -> Result<Vec<Realm>, String> {
+        let mut state = self.shared.lock();
+        let mut connected: Vec<(u64, Realm)> =
+            state.inboxes.iter().filter(|(_, i)| !i.closed).filter_map(|(&c, i)| Some((c, i.realm?))).collect();
+        connected.sort_by_key(|c| c.1 as u8);
+        if connected.is_empty() {
+            return Err("no Studio DataModel is connected".to_owned());
+        }
+        if !force && connected.iter().any(|(_, realm)| *realm != Realm::Edit) {
+            return Err("a playtest is running (opossum stop ends it, --force moves it too)".to_owned());
+        }
+        if !force && !state.execs.is_empty() {
+            return Err("an exec is running (--force moves Studio anyway; its answer is lost)".to_owned());
+        }
+        for &(conn, _) in &connected {
+            state.push(conn, server::Event::Attach(port));
+        }
+        drop(state);
+        self.shared.wake.notify_all();
+        Ok(connected.into_iter().map(|(_, realm)| realm).collect())
+    }
+
     /// Whether the play server takes frames (`hotReload`), so it holds every build as edit does.
     pub fn hot_reload(&self) -> bool {
         self.shared.lock().info.hot_reload
@@ -361,7 +411,7 @@ fn bind(port: u16) -> io::Result<TcpListener> {
         return TcpListener::bind(("127.0.0.1", 0));
     }
     let mut last = None;
-    for port in port..port.saturating_add(PORT_TRIES) {
+    for port in port..port.saturating_add(PORTS) {
         // std binds with SO_REUSEADDR, which on macOS succeeds beside a wildcard listener (`*:port`) and would take
         // its loopback traffic: a port is free only when nothing answers there
         let addr = SocketAddr::from(([127, 0, 0, 1], port));

@@ -1,7 +1,7 @@
 //! One socket end to end, with tungstenite as the plugin: the handshake, the hello exchange, an adopting verify, an
 //! edit, a repair after a failed ack, a late ack after a verify, an exec held back until the frame in flight is
 //! acked, a play server's exec by the build its stamps hold, an orphan a verify lists, a parked node the files drop,
-//! and a reconfigure, with what the server reports to the dev session along the way.
+//! a release to another dev, and a reconfigure, with what the server reports to the dev session along the way.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -329,6 +329,8 @@ fn socket_session() {
     let message = serde_json::json!({"t": "exec", "name": "x", "source": "return 1"});
     let refused = server.exec(Realm::Server, message, Duration::from_secs(5), true);
     assert!(refused.is_err());
+    // `opossum attach` never moves a playtest from under its feet unless forced
+    assert!(server.release(34999, false).unwrap_err().contains("playtest"));
     drop(play);
     assert_eq!(report(&reports), Report::Disconnected { realm: Realm::Server, place: 0 });
 
@@ -364,6 +366,14 @@ fn socket_session() {
     let dropped = frame(&mut socket);
     assert_eq!(tags(&dropped), [sync::REMOVE, sync::STAMP]);
     send(&mut socket, serde_json::json!({"t": "ack", "gen": dropped.generation, "failed": []}));
+
+    // `opossum attach`: the plugin is told which dev's port to connect to instead, and closes the socket itself
+    assert_eq!(server.release(34999, false), Ok(vec![Realm::Edit]));
+    let attach: serde_json::Value = match socket.read().unwrap() {
+        Message::Binary(bytes) if bytes[..4] == [0; 4] => serde_json::from_slice(&bytes[4..]).unwrap(),
+        other => panic!("expected the attach, got {other:?}"),
+    };
+    assert_eq!(attach, serde_json::json!({"t": "attach", "port": 34999}));
 
     // the plugin checks the place only at hello: another place closes the socket, and the plugin connects again
     server.configure("test".into(), 42, false, false);

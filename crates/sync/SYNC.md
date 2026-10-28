@@ -96,11 +96,11 @@ edit DataModel) and survive restarts. The server keeps its last 16 generations' 
 
 One WebSocket per DataModel, `ws://127.0.0.1:<port>/`, port 34900 or the next free one of 16 (Rojo owns 34872). A port is
 free only when nothing answers on `127.0.0.1:port`: std binds with `SO_REUSEADDR`, which on macOS succeeds beside a
-wildcard listener and would take its loopback traffic. The plugin tries each port in turn, closing every client that
-fails before the next and disconnecting its handlers (a WebStreamClient with live connections is never collected,
-measured), so a plugin that loses a front proxy falls back to opossum's own port. The server speaks first. The same
-listener answers one plain `POST` per connection, to `/exec` (Exec, below), `/play` or `/stop` (Playtests), or `/pull`
-(Pull).
+wildcard listener and would take its loopback traffic. The plugin first tries the port it last synced from (Attach,
+below), then each port in turn, closing every client that fails before the next and disconnecting its handlers (a
+WebStreamClient with live connections is never collected, measured), so a plugin that loses a front proxy falls back
+to opossum's own port. The server speaks first. The same listener answers one plain `POST` per connection, to `/exec`
+(Exec, below), `/play` or `/stop` (Playtests), `/pull` (Pull), or `/status` and `/release` (Attach).
 
 - Studio allows 5 `RequestAsync` in flight per process, shared by every plugin and DataModel, and the play client may
   not use it at all. Plugins get 4 WebStreamClients per DataModel and other plugins use some. So: no HTTP, one socket
@@ -152,7 +152,8 @@ The first message is JSON text: `{"t":"hello","project","place","unpublished","s
 the socket unless `place == game.PlaceId`, or `PlaceId == 0` and `unpublished`; otherwise it drops its id map and queue,
 waits for any apply in flight, and answers with its own `hello`. Every later server message is a binary **frame**, or an
 exec: four zero bytes (generation 0, which no frame has), then
-`{"t":"exec","id","name","source","modules","timeout","start","limit"}`. The server sends no frame before its first publish, so
+`{"t":"exec","id","name","source","modules","timeout","start","limit"}`, or the same way `{"t":"attach","port"}`
+(Attach). The server sends no frame before its first publish, so
 a Studio that connects during the first build is never answered from an empty tree. A config change to `placeId`,
 `unpublished` or `hotReload` closes every socket, so each plugin checks the new hello; other changes keep them.
 
@@ -480,6 +481,24 @@ pairs the live instances by `(name, class, ordinal)`, as a connect does, so they
 what the files do not hold. A build before the file is read leaves the path waiting; a pull whose content equals the
 files' leaves it waiting until the next change there, which then verifies its root (a verify is always correct, only
 larger). A file written outside `place/` is not adopted, and the play server, which never verifies, is not told.
+
+## Attach
+
+Every dev listens on one of the 16 ports, so `opossum attach` (DESIGN.md, Attach) needs no registry: it asks each port
+for `/status` (`Server::status`: the project, the place it serves, the build it published, each connected DataModel's
+realm, place and the build it holds, the execs waiting or running), then asks the dev holding Studio for `/release`.
+That dev (`Server::release`) refuses while a play DataModel is connected or an exec waits or runs, unless forced, and
+otherwise queues `attach` with the new port for every socket; the writer sends it between frames. The plugin takes a
+port of its own range only: it records it as the port it wants, drops the socket (its queue with it, the apply in
+flight finishing first) and connects there at once, through the usual hello, place check and connect frame; a dev that
+does not answer or serves another place sends it back to the scan. Both `/status` and `/release` pass the Host and
+Origin checks; neither carries a project root, since other projects ask them.
+
+The port a plugin wants is the last it connected to. The edit plugin also writes it to its settings under
+`port<PlaceId>` on every connect, and every plugin reads that setting when it starts: plugin settings are shared by the
+plugin in every DataModel of a Studio (measured, 2026-10-29: Play Solo's server and client joined the dev edit had been
+moved to, not the first on the ports), so a playtest started after an attach syncs from the same dev as edit, and so
+does a Studio opened later, while that dev runs.
 
 ## Budgets
 

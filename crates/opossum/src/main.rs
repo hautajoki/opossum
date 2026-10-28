@@ -36,6 +36,8 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
   stop [--timeout <s>] [--json]                              end it and sum up what it logged
   pull [--timeout <s>] [--json] <Instance.Path> [<file.rbxm>]
                                                              write an instance from Studio into the files
+  status [--json]                                            the opossum devs running and which holds Studio
+  attach [--force] [--timeout <s>] [--json]                  move Studio to this project's opossum dev
   where <file | Instance.Path[:line]>                        a file's instance, or an instance's file
   sourcemap                                                  .opossum/sourcemap.json for luau-lsp
   plugin install [<path>]                                    the Studio plugin .rbxm
@@ -51,6 +53,8 @@ enum Command {
     Play(exec::Options, bool),
     Stop(exec::Options),
     Pull(exec::Options, String, Option<PathBuf>),
+    Status(exec::Options),
+    Attach(exec::Options, bool),
     Where(String),
     Sourcemap,
     Plugin(Option<PathBuf>),
@@ -69,7 +73,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     }
     let (mut profile, mut out, mut emit, mut json) = (None, None, None, false);
     let (mut realm, mut timeout, mut code, mut run) = (None, None, None, false);
-    let (mut cloud, mut place, mut environment) = (false, None, None);
+    let (mut cloud, mut place, mut environment, mut force) = (false, None, None, false);
     let mut positional: Vec<&str> = Vec::new();
     let mut it = rest.iter().copied().skip(1);
     while let Some(arg) = it.next() {
@@ -90,6 +94,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
             "--cloud" => cloud = true,
             "--place" => place = Some(value()?),
             "--environment" => environment = Some(value()?),
+            "--force" => force = true,
             "-" => positional.push(arg),
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}")),
             _ => positional.push(arg),
@@ -97,10 +102,11 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     }
     let verb = rest.first().copied();
     let studio = matches!(verb, Some("exec" | "test" | "bench"));
-    let timed = studio || matches!(verb, Some("play" | "stop" | "pull"));
+    let timed = studio || matches!(verb, Some("play" | "stop" | "pull" | "attach"));
     let stray = realm.is_some() && !studio || timeout.is_some() && !timed;
     let tessera = place.is_some() || environment.is_some();
-    if stray || code.is_some() && verb != Some("exec") || run && verb != Some("play") {
+    if stray || code.is_some() && verb != Some("exec") || run && verb != Some("play") || force && verb != Some("attach")
+    {
         return Err(USAGE.to_owned());
     }
     if (cloud || tessera) && !matches!(verb, Some("test" | "bench")) || tessera && !cloud || cloud && realm.is_some() {
@@ -132,6 +138,10 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
             if file.len() <= 1 && profile.is_none() && out.is_none() && emit.is_none() =>
         {
             Command::Pull(options(), (*path).to_owned(), file.first().map(PathBuf::from))
+        }
+        (Some("status"), []) if profile.is_none() && out.is_none() && emit.is_none() => Command::Status(options()),
+        (Some("attach"), []) if profile.is_none() && out.is_none() && emit.is_none() => {
+            Command::Attach(options(), force)
         }
         (Some("where"), [target]) => Command::Where((*target).to_owned()),
         (Some("sourcemap"), []) => Command::Sourcemap,
@@ -195,6 +205,8 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Command::Play(options, run) => return exec::play(&cfg, &options, run),
         Command::Stop(options) => return exec::stop(&cfg, &options),
         Command::Pull(options, path, file) => return exec::pull(&cfg, &options, &path, file.as_deref()),
+        Command::Status(options) => return exec::status(&cfg, &options),
+        Command::Attach(options, force) => return exec::attach(&cfg, &options, force),
         // builds itself, for the log index
         Command::Cloud(options, cloud, mode, filter) => {
             return exec::cloud(cfg, &options, &cloud, mode, filter.as_deref());
@@ -215,7 +227,9 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         | Command::Cloud(..)
         | Command::Play(..)
         | Command::Stop(..)
-        | Command::Pull(..) => unreachable!("handled above"),
+        | Command::Pull(..)
+        | Command::Status(..)
+        | Command::Attach(..) => unreachable!("handled above"),
     }
 }
 

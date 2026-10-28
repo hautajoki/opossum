@@ -1,7 +1,7 @@
 --!strict
 -- opossum's Studio plugin (crates/sync/SYNC.md). In every DataModel it finds a running `opossum dev` on one
 -- WebSocket and forwards Output to it, and runs the Luau `opossum exec` sends; the edit DataModel, and the play server
--- with hot reload, also apply its frames, one at a time, and ack them.
+-- with hot reload, also apply its frames, one at a time, and ack them. `opossum attach` moves it to another dev.
 
 local HttpService = game:GetService("HttpService")
 local LogService = game:GetService("LogService")
@@ -20,6 +20,18 @@ type Hello = { t: string, project: string, place: number, unpublished: boolean, 
 
 local ROLE: apply.Role = if RunService:IsEdit() then "edit" elseif RunService:IsServer() then "server" else "client"
 apply.role = ROLE
+
+-- The port of the dev this Studio syncs from, in the plugin's settings (per place), which every DataModel's plugin
+-- shares: edit writes it on each connect, and a connect tries it first, so a playtest's DataModels join the dev edit
+-- is on and a reconnect goes back to it, wherever `opossum attach` moved it.
+local SETTING = `port{game.PlaceId}`
+
+local function ours(port: unknown): boolean
+	return type(port) == "number" and port >= FIRST_PORT and port < FIRST_PORT + PORTS and port % 1 == 0
+end
+
+local setting_ok, setting = pcall(plugin.GetSetting, plugin, SETTING)
+local wanted: number? = if setting_ok and ours(setting) then setting :: number else nil
 
 local socket: WebStreamClient? = nil
 -- The live socket's signal connections: a client with connected handlers is never collected, even closed.
@@ -119,6 +131,8 @@ local function release(client: WebStreamClient, connections: { RBXScriptConnecti
 	end
 end
 
+local find: () -> ()
+
 local function drop(client: WebStreamClient)
 	if socket == client then
 		release(client, links)
@@ -149,7 +163,17 @@ local function connect(port: number): "live" | "next" | "busy"
 			-- generation 0, which no frame has, leads a JSON message
 			if string.sub(message, 1, 4) == "\0\0\0\0" then
 				local ok, value = pcall(HttpService.JSONDecode, HttpService, string.sub(message, 5))
-				if not ok or type(value) ~= "table" or value.t ~= "exec" then return end
+				if not ok or type(value) ~= "table" then return end
+				if value.t == "attach" and ours(value.port) then
+					-- opossum attach: this dev lets go, the one on that port takes over
+					wanted = value.port
+					if ROLE == "edit" then pcall(plugin.SetSetting, plugin, SETTING, value.port) end
+					print(`opossum: moving to the opossum dev on port {value.port}`)
+					drop(client)
+					task.defer(find)
+					return
+				end
+				if value.t ~= "exec" then return end
 				item.exec = value :: exec.Request
 			end
 			table.insert(queue, item)
@@ -199,6 +223,8 @@ local function connect(port: number): "live" | "next" | "busy"
 	links = connections
 	project = server.project
 	state = "live"
+	wanted = port
+	if ROLE == "edit" then pcall(plugin.SetSetting, plugin, SETTING, port) end
 	send(hello())
 	show()
 	print(`opossum: syncing {project} ({ROLE}) from port {port}`)
@@ -230,7 +256,7 @@ if ROLE == "edit" then
 		show()
 		print(
 			if socket
-				then `opossum: syncing {project}, generation {apply.applied}`
+				then `opossum: syncing {project} from port {wanted}, generation {apply.applied}`
 				else `opossum: looking for opossum dev on ports {FIRST_PORT}-{FIRST_PORT + PORTS - 1}`
 		)
 	end)
@@ -245,11 +271,23 @@ end
 
 watch.start(ROLE, send)
 
-while true do
-	if not socket then
+local finding = false
+-- Connects to the wanted dev, else to the first on the ports that serves this place. One search at a time.
+function find()
+	if socket or finding then return end
+	finding = true
+	local first = wanted
+	local ok, problem = pcall(function()
+		if first and connect(first) ~= "next" then return end
 		for port = FIRST_PORT, FIRST_PORT + PORTS - 1 do
-			if connect(port) ~= "next" then break end
+			if port ~= first and connect(port) ~= "next" then return end
 		end
-	end
+	end)
+	finding = false
+	if not ok then warn(`opossum: looking for opossum dev failed: {problem}`) end
+end
+
+while true do
+	find()
 	task.wait(3)
 end

@@ -20,6 +20,10 @@
 //! DataModels to come or go. The session keeps a tally of what the playtest logged for stop to print. `opossum pull`
 //! (`POST /pull`) is an exec in edit that serializes an instance, which the session writes into `place/` for its own
 //! watcher to read back, telling the sync server so edit pairs it with the instances it came from.
+//!
+//! Several devs (one per worktree) share one Studio through their ports: `POST /status`, which any project may ask,
+//! says what this one serves and which DataModels it holds, and `POST /release` (`opossum attach` in another project)
+//! tells its plugins to connect to another dev's port.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -49,6 +53,8 @@ pub const MAX_TIMEOUT: f64 = 86400.0;
 const FIRST_ERRORS: usize = 5;
 /// The changes to the stale files [`Stale`] keeps.
 const STALE_KEPT: usize = 64;
+/// How long a release waits for the plugins it told to leave.
+const RELEASE_WAIT: Duration = Duration::from_secs(10);
 /// Bytes of base64 a pull's answer may carry: an 18 MB model, within the 32 MB a message up the socket may hold.
 const PULL_LIMIT: usize = 24 << 20;
 
@@ -453,12 +459,17 @@ struct Execs {
 
 impl Execs {
     fn handle(&self, request: sync::Request) {
-        let answer = self.parse(&request.body).and_then(|body| match request.path.as_str() {
-            "/play" => self.play(&body),
-            "/stop" => self.stop(&body),
-            "/pull" => self.pull(&body),
-            _ => self.exec(&body),
-        });
+        // asked by other projects' devs and CLIs
+        let answer = match request.path.as_str() {
+            "/status" => Ok(self.status()),
+            "/release" => self.parse(&request.body, false).and_then(|body| self.release(&body)),
+            _ => self.parse(&request.body, true).and_then(|body| match request.path.as_str() {
+                "/play" => self.play(&body),
+                "/stop" => self.stop(&body),
+                "/pull" => self.pull(&body),
+                _ => self.exec(&body),
+            }),
+        };
         let (status, body) = match answer {
             Ok(body) => (200, body),
             Err((status, message)) => (status, json!({ "error": message })),
@@ -466,9 +477,12 @@ impl Execs {
         let _ = request.reply.send((status, body.to_string()));
     }
 
-    /// The request's JSON body, for this project.
-    fn parse(&self, body: &[u8]) -> Result<Value, (u16, String)> {
+    /// The request's JSON body, with `ours` for this project.
+    fn parse(&self, body: &[u8], ours: bool) -> Result<Value, (u16, String)> {
         let request: Value = serde_json::from_slice(body).map_err(|e| (400, format!("bad request: {e}")))?;
+        if !ours {
+            return Ok(request);
+        }
         let root = request["root"].as_str().unwrap_or("");
         let same = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         if same(Path::new(root)) != same(&self.root) {
@@ -734,6 +748,47 @@ return at.ClassName, buffer.tostring(game:GetService(\"EncodingService\"):Base64
         }
         answer["ms"] = (start.elapsed().as_secs_f64() * 1000.0).into();
         Ok(answer)
+    }
+
+    /// What `opossum status` and `attach` read of this dev: the sync server's status (its project, place, builds and
+    /// the DataModels it holds) with the project's root, the port and the process id.
+    fn status(&self) -> Value {
+        let mut status = self.server.status();
+        status["root"] = self.root.to_string_lossy().into();
+        status["port"] = self.server.port().into();
+        status["pid"] = std::process::id().into();
+        status
+    }
+
+    /// `{port, force?}` (DESIGN.md, Attach): tells every DataModel connected here to connect to the dev on `port`
+    /// instead and answers once their sockets closed, `{ok, realms}`, or `ok` false with an `error` when they did not
+    /// within [`RELEASE_WAIT`]. An error status when nothing was told: nothing is connected, or a playtest, an exec, a
+    /// play, stop or pull runs and `force` is not set.
+    fn release(&self, request: &Value) -> Result<Value, (u16, String)> {
+        let port = request["port"].as_u64().and_then(|p| u16::try_from(p).ok());
+        let port = port.filter(|&p| p != self.server.port()).ok_or((400, "release takes another dev's port".into()))?;
+        let force = request["force"] == true;
+        let lifecycle = self.lifecycle.try_lock();
+        if lifecycle.is_err() && !force {
+            return Err((409, "a play, stop or pull is running (--force moves Studio anyway)".into()));
+        }
+        let realms = self.server.release(port, force).map_err(|e| (409, e))?;
+        let text = format!("Studio is moving to the opossum dev on port {port}");
+        self.out.emit(&Event::Log { realm: Realm::Sync, kind: LogKind::Output, text: &text, at: None });
+        let names: Vec<&str> = realms.iter().map(|r| r.name()).collect();
+        let start = Instant::now();
+        while !self.server.realms().is_empty() {
+            if start.elapsed() > RELEASE_WAIT {
+                let error = format!(
+                    "Studio's plugin did not leave within {} s (an older plugin does not know how: opossum plugin \
+                     install, then restart Studio)",
+                    RELEASE_WAIT.as_secs()
+                );
+                return Ok(json!({ "ok": false, "realms": names, "error": error }));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(json!({ "ok": true, "realms": names }))
     }
 
     /// The files build `generation` holds older code of than their source.

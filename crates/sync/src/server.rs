@@ -1,7 +1,7 @@
 //! Sockets: an acceptor thread, then per socket a reader (the plugin's JSON) and a writer that builds its subscriber's
 //! frame when the last one is acked. `publish` only swaps the tree under the lock and wakes the writers. A connection
-//! that is a `POST` instead (`/exec`, `/play`, `/stop`, `/pull`) goes to the dev session as a [`Request`] and is
-//! answered with what it replies.
+//! that is a `POST` instead (`/exec`, `/play`, `/stop`, `/pull`, `/status`, `/release`) goes to the dev session as a
+//! [`Request`] and is answered with what it replies.
 
 use std::collections::VecDeque;
 use std::io::BufReader;
@@ -41,6 +41,8 @@ pub enum Event {
     Exec(u64, Value),
     /// [`crate::Server::adopt`]: a path and the hash of the node there now (0 for none).
     Adopt(String, u128),
+    /// [`crate::Server::release`]: the plugin is told to connect to the dev on this port instead.
+    Attach(u16),
 }
 
 /// An exec waiting for its result.
@@ -60,8 +62,11 @@ pub struct Waiter {
 pub struct Inbox {
     events: Vec<Event>,
     pub closed: bool,
-    /// Set by the plugin's hello.
+    /// Set by the plugin's hello, with the DataModel's place.
     pub realm: Option<Realm>,
+    pub place: u64,
+    /// The build the DataModel holds: the last it applied, or for one that takes no frames the one its stamps say.
+    pub held: u32,
 }
 
 pub struct State {
@@ -142,6 +147,13 @@ impl Shared {
         self.lock().push(conn, event);
         self.wake.notify_all();
     }
+
+    /// The DataModel on `conn` holds build `generation`.
+    fn hold(&self, conn: u64, generation: u32) {
+        if let Some(inbox) = self.lock().inboxes.get_mut(&conn) {
+            inbox.held = generation;
+        }
+    }
 }
 
 pub fn serve(listener: TcpListener, shared: Arc<Shared>) {
@@ -221,7 +233,7 @@ fn socket(mut stream: TcpStream, shared: &Arc<Shared>) {
 /// Hands a `POST` to the dev session and answers with its reply.
 fn post(stream: &mut TcpStream, shared: &Shared, path: String, body: Vec<u8>) {
     if !PATHS.contains(&path.as_str()) {
-        return ws::respond(stream, 404, "text/plain", "opossum dev answers POST /exec, /play, /stop and /pull only");
+        return ws::respond(stream, 404, "text/plain", &format!("opossum dev answers POST {} only", PATHS.join(", ")));
     }
     let (reply, answer) = mpsc::channel();
     let request = Request { path, body, reply };
@@ -259,6 +271,7 @@ fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) -> Op
                         hello = Some((realm, place));
                         if let Some(inbox) = shared.lock().inboxes.get_mut(&conn) {
                             inbox.realm = Some(realm);
+                            inbox.place = place;
                         }
                         shared.report(Report::Connected { realm, place });
                         shared.push(conn, Event::Hello(role, roots(&message)));
@@ -363,6 +376,9 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
                 Event::Hello(role, roots) => {
                     held = holds(&ring, generation, &roots, role == Role::Server);
                     sub.hello(role, roots, hot_reload);
+                    if !(role == Role::Edit || (role == Role::Server && hot_reload)) {
+                        shared.hold(conn, held);
+                    }
                 }
                 Event::Exec(id, message) => execs.push((id, message)),
                 Event::Adopt(path, hash) => sub.adopt(path, hash),
@@ -370,6 +386,7 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
                     // an ack the plugin sent after asking for a verify is covered by that verify's frame
                     if let Some(generation) = sub.ack(&cx, number, &failed) {
                         let (realm, failed) = (sub.role.realm(), failed.len());
+                        shared.hold(conn, generation);
                         shared.report(Report::Applied { realm, generation, ms, failed });
                     }
                 }
@@ -381,6 +398,12 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
                 }
                 Event::Pong(payload) => {
                     if ws::write(out, ws::PONG, &payload).is_err() {
+                        return;
+                    }
+                }
+                Event::Attach(port) => {
+                    // the plugin closes the socket itself once it read this
+                    if ws::write(out, ws::BINARY, &message(&json!({ "t": "attach", "port": port }))).is_err() {
                         return;
                     }
                 }
@@ -415,14 +438,18 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
                 waiter.start_by
             };
             message["start"] = start_by.saturating_duration_since(Instant::now()).as_secs_f64().into();
-            // generation 0, which no frame has, marks a JSON message
-            let mut bytes = vec![0; 4];
-            bytes.extend_from_slice(message.to_string().as_bytes());
-            if ws::write(out, ws::BINARY, &bytes).is_err() {
+            if ws::write(out, ws::BINARY, &self::message(&message)).is_err() {
                 return;
             }
         }
     }
+}
+
+/// A JSON message down the socket: generation 0, which no frame has, then the JSON text.
+fn message(value: &Value) -> Vec<u8> {
+    let mut bytes = vec![0; 4];
+    bytes.extend_from_slice(value.to_string().as_bytes());
+    bytes
 }
 
 /// The build a playtest DataModel that takes no frames holds, by the stamps in its hello (edit's, as Play copied
