@@ -1,7 +1,8 @@
 //! Flamework's metadata macros (`@flamework/core`'s `Modding` types), evaluated at compile time. A call to a function
-//! tagged `/** @metadata macro */` that leaves out a parameter typed with one of them passes the type's value there,
-//! with the type as instantiated at the call (its explicit or inferred type arguments); [`crate::callsite`] does the
-//! filling. Nothing else of Flamework is supported: `import type` its declarations, never its runtime.
+//! tagged `/** @metadata macro */` that leaves out a parameter typed with one of them (or passes it `undefined`) gets
+//! the type's value there, with the type as instantiated at the call (its explicit or inferred type arguments);
+//! [`crate::callsite`] does the filling. Nothing else of Flamework is supported: `import type` its declarations, never
+//! its runtime.
 //!
 //! ```text
 //! Modding.Many<T>             T's value: a string, number or boolean literal; undefined (nil, left out of a table);
@@ -253,7 +254,7 @@ export namespace Modding {
 
     /// A phase's own id and the id another phase's `Before` names are the same string; a package's type is named by
     /// its package, not where it is installed; the type is the one the call instantiates; undefined members are left
-    /// out and skipped parameters padded.
+    /// out, skipped parameters padded and `undefined` arguments filled.
     #[test]
     fn evaluates_metadata_types_at_the_call() {
         let a = r#"
@@ -273,7 +274,7 @@ type Meta<P> = Modding.Many<{
 export function stage<P>(delta = 0, meta?: Meta<P>, site?: Modding.Caller<"uuid"> | string) {}
 stage<A>(1);
 stage<B>();
-stage<World>(2);
+stage<World>(2, undefined);
 "#;
         let files = [
             ("node_modules/@flamework/core/index.d.ts", MODDING_D_TS),

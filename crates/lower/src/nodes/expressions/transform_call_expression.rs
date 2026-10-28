@@ -5,7 +5,7 @@ use tsrs_ast::{Kind, Node};
 use tsrs_checker::Type;
 use tsrs_core::P;
 
-use crate::callsite::append_callsite;
+use crate::callsite::fill_parameters;
 use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
@@ -65,8 +65,9 @@ pub fn transform_call_expression_inner(
     validate_not_any_type(state, callee);
 
     if callee.kind() == Kind::SuperKeyword {
-        let mut args = vec![globals::self_()];
-        args.extend(ensure_transform_order(state, prereqs, node.arguments()));
+        let mut args = ensure_transform_order(state, prereqs, node.arguments());
+        fill_parameters(state, node, node.arguments(), &mut args);
+        args.insert(0, globals::self_());
         return create::call(create::property(convert_to_indexable_expression(expression), "constructor"), args);
     }
 
@@ -81,7 +82,7 @@ pub fn transform_call_expression_inner(
     let mut args_prereqs = Prereqs::new();
     let mut args = ensure_transform_order(state, &mut args_prereqs, node_arguments);
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);
-    append_callsite(state, node, node_arguments, &mut args);
+    fill_parameters(state, node, node_arguments, &mut args);
 
     if !effects_commute(&get_effects(&expression), &get_effects_of_statements(&args_prereqs.statements)) {
         expression = prereqs.push_to_var(expression, "fn");
@@ -188,14 +189,11 @@ pub fn transform_property_call_expression_inner(
     if tsrs_ast::is_super_property(expression) {
         let callee_name = expression.as_property_access_expression().name.text();
         let callee_exp = create::property(convert_to_indexable_expression(base_expression), callee_name);
-        let args = ensure_transform_order(state, prereqs, node.arguments());
-        let args = if is_method(state, expression) {
-            let mut with_self = vec![globals::self_()];
-            with_self.extend(args);
-            with_self
-        } else {
-            args
-        };
+        let mut args = ensure_transform_order(state, prereqs, node.arguments());
+        fill_parameters(state, node, node.arguments(), &mut args);
+        if is_method(state, expression) {
+            args.insert(0, globals::self_());
+        }
         return create::call(callee_exp, args);
     }
 
@@ -225,7 +223,7 @@ pub fn transform_property_call_expression_inner(
     let mut args_prereqs = Prereqs::new();
     let mut args = ensure_transform_order(state, &mut args_prereqs, node_arguments);
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);
-    append_callsite(state, node, node_arguments, &mut args);
+    fill_parameters(state, node, node_arguments, &mut args);
 
     let method = is_method(state, expression);
     let key = PropertyKey::Name(name.to_owned());
@@ -268,14 +266,11 @@ pub fn transform_element_call_expression_inner(
     if tsrs_ast::is_super_property(expression) {
         let index = transform_expression(state, prereqs, access.argument_expression);
         let callee_exp = create::computed_index(convert_to_indexable_expression(base_expression), index);
-        let args = ensure_transform_order(state, prereqs, node.arguments());
-        let args = if is_method(state, expression) {
-            let mut with_self = vec![globals::self_()];
-            with_self.extend(args);
-            with_self
-        } else {
-            args
-        };
+        let mut args = ensure_transform_order(state, prereqs, node.arguments());
+        fill_parameters(state, node, node.arguments(), &mut args);
+        if is_method(state, expression) {
+            args.insert(0, globals::self_());
+        }
         return create::call(callee_exp, args);
     }
 
@@ -307,7 +302,7 @@ pub fn transform_element_call_expression_inner(
     let mut args_prereqs = Prereqs::new();
     let mut args = ensure_transform_order(state, &mut args_prereqs, node_arguments);
     fix_void_arguments_for_roblox_functions(state, exp_type, &mut args, node_arguments);
-    append_callsite(state, node, node_arguments, &mut args);
+    fill_parameters(state, node, node_arguments, &mut args);
     let receiver_type = state.get_type(access.expression);
     let receiver_type = state.checker.get_non_optional_type(receiver_type);
     let key = PropertyKey::Index(add_one_if_array_type(state, receiver_type, argument_exp));

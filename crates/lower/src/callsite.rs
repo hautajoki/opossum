@@ -1,4 +1,5 @@
-//! Parameters filled in at the call site. A call that leaves out trailing parameters gets, in their place:
+//! Parameters filled in at the call site. A call (`f()`, `a.f()`, `a[k]()`, `new C()`, `super()`, `super.f()`) that
+//! leaves out trailing parameters, or passes them `undefined`, gets in their place:
 //!
 //! - for an optional parameter typed opossum's `Callsite`: `"path/to/file.ts:line:col"`, the file relative to the
 //!   project root and the 1-based line and column (UTF-16, as editors count) where the call starts. Hooks key their
@@ -6,8 +7,8 @@
 //! - for a parameter whose type is one of Flamework's metadata types, in a function tagged `@metadata macro`: the
 //!   type's value, evaluated at compile time ([`crate::flamework`]). Untagged, it is `metadata.untagged`.
 //!
-//! Left-out parameters before a filled one are padded with `nil`. An argument passed explicitly (a hook forwarding
-//! its own callsite) is left alone, and a call with a spread argument is never filled.
+//! Left-out parameters before a filled one are padded with `nil`. Any other argument (a hook forwarding its own
+//! callsite) is left alone, and a call with a spread argument is never filled.
 
 use luau::{Expr, create};
 use tsrs_ast::{Kind, Node};
@@ -40,15 +41,17 @@ pub struct Plan {
     tagged: bool,
 }
 
-/// Appends the values of the parameters `call` leaves out and its signature fills in (see the module docs).
-/// `arguments` are the call's own (TypeScript) arguments, `args` their lowered values.
-pub fn append_callsite(state: &mut TransformState<'_>, call: P<Node>, arguments: &[P<Node>], args: &mut Vec<Expr>) {
+/// Fills in the parameters `call` leaves out (see the module docs). `arguments` are the call's own (TypeScript)
+/// arguments, `args` their lowered values.
+pub fn fill_parameters(state: &mut TransformState<'_>, call: P<Node>, arguments: &[P<Node>], args: &mut Vec<Expr>) {
     if arguments.iter().any(|a| a.kind() == Kind::SpreadElement) {
         return;
     }
+    // an `undefined` argument counts as left out
+    let undefined = |a: &P<Node>| a.kind() == Kind::Identifier && a.text() == "undefined";
     let signature = state.checker.get_resolved_signature_exported(call);
     let Some(declaration) = signature.declaration() else { return };
-    if arguments.len() >= declaration.parameters().len() {
+    if arguments.len() >= declaration.parameters().len() && !arguments.iter().any(undefined) {
         return;
     }
     let plan = match state.multi_transform_state.callsite_plans.get(&declaration) {
@@ -59,9 +62,15 @@ pub fn append_callsite(state: &mut TransformState<'_>, call: P<Node>, arguments:
             plan
         }
     };
-    // the plan's parameters from the first one left out on
+    // the plan's parameters from the first one left out on, and those passed `undefined`
     let first = arguments.len() as u32;
-    let mut pending = (plan.callsites | plan.flamework).checked_shr(first).unwrap_or(0) << first;
+    let mut left_out = u64::MAX.checked_shl(first).unwrap_or(0);
+    for (index, argument) in arguments.iter().enumerate().take(64) {
+        if undefined(argument) {
+            left_out |= 1 << index;
+        }
+    }
+    let mut pending = (plan.callsites | plan.flamework) & left_out;
     let mut filled: Vec<(usize, Expr)> = Vec::new();
     while pending != 0 {
         let index = pending.trailing_zeros() as usize;
@@ -86,6 +95,10 @@ pub fn append_callsite(state: &mut TransformState<'_>, call: P<Node>, arguments:
         }
     }
     for (index, value) in filled {
+        if index < args.len() {
+            args[index] = value;
+            continue;
+        }
         args.resize(index, create::nil());
         args.push(value);
     }
