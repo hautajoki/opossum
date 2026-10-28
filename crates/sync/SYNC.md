@@ -99,7 +99,7 @@ free only when nothing answers on `127.0.0.1:port`: std binds with `SO_REUSEADDR
 wildcard listener and would take its loopback traffic. The plugin tries each port in turn, closing every client that
 fails before the next and disconnecting its handlers (a WebStreamClient with live connections is never collected,
 measured), so a plugin that loses a front proxy falls back to opossum's own port. The server speaks first. The same
-listener answers one plain `POST /exec` per connection (Exec, below).
+listener answers one plain `POST` per connection, to `/exec` (Exec, below), `/play` or `/stop` (Playtests).
 
 - Studio allows 5 `RequestAsync` in flight per process, shared by every plugin and DataModel, and the play client may
   not use it at all. Plugins get 4 WebStreamClients per DataModel and other plugins use some. So: no HTTP, one socket
@@ -368,6 +368,20 @@ is server, which includes Run mode, and the rest is client). Ids are `u32`; `0xF
   again from its known tree before that frame.
 - **client** only forwards logs: the play server's writes to replicated containers reach it by replication (Source,
   new instances, destroyed scripts, all measured), and client code lives in ReplicatedStorage.
+
+**Starting and stopping** (`opossum play`, `stop`; DESIGN.md, Play). Both are execs of a few lines dev writes itself,
+so the plugin has no message for them. Play runs in edit once it holds the newest build: it refuses when
+`StudioTestService.EditModeActive` is false (a playtest runs), else defers
+`StudioTestService:ExecutePlayModeAsync("opossum")` (`ExecuteRunModeAsync` for `--run`), so the test starts after the
+exec's recording ends; the method yields until the test does, in its own thread, never the worker. Its argument cannot
+be nil ("Argument 1 missing or nil", measured). dev then waits for the server's hello (and the client's in Play Solo)
+and sends the play server an empty exec, whose answer says the build it holds. Stop runs
+`StudioTestService:EndTest("opossum")` in the play server, which ends any Studio test, not only one a plugin started
+(measured: Play Solo, Run, and one the Studio MCP started); its answer may be lost to the socket closing, and dev waits
+for both sockets to close. Their log lines all arrive before the close, so the tally dev keeps of the playtest's errors
+and warnings (from the first of its DataModels connecting while none was) is whole by then. StudioTestService's
+multiplayer test is not offered. Measured in the blank place (2026-10-29): play returns 1.9 s after the request (0.7 s
+for Run), stop 0.3–0.5 s.
 
 **Hot reload** (`[dev] hotReload = true`). `require` caches per instance and a running Script ignores a new Source, so
 in the play server a changed script is swapped, never edited: the server sends `swap id` with the whole new instance

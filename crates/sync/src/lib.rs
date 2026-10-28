@@ -48,12 +48,16 @@ pub struct Config {
     pub port: u16,
     /// Receives what each DataModel prints and does with its frames, and the server's own notices.
     pub reports: Sender<Report>,
-    /// Receives each `POST /exec` (`opossum exec` and `test`); nobody listening answers 503.
+    /// Receives each `POST` to [`PATHS`] (`opossum exec`, `test`, `play` and `stop`); nobody listening answers 503.
     pub requests: Sender<Request>,
 }
 
-/// A `POST /exec`: its body as sent, and where its answer goes (HTTP status, JSON body).
+/// The paths the dev session answers a `POST` on; any other is 404.
+pub const PATHS: &[&str] = &["/exec", "/play", "/stop"];
+
+/// A `POST` to one of [`PATHS`]: the path, its body as sent, and where its answer goes (HTTP status, JSON body).
 pub struct Request {
+    pub path: String,
     pub body: Vec<u8>,
     pub reply: Sender<(u16, String)>,
 }

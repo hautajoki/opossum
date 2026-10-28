@@ -109,6 +109,7 @@ pub fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &str) {
         200 => "OK",
         403 => "Forbidden",
         404 => "Not Found",
+        409 => "Conflict",
         503 => "Service Unavailable",
         _ => "Bad Request",
     };

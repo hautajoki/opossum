@@ -14,18 +14,22 @@
 //! a fence file, `.opossum/fence/<n>`, and waits for the watcher to bring it. FSEvents delivers one stream's events in
 //! order, so by then every earlier save has been seen too, and the build of the burst holding the fence is published
 //! before the fence is answered. The sync server then runs the code once the DataModel holds that build.
+//!
+//! `opossum play` and `opossum stop` reach it the same way (`POST /play`, `/stop`): play is an exec in edit that starts
+//! a playtest through StudioTestService, stop one in the play server that ends it, and each waits for the playtest's
+//! DataModels to come or go. The session keeps a tally of what the playtest logged for stop to print.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher};
 use place::Tree;
 use rustc_hash::FxHashMap;
 use serde_json::{Value, json};
-use sync::{Realm, Report};
+use sync::{LogKind, Realm, Report};
 
 use crate::build::{LineMap, RUNTIME, Session, script_class, script_kind, slashed};
 use crate::config::{self, Config};
@@ -38,6 +42,8 @@ const QUIET: Duration = Duration::from_millis(30);
 const FENCE_WAIT: Duration = Duration::from_secs(60);
 /// The longest time limit an exec may ask for, in seconds.
 pub const MAX_TIMEOUT: f64 = 86400.0;
+/// The error lines of a playtest `opossum stop` shows.
+const FIRST_ERRORS: usize = 5;
 
 /// Instance full name (`ServerScriptService.server.app`) → its file relative to the root, and for a compiled
 /// module the map from output lines to TypeScript lines.
@@ -62,6 +68,19 @@ impl Fences {
         });
     }
 }
+
+/// The playtest's DataModels connected now, and what they logged since the first of them connected while none was:
+/// counts of errors and warnings and the first error lines, mapped. `play` and `stop` wait on its condvar.
+#[derive(Default)]
+struct Playtest {
+    server: bool,
+    client: bool,
+    errors: usize,
+    warnings: usize,
+    first: Vec<Value>,
+}
+
+type Playtests = Arc<(Mutex<Playtest>, Condvar)>;
 
 fn fence_dir(root: &Path) -> PathBuf {
     editor::dir(root).join("fence")
@@ -103,16 +122,19 @@ fn session(cfg: Config, out: &Out) -> Result<bool, String> {
     out.emit(&Event::Serving { project: &cfg.name, port });
 
     let index: Arc<Mutex<LogIndex>> = Arc::default();
-    let (printer, studio) = (Arc::clone(&index), out.clone());
+    let playtest: Playtests = Arc::default();
+    let (printer, studio, tally) = (Arc::clone(&index), out.clone(), Arc::clone(&playtest));
     std::thread::Builder::new()
         .name("studio-reports".into())
-        .spawn(move || show_reports(reports, &printer, &studio, port))
+        .spawn(move || show_reports(reports, &printer, &tally, &studio, port))
         .map_err(|e| e.to_string())?;
     let fences: Arc<Mutex<Fences>> = Arc::default();
     let execs = Execs {
         server: server.clone(),
         fences: Arc::clone(&fences),
         index: Arc::clone(&index),
+        playtest,
+        lifecycle: Arc::default(),
         out: out.clone(),
         root: cfg.root.clone(),
     };
@@ -383,34 +405,47 @@ impl Dev<'_> {
     }
 }
 
-/// What answers `POST /exec`: the newest DataModel of the asked realm runs the code once it holds every save made
-/// before the request (the module doc), with Studio's output and errors mapped like log lines.
+/// What answers `POST /exec`, `/play` and `/stop`: the newest DataModel of the asked realm runs the code once it holds
+/// every save made before the request (the module doc), with Studio's output and errors mapped like log lines.
 #[derive(Clone)]
 struct Execs {
     server: sync::Server,
     fences: Arc<Mutex<Fences>>,
     index: Arc<Mutex<LogIndex>>,
+    playtest: Playtests,
+    /// Held through a play or stop, so two never race each other's checks.
+    lifecycle: Arc<Mutex<()>>,
     out: Out,
     root: PathBuf,
 }
 
 impl Execs {
     fn handle(&self, request: sync::Request) {
-        let (status, body) = match self.exec(&request.body) {
+        let answer = self.parse(&request.body).and_then(|body| match request.path.as_str() {
+            "/play" => self.play(&body),
+            "/stop" => self.stop(&body),
+            _ => self.exec(&body),
+        });
+        let (status, body) = match answer {
             Ok(body) => (200, body),
             Err((status, message)) => (status, json!({ "error": message })),
         };
         let _ = request.reply.send((status, body.to_string()));
     }
 
-    /// The request's body is `{root, realm?, name, source, modules?, timeout?, map?}` (DESIGN.md, Exec).
-    fn exec(&self, body: &[u8]) -> Result<Value, (u16, String)> {
+    /// The request's JSON body, for this project.
+    fn parse(&self, body: &[u8]) -> Result<Value, (u16, String)> {
         let request: Value = serde_json::from_slice(body).map_err(|e| (400, format!("bad request: {e}")))?;
         let root = request["root"].as_str().unwrap_or("");
         let same = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         if same(Path::new(root)) != same(&self.root) {
             return Err((400, format!("this opossum dev serves {}, not {root}", self.root.display())));
         }
+        Ok(request)
+    }
+
+    /// `{root, realm?, name, source, modules?, timeout?, map?, fresh?}` (DESIGN.md, Exec).
+    fn exec(&self, request: &Value) -> Result<Value, (u16, String)> {
         let connected = self.server.realms();
         let realm = match request["realm"].as_str() {
             Some("edit") => Realm::Edit,
@@ -426,8 +461,7 @@ impl Execs {
             return Err((503, format!("no {} DataModel is connected to opossum dev on port {port}", realm.name())));
         }
         self.fence().map_err(|e| (503, e))?;
-        let timeout =
-            request["timeout"].as_f64().filter(|t| t.is_finite() && *t > 0.0).map_or(60.0, |t| t.min(MAX_TIMEOUT));
+        let timeout = timeout(request);
         let name = request["name"].as_str().unwrap_or("exec");
         let message = json!({
             "t": "exec",
@@ -436,7 +470,7 @@ impl Execs {
             "modules": request["modules"],
         });
         let fresh = request["fresh"].as_bool() == Some(true);
-        let ran = self.server.exec(realm, message, Duration::from_secs_f64(timeout), fresh).map_err(|e| (503, e))?;
+        let ran = self.server.exec(realm, message, timeout, fresh).map_err(|e| (503, e))?;
         let index = self.index.lock().unwrap_or_else(|e| e.into_inner());
         let map = |v: &Value| v.as_str().map(|text| map_log(&sync::clean(text), &index).0);
         let result = &ran.result;
@@ -470,6 +504,103 @@ impl Execs {
         }))
     }
 
+    /// `{root, run?, timeout?}` (DESIGN.md, Play): once edit holds every save made before the request, starts a Play
+    /// Solo (or with `run`, Run) playtest from the edit plugin, and answers when its DataModels connected and the play
+    /// server holds the newest build it will: `{ok, realms, gen, fresh, ms}`, or `ok` false with an `error` when they
+    /// did not come within the time limit. An error status when it never started.
+    fn play(&self, request: &Value) -> Result<Value, (u16, String)> {
+        let _lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        let start = Instant::now();
+        let (limit, run) = (timeout(request), request["run"] == true);
+        let connected = self.server.realms();
+        if connected.contains(&Realm::Server) || connected.contains(&Realm::Client) {
+            return Err((409, "a playtest is already running (opossum stop ends it)".into()));
+        }
+        if !connected.contains(&Realm::Edit) {
+            let port = self.server.port();
+            return Err((503, format!("no edit DataModel is connected to opossum dev on port {port}")));
+        }
+        self.fence().map_err(|e| (503, e))?;
+        // deferred, so it starts after the exec's recording ends; the method yields until the playtest does
+        let method = if run { "ExecuteRunModeAsync" } else { "ExecutePlayModeAsync" };
+        let source = format!(
+            "local StudioTestService = game:GetService(\"StudioTestService\")
+if not StudioTestService.EditModeActive then error(\"a playtest is already running\", 0) end
+task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
+        );
+        let started = self.studio(Realm::Edit, "play", &source)?;
+        if started["ok"] != true {
+            let error = started["error"].as_str().unwrap_or("it did not start");
+            let status = if error.contains("already running") { 409 } else { 503 };
+            return Err((status, format!("the playtest did not start: {error}")));
+        }
+        let (lock, changed) = &*self.playtest;
+        let left = limit.saturating_sub(start.elapsed());
+        let up = |p: &mut Playtest| !(p.server && (run || p.client));
+        let (playtest, waited) = changed
+            .wait_timeout_while(lock.lock().unwrap_or_else(|e| e.into_inner()), left, up)
+            .unwrap_or_else(|e| e.into_inner());
+        let mut realms = Vec::new();
+        realms.extend(playtest.server.then_some("server"));
+        realms.extend(playtest.client.then_some("client"));
+        drop(playtest);
+        if waited.timed_out() {
+            let error = format!("the playtest's DataModels did not all connect within {} s", limit.as_secs_f64());
+            return Ok(json!({ "ok": false, "realms": realms, "error": error }));
+        }
+        // an empty exec there answers once it holds the newest build: at once without hot reload (the build Play
+        // copied, maybe older), after it applied the newest with
+        let message = json!({ "t": "exec", "name": "play", "source": "return" });
+        let ran = self.server.exec(Realm::Server, message, limit, false).map_err(|e| (503, e))?;
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        Ok(json!({ "ok": true, "realms": realms, "gen": ran.generation, "fresh": ran.fresh, "ms": ms }))
+    }
+
+    /// `{root, timeout?}` (DESIGN.md, Play): ends the running playtest from its server and answers once its DataModels
+    /// disconnected, with the tally of what they logged: `{ok, errors, warnings, first, ms}`, `first` the first error
+    /// lines `{realm, text, file, line}`. An error status when nothing runs or it could not be asked to end.
+    fn stop(&self, request: &Value) -> Result<Value, (u16, String)> {
+        let _lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        let start = Instant::now();
+        let limit = timeout(request);
+        let connected = self.server.realms();
+        if !connected.contains(&Realm::Server) {
+            let error = if connected.contains(&Realm::Client) {
+                "the playtest's server DataModel is not connected, so it cannot be ended from here"
+            } else {
+                "no playtest is running"
+            };
+            return Err((409, error.into()));
+        }
+        // the play server may close its socket before it answers: that ended it too
+        let source = "game:GetService(\"StudioTestService\"):EndTest(\"opossum\")";
+        let ended = self.studio(Realm::Server, "stop", source)?;
+        if ended["ok"] != true && ended["lost"] != true {
+            let error = ended["error"].as_str().unwrap_or("it did not end");
+            return Err((503, format!("the playtest did not end: {error}")));
+        }
+        let (lock, changed) = &*self.playtest;
+        let left = limit.saturating_sub(start.elapsed());
+        let running = |p: &mut Playtest| p.server || p.client;
+        let (playtest, waited) = changed
+            .wait_timeout_while(lock.lock().unwrap_or_else(|e| e.into_inner()), left, running)
+            .unwrap_or_else(|e| e.into_inner());
+        if waited.timed_out() {
+            let error = format!("the playtest's DataModels were still connected after {} s", limit.as_secs_f64());
+            return Ok(json!({ "ok": false, "error": error }));
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        let (errors, warnings, first) = (playtest.errors, playtest.warnings, playtest.first.clone());
+        Ok(json!({ "ok": true, "errors": errors, "warnings": warnings, "first": first, "ms": ms }))
+    }
+
+    /// Runs one of play's and stop's own snippets in the newest DataModel of `realm` and returns the plugin's result.
+    fn studio(&self, realm: Realm, name: &str, source: &str) -> Result<Value, (u16, String)> {
+        let message = json!({ "t": "exec", "name": name, "source": source });
+        let ran = self.server.exec(realm, message, Duration::from_secs(10), false).map_err(|e| (503, e))?;
+        Ok(ran.result)
+    }
+
     /// Waits until the watcher brought a fence file written now, and the build of its burst is published.
     fn fence(&self) -> Result<u32, String> {
         let (tx, rx) = mpsc::channel();
@@ -492,22 +623,68 @@ impl Execs {
     }
 }
 
+/// A request's time limit (default 60 s, at most [`MAX_TIMEOUT`]).
+fn timeout(request: &Value) -> Duration {
+    let seconds = request["timeout"].as_f64().filter(|t| t.is_finite() && *t > 0.0);
+    Duration::from_secs_f64(seconds.map_or(60.0, |t| t.min(MAX_TIMEOUT)))
+}
+
 fn log_entry(session: &Session, root: &Path, file: &Path) -> (String, Option<Arc<LineMap>>) {
     let rel = file.strip_prefix(root).unwrap_or(file).display().to_string();
     (rel, session.compiled.get(&slashed(file)).map(|c| Arc::clone(&c.lines)))
 }
 
-/// Shows what the sync server reports until it stops, Studio's output mapped to the files it came from.
-fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, out: &Out, port: u16) {
+/// Shows what the sync server reports until it stops, Studio's output mapped to the files it came from, and keeps the
+/// playtest's tally. A socket reports its log lines before it disconnects, so a tally is whole once both are gone.
+fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, playtest: &Playtests, out: &Out, port: u16) {
+    let (lock, changed) = &**playtest;
+    let connect = |realm: Realm, connected: bool| {
+        if !matches!(realm, Realm::Server | Realm::Client) {
+            return;
+        }
+        let mut playtest = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if connected && !playtest.server && !playtest.client {
+            *playtest = Playtest::default();
+        }
+        if realm == Realm::Server {
+            playtest.server = connected;
+        } else {
+            playtest.client = connected;
+        }
+        changed.notify_all();
+    };
     for report in reports {
         match report {
             Report::Log(line) => {
                 let (text, at) = map_log(&line.text, &index.lock().unwrap_or_else(|e| e.into_inner()));
+                if matches!(line.realm, Realm::Server | Realm::Client) {
+                    let mut playtest = lock.lock().unwrap_or_else(|e| e.into_inner());
+                    match line.kind {
+                        LogKind::Error => {
+                            playtest.errors += 1;
+                            if playtest.first.len() < FIRST_ERRORS {
+                                let (file, number) = at.clone().unzip();
+                                let realm = line.realm.name();
+                                let entry =
+                                    json!({ "realm": realm, "text": text, "file": file, "line": number.flatten() });
+                                playtest.first.push(entry);
+                            }
+                        }
+                        LogKind::Warning => playtest.warnings += 1,
+                        LogKind::Output => {}
+                    }
+                }
                 let at = at.as_ref().map(|(file, line)| (file.as_str(), *line));
                 out.emit(&Event::Log { realm: line.realm, kind: line.kind, text: &text, at });
             }
-            Report::Connected { realm, place } => out.emit(&Event::Connected { realm, place, port }),
-            Report::Disconnected { realm, place } => out.emit(&Event::Disconnected { realm, place, port }),
+            Report::Connected { realm, place } => {
+                connect(realm, true);
+                out.emit(&Event::Connected { realm, place, port });
+            }
+            Report::Disconnected { realm, place } => {
+                connect(realm, false);
+                out.emit(&Event::Disconnected { realm, place, port });
+            }
             Report::Applied { realm, generation, ms, failed } => {
                 out.emit(&Event::Applied { realm, generation, ms, failed });
             }

@@ -1,7 +1,8 @@
 //! `opossum exec`, `test` and `bench`: Luau run in a Studio DataModel through the running `opossum dev`, one
 //! `POST /exec` on the port it wrote to `.opossum/port` (DESIGN.md, Exec). The exit status is 0 when it ran clean, 1
 //! for a script error, a failed test or an answer that never came, 2 when it never ran (dev or the DataModel cannot be
-//! reached, or holds older code than a test allows).
+//! reached, or holds older code than a test allows). `opossum play` and `stop` start and end a playtest the same way
+//! (`POST /play`, `/stop`; DESIGN.md, Play).
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -46,7 +47,7 @@ pub fn exec(cfg: &Config, options: &Options, source: Source) -> Result<bool, Str
             ("stdin".to_owned(), code)
         }
     };
-    let answer = post(cfg, options, json!({ "name": name, "source": code }))?;
+    let answer = post(cfg, options, "/exec", json!({ "name": name, "source": code }))?;
     if options.json {
         println!("{answer}");
         return Ok(answer["ok"].as_bool() == Some(true));
@@ -85,7 +86,7 @@ return HttpService:JSONDecode(require(script.cloud_runner).run({{ mode = \"{mode
     );
     // specs must never pass against older code than the files: a playtest DataModel holding it refuses
     let body = json!({ "name": "hexagon", "source": source, "modules": modules, "map": true, "fresh": true });
-    let mut answer = post(cfg, options, body)?;
+    let mut answer = post(cfg, options, "/exec", body)?;
     let report = Some(answer["values"][0].clone()).filter(Value::is_object);
     if options.json {
         if let Some(object) = answer.as_object_mut() {
@@ -141,6 +142,52 @@ return HttpService:JSONDecode(require(script.cloud_runner).run({{ mode = \"{mode
     Ok(report["ok"].as_bool() == Some(true))
 }
 
+/// Starts a playtest (Play Solo, or with `run` Run) and returns once its DataModels connected.
+pub fn play(cfg: &Config, options: &Options, run: bool) -> Result<bool, String> {
+    let answer = post(cfg, options, "/play", json!({ "run": run }))?;
+    if options.json {
+        println!("{answer}");
+        return Ok(answer["ok"] == true);
+    }
+    let realms: Vec<&str> = answer["realms"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    if answer["ok"] != true {
+        let connected = if realms.is_empty() { "none".to_owned() } else { realms.join(", ") };
+        eprintln!("opossum: {} (connected: {connected})", answer["error"].as_str().unwrap_or("failed"));
+        return Ok(false);
+    }
+    let seconds = answer["ms"].as_f64().unwrap_or(0.0) / 1000.0;
+    println!("playtest running: {}, generation {} ({seconds:.1} s)", realms.join(", "), answer["gen"]);
+    if answer["fresh"] == false {
+        eprintln!(
+            "opossum: the play server holds an older build than the files (restart the playtest, or turn on hotReload)"
+        );
+    }
+    Ok(true)
+}
+
+/// Ends the running playtest and prints what it logged: counts, then the first error lines.
+pub fn stop(cfg: &Config, options: &Options) -> Result<bool, String> {
+    let answer = post(cfg, options, "/stop", json!({}))?;
+    if options.json {
+        println!("{answer}");
+        return Ok(answer["ok"] == true);
+    }
+    if answer["ok"] != true {
+        eprintln!("opossum: {}", answer["error"].as_str().unwrap_or("failed"));
+        return Ok(false);
+    }
+    let count = |key: &str, word: &str| {
+        let n = answer[key].as_u64().unwrap_or(0);
+        format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+    };
+    println!("playtest stopped: {}, {}", count("errors", "error"), count("warnings", "warning"));
+    for line in answer["first"].as_array().into_iter().flatten() {
+        let text = line["text"].as_str().unwrap_or("").replace('\n', "\n    ");
+        println!("  [{}] {text}", line["realm"].as_str().unwrap_or("?"));
+    }
+    Ok(true)
+}
+
 /// What the script printed (warnings marked), and a note when the DataModel runs older code than the files.
 fn print_output(answer: &Value) {
     for line in answer["output"].as_array().into_iter().flatten() {
@@ -176,15 +223,15 @@ fn print_error(answer: &Value) -> bool {
 
 /// Sends `body` to this project's `opossum dev` and returns its answer; an error (exit status 2) when the code never
 /// ran, which `--json` prints as `{"ok": false, "ran": false, "error"}` too.
-fn post(cfg: &Config, options: &Options, body: Value) -> Result<Value, String> {
-    send(cfg, options, body).inspect_err(|error| {
+fn post(cfg: &Config, options: &Options, path: &str, body: Value) -> Result<Value, String> {
+    send(cfg, options, path, body).inspect_err(|error| {
         if options.json {
             println!("{}", json!({ "ok": false, "ran": false, "error": error }));
         }
     })
 }
 
-fn send(cfg: &Config, options: &Options, mut body: Value) -> Result<Value, String> {
+fn send(cfg: &Config, options: &Options, path: &str, mut body: Value) -> Result<Value, String> {
     body["root"] = cfg.root.to_string_lossy().into();
     if let Some(realm) = &options.realm {
         body["realm"] = realm.as_str().into();
@@ -204,7 +251,7 @@ fn send(cfg: &Config, options: &Options, mut body: Value) -> Result<Value, Strin
     let _ = stream.set_read_timeout(Some(Duration::from_secs_f64(limit)));
     let body = body.to_string();
     let head = format!(
-        "POST /exec HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
          Connection: close\r\n\r\n",
         body.len()
     );

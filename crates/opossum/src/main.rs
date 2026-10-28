@@ -29,6 +29,8 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
   exec [--realm <r>] [--timeout <s>] [--json] (<file.luau> | -e <code> | -)
                                                              run Luau in Studio through opossum dev
   test [--realm <r>] [--timeout <s>] [--json] [<filter>]     run hexagon specs in Studio (bench: benchmarks)
+  play [--run] [--timeout <s>] [--json]                      start a Studio playtest through opossum dev
+  stop [--timeout <s>] [--json]                              end it and sum up what it logged
   where <file | Instance.Path[:line]>                        a file's instance, or an instance's file
   sourcemap                                                  .opossum/sourcemap.json for luau-lsp
   plugin install [<path>]                                    the Studio plugin .rbxm
@@ -40,6 +42,8 @@ enum Command {
     Dev { json: bool },
     Exec(exec::Options, exec::Source),
     Test(exec::Options, &'static str, Option<String>),
+    Play(exec::Options, bool),
+    Stop(exec::Options),
     Where(String),
     Sourcemap,
     Plugin(Option<PathBuf>),
@@ -57,7 +61,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         }
     }
     let (mut profile, mut out, mut emit, mut json) = (None, None, None, false);
-    let (mut realm, mut timeout, mut code) = (None, None, None);
+    let (mut realm, mut timeout, mut code, mut run) = (None, None, None, false);
     let mut positional: Vec<&str> = Vec::new();
     let mut it = rest.iter().copied().skip(1);
     while let Some(arg) = it.next() {
@@ -74,17 +78,21 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
                 timeout = Some(seconds.ok_or("--timeout takes seconds, more than 0 and at most a day")?);
             }
             "-e" => code = Some(value()?),
+            "--run" => run = true,
             "-" => positional.push(arg),
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}")),
             _ => positional.push(arg),
         }
     }
-    let studio = matches!(rest.first().copied(), Some("exec" | "test" | "bench"));
-    if !studio && (realm.is_some() || timeout.is_some()) || code.is_some() && rest.first() != Some(&"exec") {
+    let verb = rest.first().copied();
+    let studio = matches!(verb, Some("exec" | "test" | "bench"));
+    let timed = studio || matches!(verb, Some("play" | "stop"));
+    let stray = realm.is_some() && !studio || timeout.is_some() && !timed;
+    if stray || code.is_some() && verb != Some("exec") || run && verb != Some("play") {
         return Err(USAGE.to_owned());
     }
     let options = || exec::Options { realm: realm.clone(), json, timeout };
-    let command = match (rest.first().copied(), positional.as_slice()) {
+    let command = match (verb, positional.as_slice()) {
         (Some("build"), []) if !json => Command::Build { profile, out, emit },
         (Some("check"), []) if out.is_none() && emit.is_none() => Command::Check { profile, json },
         (Some("dev"), []) if profile.is_none() && out.is_none() && emit.is_none() => Command::Dev { json },
@@ -99,6 +107,8 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
             let mode = if mode == "test" { "test" } else { "bench" };
             Command::Test(options(), mode, filter.first().map(|f| (*f).to_owned()))
         }
+        (Some("play"), []) if profile.is_none() && out.is_none() && emit.is_none() => Command::Play(options(), run),
+        (Some("stop"), []) if profile.is_none() && out.is_none() && emit.is_none() => Command::Stop(options()),
         (Some("where"), [target]) => Command::Where((*target).to_owned()),
         (Some("sourcemap"), []) => Command::Sourcemap,
         (Some("plugin"), ["install"]) => Command::Plugin(None),
@@ -158,6 +168,8 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
     match command {
         Command::Exec(options, source) => return exec::exec(&cfg, &options, source),
         Command::Test(options, mode, filter) => return exec::test(&cfg, &options, mode, filter.as_deref()),
+        Command::Play(options, run) => return exec::play(&cfg, &options, run),
+        Command::Stop(options) => return exec::stop(&cfg, &options),
         _ => {}
     }
     editor::write(&cfg.root, &cfg.ts)?;
@@ -166,9 +178,13 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Command::Check { profile, json } => check(cfg, profile.as_deref(), json),
         Command::Where(target) => where_(cfg, &cwd, &target),
         Command::Sourcemap => sourcemap(cfg),
-        Command::Plugin(_) | Command::Migrate | Command::Dev { .. } | Command::Exec(..) | Command::Test(..) => {
-            unreachable!("handled above")
-        }
+        Command::Plugin(_)
+        | Command::Migrate
+        | Command::Dev { .. }
+        | Command::Exec(..)
+        | Command::Test(..)
+        | Command::Play(..)
+        | Command::Stop(..) => unreachable!("handled above"),
     }
 }
 

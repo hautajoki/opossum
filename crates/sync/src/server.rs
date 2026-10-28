@@ -1,6 +1,7 @@
 //! Sockets: an acceptor thread, then per socket a reader (the plugin's JSON) and a writer that builds its subscriber's
 //! frame when the last one is acked. `publish` only swaps the tree under the lock and wakes the writers. A connection
-//! that is a `POST /exec` instead goes to the dev session as a [`Request`] and is answered with what it replies.
+//! that is a `POST` instead (`/exec`, `/play`, `/stop`) goes to the dev session as a [`Request`] and is answered with
+//! what it replies.
 
 use std::collections::VecDeque;
 use std::io::BufReader;
@@ -16,7 +17,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::{Value, json};
 
 use crate::sub::{Context, Role, Sub, hex};
-use crate::{LogKind, LogLine, Realm, Reply, Report, Request, ws};
+use crate::{LogKind, LogLine, PATHS, Realm, Reply, Report, Request, ws};
 
 /// Generations kept for hydrating a reconnect whose stamps are a little behind.
 pub const RING: usize = 16;
@@ -153,7 +154,7 @@ fn socket(mut stream: TcpStream, shared: &Arc<Shared>) {
     let _ = stream.set_nodelay(true);
     let reader = match ws::accept(&mut stream, shared.port) {
         Ok(ws::Request::Socket(reader)) => reader,
-        Ok(ws::Request::Post { path, body }) => return post(&mut stream, shared, &path, body),
+        Ok(ws::Request::Post { path, body }) => return post(&mut stream, shared, path, body),
         Err(reason) => {
             if reason.starts_with("refused") {
                 shared.notice(reason);
@@ -215,13 +216,14 @@ fn socket(mut stream: TcpStream, shared: &Arc<Shared>) {
     }
 }
 
-/// Hands a `POST /exec` to the dev session and answers with its reply.
-fn post(stream: &mut TcpStream, shared: &Shared, path: &str, body: Vec<u8>) {
-    if path != "/exec" {
-        return ws::respond(stream, 404, "text/plain", "opossum dev answers POST /exec only");
+/// Hands a `POST` to the dev session and answers with its reply.
+fn post(stream: &mut TcpStream, shared: &Shared, path: String, body: Vec<u8>) {
+    if !PATHS.contains(&path.as_str()) {
+        return ws::respond(stream, 404, "text/plain", "opossum dev answers POST /exec, /play and /stop only");
     }
     let (reply, answer) = mpsc::channel();
-    let (status, body) = match shared.requests.send(Request { body, reply }).ok().and_then(|()| answer.recv().ok()) {
+    let request = Request { path, body, reply };
+    let (status, body) = match shared.requests.send(request).ok().and_then(|()| answer.recv().ok()) {
         Some(answer) => answer,
         None => (503, json!({"error": "this opossum dev takes no requests"}).to_string()),
     };
