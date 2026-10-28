@@ -117,7 +117,8 @@ return HttpService:JSONDecode(require(script.cloud_runner).run({{ mode = \"{mode
         );
     }
     for failure in report["failures"].as_array().into_iter().flatten() {
-        println!("FAIL {}", labels(failure));
+        let line = failure["line"].as_u64().map_or("?".to_owned(), |l| l.to_string());
+        println!("FAIL {} ({}:{line})", labels(failure), failure["source"].as_str().unwrap_or("?"));
         println!("  {}", failure["message"].as_str().unwrap_or("").replace('\n', "\n  "));
         // the frames below the error that are not the runner's own
         let own = |line: &&str| ["hexagon", "[C]", "user_opossum"].iter().any(|p| line.starts_with(p));
@@ -171,9 +172,17 @@ fn print_error(answer: &Value) -> bool {
     false
 }
 
-/// Sends `body` to this project's `opossum dev` and returns its answer; an error when dev or the DataModel cannot be
-/// reached (exit status 2).
-fn post(cfg: &Config, options: &Options, mut body: Value) -> Result<Value, String> {
+/// Sends `body` to this project's `opossum dev` and returns its answer; an error (exit status 2) when the code never
+/// ran, which `--json` prints as `{"ok": false, "ran": false, "error"}` too.
+fn post(cfg: &Config, options: &Options, body: Value) -> Result<Value, String> {
+    send(cfg, options, body).inspect_err(|error| {
+        if options.json {
+            println!("{}", json!({ "ok": false, "ran": false, "error": error }));
+        }
+    })
+}
+
+fn send(cfg: &Config, options: &Options, mut body: Value) -> Result<Value, String> {
     body["root"] = cfg.root.to_string_lossy().into();
     if let Some(realm) = &options.realm {
         body["realm"] = realm.as_str().into();

@@ -68,7 +68,11 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
             "--emit" => emit = Some(PathBuf::from(value()?)),
             "--json" => json = true,
             "--realm" => realm = Some(value()?),
-            "--timeout" => timeout = Some(value()?.parse::<f64>().map_err(|_| "--timeout takes seconds")?),
+            "--timeout" => {
+                let seconds =
+                    value()?.parse::<f64>().ok().filter(|t| t.is_finite() && *t > 0.0 && *t <= dev::MAX_TIMEOUT);
+                timeout = Some(seconds.ok_or("--timeout takes seconds, more than 0 and at most a day")?);
+            }
             "-e" => code = Some(value()?),
             "-" => positional.push(arg),
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}")),
@@ -142,9 +146,12 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Some(dir) => std::path::absolute(&dir).map_err(|e| format!("{}: {e}", dir.display()))?,
         None => cwd.clone(),
     };
-    if let Command::Migrate = command {
+    match command {
         // before loading: the config it fixes does not load
-        return migrate(&config::find(&start)?);
+        Command::Migrate => return migrate(&config::find(&start)?),
+        // loads it itself, so a broken one is an event too
+        Command::Dev { json } => return dev::run(&start, json),
+        _ => {}
     }
     let cfg = config::load(&config::find(&start)?)?;
     // dev wrote what the editor reads; these only talk to it
@@ -157,10 +164,11 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
     match command {
         Command::Build { profile, out, emit } => build(cfg, profile.as_deref(), out, emit),
         Command::Check { profile, json } => check(cfg, profile.as_deref(), json),
-        Command::Dev { json } => dev::run(cfg, json),
         Command::Where(target) => where_(cfg, &cwd, &target),
         Command::Sourcemap => sourcemap(cfg),
-        Command::Plugin(_) | Command::Migrate | Command::Exec(..) | Command::Test(..) => unreachable!("handled above"),
+        Command::Plugin(_) | Command::Migrate | Command::Dev { .. } | Command::Exec(..) | Command::Test(..) => {
+            unreachable!("handled above")
+        }
     }
 }
 

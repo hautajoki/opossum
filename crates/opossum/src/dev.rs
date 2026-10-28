@@ -37,7 +37,7 @@ const QUIET: Duration = Duration::from_millis(30);
 /// How long a request waits for its fence: the watcher's latency plus the build of that burst.
 const FENCE_WAIT: Duration = Duration::from_secs(60);
 /// The longest time limit an exec may ask for, in seconds.
-const MAX_TIMEOUT: f64 = 86400.0;
+pub const MAX_TIMEOUT: f64 = 86400.0;
 
 /// Instance full name (`ServerScriptService.server.app`) → its file relative to the root, and for a compiled
 /// module the map from output lines to TypeScript lines.
@@ -67,10 +67,15 @@ fn fence_dir(root: &Path) -> PathBuf {
     editor::dir(root).join("fence")
 }
 
-/// Runs until a fatal error, which with `--json` is an event too.
-pub fn run(cfg: Config, json: bool) -> Result<bool, String> {
-    let out = Out { json, root: cfg.root.clone() };
-    let result = session(cfg, &out);
+/// Runs the project found from `start` until a fatal error, which with `--json` is an event too, a broken config at
+/// startup included.
+pub fn run(start: &Path, json: bool) -> Result<bool, String> {
+    let mut out = Out { json, root: start.to_path_buf() };
+    let result = config::find(start).and_then(|file| config::load(&file)).and_then(|cfg| {
+        out.root = cfg.root.clone();
+        editor::write(&cfg.root, &cfg.ts)?;
+        session(cfg, &out)
+    });
     if let Err(message) = &result
         && json
     {
@@ -512,12 +517,30 @@ fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, out: &Out, p
     }
 }
 
-/// Maps every string inside `value` like a log line (`opossum test`'s report).
+/// Maps every string inside `value` like a log line (`opossum test`'s report). In a hexagon case the suite (its first
+/// label, the spec's instance name) becomes its file, and a failure's `source` and `line` the project file and line it
+/// failed at: its own when that is one, else the first project frame of its trace (hexagon's `expect` names itself).
 fn map_strings(value: &mut Value, index: &LogIndex) {
     match value {
         Value::String(text) => *text = map_log(text, index).0,
         Value::Array(items) => items.iter_mut().for_each(|v| map_strings(v, index)),
-        Value::Object(fields) => fields.values_mut().for_each(|v| map_strings(v, index)),
+        Value::Object(fields) => {
+            let source = fields.get("source").and_then(Value::as_str).zip(fields.get("line").and_then(Value::as_i64));
+            let at = source.and_then(|(source, line)| {
+                let own = map_log(&format!("{source}:{line}"), index).1;
+                own.or_else(|| map_log(fields.get("trace")?.as_str()?, index).1)
+            });
+            fields.values_mut().for_each(|v| map_strings(v, index));
+            if let Some(Value::String(suite)) = fields.get_mut("labels").and_then(|l| l.get_mut(0))
+                && let Some((file, _)) = index.get(suite.as_str())
+            {
+                *suite = file.clone();
+            }
+            if let Some((file, line)) = at {
+                fields.insert("source".into(), file.into());
+                fields.insert("line".into(), line.into());
+            }
+        }
         _ => {}
     }
 }
@@ -582,5 +605,13 @@ mod tests {
         let at = Some(("src/app.ts".to_owned(), Some(6)));
         assert_eq!(map_log(text, &index), ("src/app.ts:6: boom\nsrc/m.luau:7 function f".to_owned(), at));
         assert_eq!(map_log("StarterPlayer.StarterPlayerScripts.client.app:99", &index).0, "src/app.ts:30");
+
+        // a hexagon failure names its suite by instance, and its place as a bare source and a Luau line: expect's own
+        // when it failed an assertion, so the trace's first project frame says where
+        let trace = "hexagon.expect:69\nReplicatedStorage.shared.m:7";
+        let mut failure = json!({"labels": ["ReplicatedStorage.shared.m", "adds"], "source": "hexagon.expect", "line": 69, "trace": trace});
+        map_strings(&mut failure, &index);
+        let mapped = json!({"labels": ["src/m.luau", "adds"], "source": "src/m.luau", "line": 7, "trace": "hexagon.expect:69\nsrc/m.luau:7"});
+        assert_eq!(failure, mapped);
     }
 }
