@@ -519,7 +519,8 @@ fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, out: &Out, p
 
 /// Maps every string inside `value` like a log line (`opossum test`'s report). In a hexagon case the suite (its first
 /// label, the spec's instance name) becomes its file, and a failure's `source` and `line` the project file and line it
-/// failed at: its own when that is one, else the first project frame of its trace (hexagon's `expect` names itself).
+/// failed at: its own when that is one, else the first project frame of its trace (hexagon's `expect` names itself), else
+/// the place its message names (a suite that failed to load).
 fn map_strings(value: &mut Value, index: &LogIndex) {
     match value {
         Value::String(text) => *text = map_log(text, index).0,
@@ -529,6 +530,7 @@ fn map_strings(value: &mut Value, index: &LogIndex) {
             let at = source.and_then(|(source, line)| {
                 let own = map_log(&format!("{source}:{line}"), index).1;
                 own.or_else(|| map_log(fields.get("trace")?.as_str()?, index).1)
+                    .or_else(|| map_log(fields.get("message")?.as_str()?, index).1)
             });
             fields.values_mut().for_each(|v| map_strings(v, index));
             if let Some(Value::String(suite)) = fields.get_mut("labels").and_then(|l| l.get_mut(0))

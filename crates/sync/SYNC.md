@@ -435,7 +435,9 @@ instances and `@self`/`@game`/`./`/`../` paths against the original. Each exec h
 leaks from one run into the next. A module that throws while loading makes Studio's `require` say only "Requested
 module experienced an error while loading" (measured); the loader takes the real message from `ScriptContext.Error`,
 which fires synchronously, and a syntax error from compiling the source again with `loadstring` (plugins have it;
-`debug.loadmodule` is not enabled). The traceback of a loading error stops at the require that loaded it.
+`debug.loadmodule` is not enabled). An engine error (`x is not a valid member of y`) names no place: its stack's first
+frame is put in front (`ReplicatedStorage.shared.x:3: x is not ...`), so it maps like any other. The traceback of a
+loading error stops at the require that loaded it.
 
 Measured on a test project in the blank place: 20 of 20 "write a module's return value, immediately exec a require of
 it" runs saw the new value, for a `.luau` module and for a TypeScript one, 61–71 ms per run end to end; new files 85–94

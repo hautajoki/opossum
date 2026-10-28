@@ -172,8 +172,12 @@ load = function(session: Session, original: ModuleScript): any
 	-- a module that throws makes require say only "Requested module experienced an error while loading" (measured):
 	-- ScriptContext.Error has a runtime error's own message, synchronously, and a syntax error compiles again to say it
 	local failure: string? = nil
-	local listen = ScriptContext.Error:Connect(function(message, _, at)
-		if at == copy then failure = message end
+	local listen = ScriptContext.Error:Connect(function(message, stack, at)
+		if at ~= copy then return end
+		-- an engine error ("x is not a valid member of y") names no place; its stack does, as `Path, line 3`
+		local path, n = string.match(stack, "^([^\n]-), line (%d+)")
+		local placed = string.match(message, "^[%w_%.%-@]+:%d+: ") ~= nil
+		failure = if path and not placed then `{path}:{n}: {message}` else message
 	end)
 	local ok, result = pcall(require, copy)
 	listen:Disconnect()
