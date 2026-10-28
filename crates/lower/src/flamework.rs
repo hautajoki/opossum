@@ -8,7 +8,8 @@
 //!                             a tuple (in order); an array (a value per member of its element union, in union order;
 //!                             `never[]` is empty); an object (its properties)
 //! Modding.Generic<T, "id">    "src/path/file@Name": the file declaring T relative to the project root, without its
-//!                             extension, and T's name; the same wherever T is referenced, on every build and machine
+//!                             extension, and T's name ("package:path/file@Name" in a package, by its package.json
+//!                             name); the same wherever T is referenced, on every build and machine
 //! Modding.Generic<T, "text">  T as TypeScript writes it ("Name")
 //! Modding.Caller<"uuid">      the call's "path:line:col", as `Callsite`
 //! ```
@@ -170,16 +171,32 @@ fn generic(state: &mut TransformState<'_>, marker: P<Type>) -> Result<Expr, Stri
     }
 }
 
-/// `"src/path/file@Name"` of a type declared by name at the top of a file, or `None`.
+/// The id of a type declared by name at the top of a file, or `None`: `"src/path/file@Name"` in the project, and
+/// `"package:path/file@Name"` in a package (its package.json name and the path inside it), so where the project is
+/// checked out or how its packages are installed or linked never shows.
 fn id(state: &TransformState<'_>, t: P<Type>) -> Option<String> {
     let symbol = t.symbol()?;
     let declaration = symbol.value_declaration().or_else(|| symbol.declarations().first().copied())?;
-    if declaration.name().is_none() || declaration.parent().is_none_or(|p| p.kind() != Kind::SourceFile) {
+    let name = declaration.name()?;
+    if declaration.parent().is_none_or(|p| p.kind() != Kind::SourceFile) {
         return None;
     }
-    let path = relative(state, source_file_of(declaration).get().file_name());
+    let file = source_file_of(declaration);
+    let file_name = file.get().file_name();
+    let (package, path) = match relative(state, file_name) {
+        Some(path) if !path.starts_with("node_modules/") && !path.contains("/node_modules/") => (String::new(), path),
+        _ => {
+            let directory = &state.program.get_source_file_meta_data(file.get().path()).package_json_directory;
+            let contents = state.program.get_package_json_info(&format!("{directory}/package.json"))?.contents?;
+            let package = &contents.fields.name;
+            if !package.valid || package.value.is_empty() {
+                return None;
+            }
+            (format!("{}:", package.value), file_name.strip_prefix(directory.as_str())?.strip_prefix('/')?)
+        }
+    };
     let path = [".d.ts", ".tsx", ".ts"].iter().find_map(|ext| path.strip_suffix(ext)).unwrap_or(path);
-    Some(format!("{path}@{}", symbol.name()))
+    Some(format!("{package}{path}@{}", name.text()))
 }
 
 /// An object type, or an intersection of them.
@@ -213,12 +230,14 @@ export namespace Modding {
 }
 "#;
 
-    /// A phase's own id and the id another phase's `Before` names are the same string; the type is the one the call
-    /// instantiates; undefined members are left out and skipped parameters padded.
+    /// A phase's own id and the id another phase's `Before` names are the same string; a package's type is named by
+    /// its package, not where it is installed; the type is the one the call instantiates; undefined members are left
+    /// out and skipped parameters padded.
     #[test]
     fn evaluates_metadata_types_at_the_call() {
         let a = r#"
 import type { Modding } from "@flamework/core";
+import type { World } from "@scope/pkg";
 interface Before<P> { readonly _before: P }
 export interface A {}
 export interface B extends Before<A> {}
@@ -233,13 +252,21 @@ type Meta<P> = Modding.Many<{
 export function stage<P>(delta = 0, meta?: Meta<P>, site?: Modding.Caller<"uuid"> | string) {}
 stage<A>(1);
 stage<B>();
+stage<World>(2);
 "#;
-        let files = [("node_modules/@flamework/core/index.d.ts", MODDING_D_TS), ("a.ts", a)];
+        let files = [
+            ("node_modules/@flamework/core/index.d.ts", MODDING_D_TS),
+            ("node_modules/@scope/pkg/package.json", r#"{ "name": "@scope/pkg", "types": "lib/index.d.ts" }"#),
+            ("node_modules/@scope/pkg/lib/index.d.ts", "export interface World {}"),
+            ("a.ts", a),
+        ];
         let out = lower(&files, Options::default()).remove("a.ts").unwrap();
         let out = out.split_whitespace().collect::<Vec<_>>().join(" ");
-        let a = r#"stage(1, { key = "src/a@A", name = "A", first = true, before = {}, }, "src/a.ts:15:1")"#;
+        let a = r#"stage(1, { key = "src/a@A", name = "A", first = true, before = {}, }, "src/a.ts:16:1")"#;
         let b =
-            r#"stage(nil, { key = "src/a@B", name = "B", first = false, before = { "src/a@A" }, }, "src/a.ts:16:1")"#;
-        assert!(out.contains(a) && out.contains(b), "{out}");
+            r#"stage(nil, { key = "src/a@B", name = "B", first = false, before = { "src/a@A" }, }, "src/a.ts:17:1")"#;
+        let world = r#"stage(2, { key = "@scope/pkg:lib/index@World", name = "World", first = true, before = {}, }, "#;
+        let world = format!(r#"{world}"src/a.ts:18:1")"#);
+        assert!(out.contains(a) && out.contains(b) && out.contains(&world), "{out}");
     }
 }

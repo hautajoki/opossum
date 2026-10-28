@@ -145,10 +145,10 @@ fn is_callsite_type(state: &mut TransformState<'_>, type_node: P<Node>) -> bool 
     symbol.declarations().iter().any(|&d| source_file_of(d).get().file_name() == macros)
 }
 
-/// `file_name` relative to the project root (unchanged outside it).
-pub fn relative<'f>(state: &TransformState<'_>, file_name: &'f str) -> &'f str {
+/// `file_name` relative to the project root, `None` outside it.
+pub fn relative<'f>(state: &TransformState<'_>, file_name: &'f str) -> Option<&'f str> {
     let root = state.root.trim_end_matches('/');
-    file_name.strip_prefix(root).and_then(|p| p.strip_prefix('/')).unwrap_or(file_name)
+    file_name.strip_prefix(root)?.strip_prefix('/')
 }
 
 /// `"path:line:col"` of the call's first token.
@@ -159,5 +159,6 @@ pub fn callsite(state: &TransformState<'_>, call: P<Node>) -> String {
     let before = &text[..start];
     let line = before.matches('\n').count() + 1;
     let column = before[before.rfind('\n').map_or(0, |nl| nl + 1)..].encode_utf16().count() + 1;
-    format!("{}:{line}:{column}", relative(state, file.get().file_name()))
+    let file_name = file.get().file_name();
+    format!("{}:{line}:{column}", relative(state, file_name).unwrap_or(file_name))
 }
