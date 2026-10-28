@@ -2,17 +2,24 @@
 //! `POST /exec` on the port it wrote to `.opossum/port` (DESIGN.md, Exec). The exit status is 0 when it ran clean, 1
 //! for a script error, a failed test or an answer that never came, 2 when it never ran (dev or the DataModel cannot be
 //! reached, or holds older code than a test allows). `opossum play` and `stop` start and end a playtest the same way
-//! (`POST /play`, `/stop`; DESIGN.md, Play).
+//! (`POST /play`, `/stop`; DESIGN.md, Play). `opossum test --cloud` runs the specs on Open Cloud through tessera
+//! instead, with no dev or Studio involved (DESIGN.md, Cloud tests).
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
+use crate::build::Session;
 use crate::config::Config;
-use crate::editor;
+use crate::diag::Diag;
+use crate::{dev, editor};
+
+/// The longest a run on Open Cloud may take, in seconds (tessera's and Open Cloud's limit).
+const CLOUD_TIMEOUT: f64 = 300.0;
 
 pub enum Source {
     File(String),
@@ -66,25 +73,13 @@ pub fn exec(cfg: &Config, options: &Options, source: Source) -> Result<bool, Str
 
 /// Runs hexagon's in-engine runner (`mode` "test" or "bench") over every matching suite in the DataModel.
 pub fn test(cfg: &Config, options: &Options, mode: &str, filter: Option<&str>) -> Result<bool, String> {
-    let runtime = cfg.root.join("node_modules/@hautajoki/hexagon/runtime");
-    let entries = std::fs::read_dir(&runtime)
-        .map_err(|_| format!("this project has no hexagon runtime ({} is missing)", runtime.display()))?;
-    let mut modules = Map::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".luau")) else {
-            continue;
-        };
-        if name != "local_runner" {
-            let source = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            modules.insert(name.to_owned(), source.into());
-        }
-    }
-    let filter = filter.map_or_else(|| "nil".to_owned(), luau_string);
+    let modules: Map<String, Value> =
+        runtime(&cfg.root)?.into_iter().map(|(name, source)| (name, source.into())).collect();
     // the report as a table: dev maps its strings (messages, traces) like log lines
     let source = format!(
         "local HttpService = game:GetService(\"HttpService\")
-return HttpService:JSONDecode(require(script.cloud_runner).run({{ mode = \"{mode}\", filter = {filter} }}))"
+return HttpService:JSONDecode(require(script.cloud_runner).run({}))",
+        run_request(mode, filter)
     );
     // specs must never pass against older code than the files: a playtest DataModel holding it refuses
     let body = json!({ "name": "hexagon", "source": source, "modules": modules, "map": true, "fresh": true });
@@ -104,6 +99,169 @@ return HttpService:JSONDecode(require(script.cloud_runner).run({{ mode = \"{mode
         print_stale(&answer);
         return Ok(false);
     };
+    let ran = format!("{}, generation {}", answer["realm"].as_str().unwrap_or("?"), answer["gen"]);
+    // the frames that are not the runner's own
+    let shown = |line: &str| !["hexagon", "[C]", "user_opossum"].iter().any(|p| line.starts_with(p));
+    print_report(&report, mode, &ran, shown);
+    print_stale(&answer);
+    Ok(report["ok"].as_bool() == Some(true))
+}
+
+/// Where `opossum test --cloud` runs: tessera's logical place and environment (its defaults when None).
+pub struct Cloud {
+    pub place: Option<String>,
+    pub environment: Option<String>,
+}
+
+/// Runs the specs on Roblox's Open Cloud Luau execution instead of Studio: `tessera run --fresh` builds the place
+/// with its configured build command, saves it as a place version (or reuses an identical saved one) and runs one
+/// script holding hexagon's runtime there. The project is built here too, first: a build with errors never reaches
+/// Roblox, and its log index maps the report like `test`'s.
+pub fn cloud(cfg: Config, options: &Options, cloud: &Cloud, mode: &str, filter: Option<&str>) -> Result<bool, String> {
+    let json = options.json;
+    let refused = |error: String| {
+        if json {
+            println!("{}", json!({ "ok": false, "ran": false, "error": error }));
+        }
+        error
+    };
+    if options.timeout.is_some_and(|t| t > CLOUD_TIMEOUT) {
+        return Err(refused(format!("--timeout with --cloud is at most {CLOUD_TIMEOUT} s, Open Cloud's limit")));
+    }
+    let runtime = runtime(&cfg.root).map_err(refused)?;
+    editor::write(&cfg.root, &cfg.ts).map_err(refused)?;
+    let mut session = Session::new(cfg, None).map_err(refused)?;
+    session.build().map_err(refused)?;
+    session.tree(false);
+    let root = session.cfg.root.clone();
+    let errors: Vec<Diag> = session.diagnostics().into_iter().filter(Diag::is_error).collect();
+    if !errors.is_empty() {
+        for d in &errors {
+            eprintln!("{}", d.human(&root));
+        }
+        return Err(refused("the project does not compile, so nothing was sent to Open Cloud".to_owned()));
+    }
+    let index = dev::log_index(&session);
+    let script = editor::dir(&root).join("hexagon.luau");
+    std::fs::write(&script, bundle(&runtime, &run_request(mode, filter)))
+        .map_err(|e| refused(format!("{}: {e}", script.display())))?;
+    let mut tessera = Command::new("tessera");
+    tessera.current_dir(&root).args(["run", "--json", "--logs", "--script"]).arg(&script);
+    if let Some(timeout) = options.timeout {
+        tessera.arg("--timeout").arg(format!("{timeout}s"));
+    }
+    if let Some(environment) = &cloud.environment {
+        tessera.args(["--environment", environment]);
+    }
+    tessera.args(["--fresh", cloud.place.as_deref().unwrap_or("main")]);
+    // its progress and errors go straight to the terminal
+    let run = tessera.stderr(Stdio::inherit()).output().map_err(|e| refused(format!("could not run tessera: {e}")))?;
+    let failed = |error: String| {
+        if json {
+            println!("{}", json!({ "ok": false, "error": error }));
+        } else {
+            eprintln!("opossum: {error}");
+        }
+        Ok(false)
+    };
+    if !run.status.success() {
+        return failed(format!("tessera failed ({})", run.status));
+    }
+    let Ok(result) = serde_json::from_slice::<Value>(&run.stdout) else {
+        return failed("tessera did not answer like `tessera run --json`".to_owned());
+    };
+    let report = result["results"][0].as_str().and_then(|text| serde_json::from_str::<Value>(text).ok());
+    let Some(mut report) = report.filter(Value::is_object) else {
+        return failed("the run returned no hexagon report".to_owned());
+    };
+    dev::map_strings(&mut report, &index);
+    let logs = result["logs"].as_array().into_iter().flatten().filter_map(Value::as_str);
+    let output: Vec<String> = logs.map(|line| dev::map_log(line, &index).0).collect();
+    let ok = report["ok"].as_bool() == Some(true);
+    if json {
+        let output: Vec<Value> = output.iter().map(|text| json!({ "kind": "output", "text": text })).collect();
+        let answer = json!({
+            "ok": true, "realm": "cloud", "environment": result["environment"], "place": result["place"],
+            "placeId": result["placeId"], "version": result["version"], "output": output, "report": report,
+        });
+        println!("{answer}");
+        return Ok(ok);
+    }
+    for line in &output {
+        println!("{line}");
+    }
+    let ran = format!(
+        "{}/{} v{}",
+        result["environment"].as_str().unwrap_or("?"),
+        result["place"].as_str().unwrap_or("?"),
+        result["version"]
+    );
+    // the script's own chunk has a name of Open Cloud's choosing: the frames shown are the project's files
+    let files: Vec<&str> = index.values().map(|(file, _)| file.as_str()).collect();
+    let shown = |line: &str| files.iter().any(|file| line.strip_prefix(file).is_some_and(|rest| rest.starts_with(':')));
+    print_report(&report, mode, &ran, shown);
+    Ok(ok)
+}
+
+/// hexagon's in-engine runtime from the project's `node_modules`, by module name: sent along as the exec's modules
+/// in Studio, bundled into one script on Open Cloud.
+fn runtime(root: &Path) -> Result<Vec<(String, String)>, String> {
+    let dir = root.join("node_modules/@hautajoki/hexagon/runtime");
+    let entries = std::fs::read_dir(&dir)
+        .map_err(|_| format!("this project has no hexagon runtime ({} is missing)", dir.display()))?;
+    let mut modules = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".luau")) else {
+            continue;
+        };
+        if name != "local_runner" {
+            let source = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            modules.push((name.to_owned(), source));
+        }
+    }
+    modules.sort();
+    Ok(modules)
+}
+
+/// The argument of hexagon's `cloud_runner.run`.
+fn run_request(mode: &str, filter: Option<&str>) -> String {
+    format!("{{ mode = \"{mode}\", filter = {} }}", filter.map_or_else(|| "nil".to_owned(), luau_string))
+}
+
+/// One script holding hexagon's runtime and a run of it (`tessera run --script`), returning the report as JSON
+/// text. Each module is a function of the `require` its string requires (`./name`) go through; anything else, a
+/// spec's instance, is required as usual.
+fn bundle(runtime: &[(String, String)], request: &str) -> String {
+    let mut out = String::from(
+        "-- hexagon's runtime and one run of it, written by `opossum test --cloud` for `tessera run --script`\n\
+         local modules: { [string]: (any) -> any } = {}\n",
+    );
+    for (name, source) in runtime {
+        out.push_str(&format!("modules[{}] = function(require)\n{source}\nend\n", luau_string(name)));
+    }
+    out.push_str(&format!(
+        "local loaded: {{ [string]: any }} = {{}}
+local outer = require
+local function load(name: string): any
+\tif loaded[name] == nil then
+\t\tlocal body = modules[name] or error(`hexagon's runtime has no module {{name}}`)
+\t\tloaded[name] = body(function(target: any): any
+\t\t\tif type(target) == \"string\" then return load((string.gsub(target, \"^%./\", \"\"))) end
+\t\t\treturn outer(target)
+\t\tend)
+\tend
+\treturn loaded[name]
+end
+return load(\"cloud_runner\").run({request})
+"
+    ));
+    out
+}
+
+/// Prints a hexagon report: each benchmark, each failure with its place and the first frames of its trace that are
+/// `shown`, then the counts and where it `ran`.
+fn print_report(report: &Value, mode: &str, ran: &str, shown: impl Fn(&str) -> bool) {
     let labels = |case: &Value| {
         let names: Vec<&str> = case["labels"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
         names.join(" / ")
@@ -124,9 +282,7 @@ return HttpService:JSONDecode(require(script.cloud_runner).run({{ mode = \"{mode
         let line = failure["line"].as_u64().map_or("?".to_owned(), |l| l.to_string());
         println!("FAIL {} ({}:{line})", labels(failure), failure["source"].as_str().unwrap_or("?"));
         println!("  {}", failure["message"].as_str().unwrap_or("").replace('\n', "\n  "));
-        // the frames below the error that are not the runner's own
-        let own = |line: &&str| ["hexagon", "[C]", "user_opossum"].iter().any(|p| line.starts_with(p));
-        for line in failure["trace"].as_str().unwrap_or("").lines().filter(|l| !own(l)).take(3) {
+        for line in failure["trace"].as_str().unwrap_or("").lines().filter(|l| shown(l)).take(3) {
             println!("    {line}");
         }
     }
@@ -137,13 +293,9 @@ return HttpService:JSONDecode(require(script.cloud_runner).run({{ mode = \"{mode
         (count("test_pass"), count("test_fail"), count("test_skip"))
     };
     println!(
-        "{pass} passed, {fail} failed, {skip} skipped in {:.2} s ({}, generation {})",
-        report["duration_seconds"].as_f64().unwrap_or(0.0),
-        answer["realm"].as_str().unwrap_or("?"),
-        answer["gen"]
+        "{pass} passed, {fail} failed, {skip} skipped in {:.2} s ({ran})",
+        report["duration_seconds"].as_f64().unwrap_or(0.0)
     );
-    print_stale(&answer);
-    Ok(report["ok"].as_bool() == Some(true))
 }
 
 /// Starts a playtest (Play Solo, or with `run` Run) and returns once its DataModels connected.

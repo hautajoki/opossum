@@ -49,7 +49,7 @@ const STALE_KEPT: usize = 64;
 
 /// Instance full name (`ServerScriptService.server.app`) → its file relative to the root, and for a compiled
 /// module the map from output lines to TypeScript lines.
-type LogIndex = FxHashMap<String, (String, Option<Arc<LineMap>>)>;
+pub type LogIndex = FxHashMap<String, (String, Option<Arc<LineMap>>)>;
 
 /// Requests waiting for their fence file to come back through the watcher, by number.
 #[derive(Default)]
@@ -351,11 +351,7 @@ impl Dev<'_> {
         let fresh = session.tree(false);
         self.tree.update(fresh);
         let root = session.cfg.root.clone();
-        let mut map = LogIndex::default();
-        for m in &session.scan.modules {
-            map.insert(m.full_name(), log_entry(session, &root, &m.file));
-        }
-        *self.index.lock().unwrap_or_else(|e| e.into_inner()) = map;
+        *self.index.lock().unwrap_or_else(|e| e.into_inner()) = log_index(session);
         let sourcemap = editor::dir(&root).join("sourcemap.json");
         if let Err(message) = editor::write_if_changed(&sourcemap, &self.tree.sourcemap_json(Some(&root))) {
             self.out.emit(&Event::Error { message: &message, fatal: false });
@@ -667,6 +663,12 @@ fn timeout(request: &Value) -> Duration {
     Duration::from_secs_f64(seconds.map_or(60.0, |t| t.min(MAX_TIMEOUT)))
 }
 
+/// The log index of `session`'s build: every routed module by its instance's full name.
+pub fn log_index(session: &Session) -> LogIndex {
+    let root = &session.cfg.root;
+    session.scan.modules.iter().map(|m| (m.full_name(), log_entry(session, root, &m.file))).collect()
+}
+
 fn log_entry(session: &Session, root: &Path, file: &Path) -> (String, Option<Arc<LineMap>>) {
     let rel = file.strip_prefix(root).unwrap_or(file).display().to_string();
     (rel, session.compiled.get(&slashed(file)).map(|c| Arc::clone(&c.lines)))
@@ -736,7 +738,7 @@ fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, playtest: &P
 /// label, the spec's instance name) becomes its file, and a failure's `source` and `line` the project file and line it
 /// failed at: its own when that is one, else the first project frame of its trace (hexagon's `expect` names itself), else
 /// the place its message names (a suite that failed to load).
-fn map_strings(value: &mut Value, index: &LogIndex) {
+pub fn map_strings(value: &mut Value, index: &LogIndex) {
     match value {
         Value::String(text) => *text = map_log(text, index).0,
         Value::Array(items) => items.iter_mut().for_each(|v| map_strings(v, index)),
@@ -766,7 +768,7 @@ fn map_strings(value: &mut Value, index: &LogIndex) {
 /// `text` to `file:line` (`Script 'file', Line line`), the line mapped to the TypeScript for compiled modules (None
 /// when that output line maps to no statement); also returns the first place it mapped. A client script's runtime
 /// copy (`Players.<name>.PlayerScripts...`) maps to its StarterPlayerScripts original.
-fn map_log(text: &str, index: &LogIndex) -> (String, Option<(String, Option<u32>)>) {
+pub fn map_log(text: &str, index: &LogIndex) -> (String, Option<(String, Option<u32>)>) {
     let is_name = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '@');
     let mut first = None;
     let mut out = String::with_capacity(text.len());
