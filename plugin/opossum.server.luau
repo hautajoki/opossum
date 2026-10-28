@@ -21,17 +21,22 @@ type Hello = { t: string, project: string, place: number, unpublished: boolean, 
 local ROLE: apply.Role = if RunService:IsEdit() then "edit" elseif RunService:IsServer() then "server" else "client"
 apply.role = ROLE
 
--- The port of the dev this Studio syncs from, in the plugin's settings (per place), which every DataModel's plugin
--- shares: edit writes it on each connect, and a connect tries it first, so a playtest's DataModels join the dev edit
--- is on and a reconnect goes back to it, wherever `opossum attach` moved it.
-local SETTING = `port{game.PlaceId}`
+-- The dev this Studio syncs from, in the plugin's settings (per place), which every DataModel's plugin shares: edit
+-- writes its port and session on each connect, and a plugin starting tries that dev first, as long as it still runs,
+-- so a playtest's DataModels join the dev edit is on, wherever `opossum attach` moved it. A dev that took the port
+-- since is another session, and a plugin starting then scans as usual.
+local SETTING = `dev{game.PlaceId}`
 
 local function ours(port: unknown): boolean
 	return type(port) == "number" and port >= FIRST_PORT and port < FIRST_PORT + PORTS and port % 1 == 0
 end
 
 local setting_ok, setting = pcall(plugin.GetSetting, plugin, SETTING)
-local wanted: number? = if setting_ok and ours(setting) then setting :: number else nil
+local saved: { [string]: unknown } = if setting_ok and type(setting) == "table" then setting else {}
+-- The port tried first, and the session the dev there must have (nil: any): a reconnect goes back to the port it
+-- last synced from, whatever dev serves it now, but the saved dev only while it runs.
+local wanted: number? = if ours(saved.port) then saved.port :: number else nil
+local trusted: string? = if wanted and type(saved.session) == "string" then saved.session else nil
 
 local socket: WebStreamClient? = nil
 -- The live socket's signal connections: a client with connected handlers is never collected, even closed.
@@ -146,9 +151,9 @@ local function drop(client: WebStreamClient)
 	end
 end
 
--- Tries one port: "live" when connected, "next" when nothing usable answers there, "busy" when no client can be
--- created now (Studio allows a few per DataModel and other plugins hold some).
-local function connect(port: number): "live" | "next" | "busy"
+-- Tries one port, for a dev of `session` when given: "live" when connected, "next" when nothing usable answers there,
+-- "busy" when no client can be created now (Studio allows a few per DataModel and other plugins hold some).
+local function connect(port: number, session: string?): "live" | "next" | "busy"
 	local options: { [string]: any } = { Url = `ws://127.0.0.1:{port}/` }
 	local ok, client = pcall(HttpService.CreateWebStreamClient, HttpService, Enum.WebStreamClientType.WebSocket, options)
 	if not ok then return "busy" end
@@ -167,7 +172,7 @@ local function connect(port: number): "live" | "next" | "busy"
 				if value.t == "attach" and ours(value.port) then
 					-- opossum attach: this dev lets go, the one on that port takes over
 					wanted = value.port
-					if ROLE == "edit" then pcall(plugin.SetSetting, plugin, SETTING, value.port) end
+					trusted = nil
 					print(`opossum: moving to the opossum dev on port {value.port}`)
 					drop(client)
 					task.defer(find)
@@ -191,7 +196,8 @@ local function connect(port: number): "live" | "next" | "busy"
 		elseif state == "pending" then
 			local decoded, value = pcall(HttpService.JSONDecode, HttpService, message)
 			local info = if decoded and type(value) == "table" then value :: Hello else nil
-			if info and info.t == "hello" and (info.place == game.PlaceId or (game.PlaceId == 0 and info.unpublished == true)) then
+			local place = info and (info.place == game.PlaceId or (game.PlaceId == 0 and info.unpublished == true))
+			if info and info.t == "hello" and place and (session == nil or info.session == session) then
 				server = info
 				state = "hello"
 			else
@@ -234,7 +240,8 @@ local function connect(port: number): "live" | "next" | "busy"
 	project = server.project
 	state = "live"
 	wanted = port
-	if ROLE == "edit" then pcall(plugin.SetSetting, plugin, SETTING, port) end
+	trusted = nil
+	if ROLE == "edit" then pcall(plugin.SetSetting, plugin, SETTING, { port = port, session = server.session }) end
 	send(hello())
 	show()
 	print(`opossum: syncing {project} ({ROLE}) from port {port}`)
@@ -286,11 +293,13 @@ local finding = false
 function find()
 	if socket or finding then return end
 	finding = true
-	local first = wanted
+	local first, only = wanted, trusted
 	local ok, problem = pcall(function()
-		if first and connect(first) ~= "next" then return end
+		if first and connect(first, only) ~= "next" then return end
+		-- the saved dev is gone: its port is as good as any other now
+		trusted = nil
 		for port = FIRST_PORT, FIRST_PORT + PORTS - 1 do
-			if port ~= first and connect(port) ~= "next" then return end
+			if (port ~= first or only) and connect(port) ~= "next" then return end
 		end
 	end)
 	finding = false

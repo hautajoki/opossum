@@ -499,11 +499,13 @@ flight finishing first) and connects there at once, through the usual hello, pla
 does not answer or serves another place sends it back to the scan. Both `/status` and `/release` pass the Host and
 Origin checks; neither carries a project root, since other projects ask them.
 
-The port a plugin wants is the last it connected to. The edit plugin also writes it to its settings under
-`port<PlaceId>` on every connect, and every plugin reads that setting when it starts: plugin settings are shared by the
-plugin in every DataModel of a Studio (measured, 2026-10-29: Play Solo's server and client joined the dev edit had been
-moved to, not the first on the ports), so a playtest started after an attach syncs from the same dev as edit, and so
-does a Studio opened later, while that dev runs.
+The port a plugin wants is the last it connected to, whatever dev serves it when it reconnects. The edit plugin also
+writes that dev to its settings under `dev<PlaceId>` on every connect, as `{port, session}` (the session from the dev's
+hello), and every plugin reads that setting when it starts: plugin settings are shared by the plugin in every DataModel
+of a Studio (measured, 2026-10-29: Play Solo's server and client joined the dev edit had been moved to, not the first on
+the ports), so a playtest started after an attach syncs from the same dev as edit, and so does a Studio opened later. A
+plugin starting takes the saved port only from a hello of that session: once that dev exits, a dev that takes its port
+is another (an unpublished place's setting is shared by every unpublished place), and the plugin scans as usual.
 
 ## Budgets
 
