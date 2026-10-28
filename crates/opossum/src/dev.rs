@@ -1,9 +1,12 @@
 //! `opossum dev`: a full build, then the Studio sync server and a file watcher. Each settled burst of edits
 //! (~30 ms quiet) rebuilds what it touched: TypeScript edits reuse the program and re-lower only the files they can
-//! affect, a file a `$file` macro reads re-lowers its readers, added or removed files route `src/` again, `place/`
-//! edits re-read the place, and an edit to
-//! `opossum.toml`, `package.json` or a `.env` file starts the session over. Studio's output comes back through
-//! `POST /log` and prints with compiled lines mapped to their TypeScript.
+//! affect, a file a `$file` macro reads re-lowers its readers, added or removed files route `src/` again, a `place/`
+//! edit re-reads that entry, and an edit to `opossum.toml`, `package.json` or a `.env` file starts the session over.
+//!
+//! The session keeps one [`place::Tree`] for its whole life. An edit that only changed sources sets them on it
+//! (a few µs); anything that changed the shape builds a fresh tree and pairs it in, then rewrites the sourcemap and
+//! the log index. Studio's output comes back over the socket and prints with compiled lines mapped to their
+//! TypeScript.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -12,11 +15,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher};
-use place::{Place, Variant};
+use place::Tree;
 use rustc_hash::FxHashMap;
-use sync::{LogKind, LogLine, Node, Prop, Snapshot};
+use sync::{LogKind, LogLine, Realm};
 
-use crate::build::{LineMap, Session, slashed};
+use crate::build::{LineMap, RUNTIME, Session, script_class, script_kind, slashed};
 use crate::config::{self, Config};
 use crate::{editor, project_path};
 
@@ -28,20 +31,11 @@ type LogIndex = FxHashMap<String, (String, Option<Arc<LineMap>>)>;
 
 pub fn run(cfg: Config) -> Result<bool, String> {
     let (log_tx, log_rx) = mpsc::channel();
-    let roots: Vec<String> = cfg
-        .routes
-        .iter()
-        .map(|(_, target)| target.clone())
-        .filter(|t| t.contains('/'))
-        .chain(["ReplicatedStorage/rbxts".to_owned()])
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
     let server = sync::Server::start(sync::Config {
         project: cfg.name.clone(),
         place: cfg.place.unwrap_or(0),
         unpublished: cfg.place.is_none(),
-        roots,
+        hot_reload: cfg.hot_reload,
         port: sync::DEFAULT_PORT,
         log: Some(log_tx),
     })
@@ -58,10 +52,13 @@ pub fn run(cfg: Config) -> Result<bool, String> {
     let (tx, events) = mpsc::channel();
     let mut watcher = notify::recommended_watcher(tx).map_err(|e| format!("watcher: {e}"))?;
     let mut cfg = cfg;
+    // ids live as long as the server, across config reloads
+    let mut tree = Tree::new();
     loop {
         watch(&mut watcher, &cfg)?;
-        let reload = serve(cfg, &server, &index, &events)?;
+        let reload = serve(cfg, &server, &mut tree, &index, &events)?;
         cfg = reload;
+        server.configure(cfg.name.clone(), cfg.place.unwrap_or(0), cfg.place.is_none(), cfg.hot_reload);
         let _ = editor::write(&cfg.root, &cfg.ts);
     }
 }
@@ -78,18 +75,27 @@ fn watch(watcher: &mut notify::RecommendedWatcher, cfg: &Config) -> Result<(), S
     add(&cfg.root.join("place"), RecursiveMode::Recursive)
 }
 
+/// What a burst of edits did to the tree.
+struct Dev<'a> {
+    server: &'a sync::Server,
+    tree: &'a mut Tree,
+    index: &'a Mutex<LogIndex>,
+    shown: Vec<String>,
+}
+
 /// Builds and serves one configuration until its config files change; returns the new configuration.
 fn serve(
     cfg: Config,
     server: &sync::Server,
+    tree: &mut Tree,
     index: &Mutex<LogIndex>,
     events: &Receiver<notify::Result<notify::Event>>,
 ) -> Result<Config, String> {
     let start = Instant::now();
     let mut session = Session::new(cfg, None)?;
     let stats = session.build()?;
-    let mut shown = Vec::new();
-    let generation = publish(&mut session, server, index, &mut shown);
+    let mut dev = Dev { server, tree, index, shown: Vec::new() };
+    let generation = dev.reshape(&mut session);
     println!(
         "built {} modules in {} ms ({} lowered), generation {generation}",
         session.scan.modules.len(),
@@ -102,7 +108,8 @@ fn serve(
         let start = Instant::now();
         let root = session.cfg.root.clone();
         let src = session.cfg.src();
-        let (mut changed, mut rescan, mut touched, mut stale) = (Vec::new(), false, false, Vec::new());
+        let (mut changed, mut rescan, mut shape, mut luau, mut stale) =
+            (Vec::new(), false, false, Vec::new(), Vec::new());
         for path in &paths {
             let path = project_path(&session.cfg, path);
             stale.extend(session.readers(&slashed(&path)));
@@ -119,7 +126,7 @@ fn serve(
                 }
             }
             if rel.starts_with("place") {
-                touched = true;
+                shape |= session.place_changed(&path);
                 continue;
             }
             if !path.starts_with(&src) || is_hidden(&path, &src) {
@@ -128,35 +135,38 @@ fn serve(
             let file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let source = [".ts", ".tsx", ".luau"].iter().any(|e| file.ends_with(e));
             let known = session.scan.find(&path).is_some() || session.scan.decls.contains(&path);
+            if file.ends_with(".luau") {
+                // known or not: a file deleted and made again later must not mount its old text
+                session.reread_luau(&path);
+            }
             match (path.is_file(), known) {
-                (true, true) if file.ends_with(".luau") => {
-                    session.reread_luau(&path);
-                    touched = true;
-                }
+                (true, true) if file.ends_with(".luau") => luau.push(path),
                 (true, true) => changed.push(slashed(&path)),
                 // a new or deleted source file, or a directory: the file set changed
                 (exists, _) if source || !exists || path.is_dir() => rescan = true,
                 _ => {}
             }
         }
-        if changed.is_empty() && !rescan && !touched && stale.is_empty() {
+        if changed.is_empty() && !rescan && !shape && luau.is_empty() && stale.is_empty() {
             continue;
         }
+        let packages = session.packages.len();
         let stats = if !changed.is_empty() || rescan || !stale.is_empty() {
             session.update(&changed, rescan, &stale)?
         } else {
             Default::default()
         };
         let t = Instant::now();
-        let generation = publish(&mut session, server, index, &mut shown);
+        let shape = shape || rescan || session.packages.len() != packages;
+        let generation = if shape { dev.reshape(&mut session) } else { dev.edit(&mut session, &luau) };
         let mut phases: Vec<String> = stats.times.iter().map(|(p, ms)| format!("{p} {ms:.0}")).collect();
-        phases.push(format!("publish {}", t.elapsed().as_millis()));
+        phases.push(format!("publish {:.2}", t.elapsed().as_secs_f64() * 1000.0));
         let errors = session.diagnostics().iter().filter(|d| d.is_error()).count();
         println!(
             "rebuilt in {} ms ({} ms): {} changed, {} lowered, {errors} errors, generation {generation}",
             start.elapsed().as_millis(),
             phases.join(", "),
-            changed.len(),
+            changed.len() + luau.len(),
             stats.lowered
         );
     }
@@ -184,84 +194,82 @@ fn settle(events: &Receiver<notify::Result<notify::Event>>) -> Result<BTreeSet<P
     }
 }
 
-/// Mounts the place, publishes its snapshot and refreshes the log index and the sourcemap; prints the errors and
-/// warnings when they differ from the last ones shown. Returns the generation.
-fn publish(session: &mut Session, server: &sync::Server, index: &Mutex<LogIndex>, shown: &mut Vec<String>) -> u64 {
-    let place = session.mount(false);
-    let root = session.cfg.root.clone();
-    let diags: Vec<String> = session
-        .diagnostics()
-        .iter()
-        .filter(|d| d.severity != crate::diag::Severity::Note)
-        .map(|d| d.human(&root))
-        .collect();
-    if diags != *shown {
-        for d in &diags {
-            println!("{d}");
+impl Dev<'_> {
+    /// The shape changed (or this is the first build): pairs a fresh tree into the long-lived one, rewrites the
+    /// sourcemap and the log index, publishes. Returns the generation.
+    fn reshape(&mut self, session: &mut Session) -> u32 {
+        session.rendered.clear();
+        let fresh = session.tree(false);
+        self.tree.update(fresh);
+        let root = session.cfg.root.clone();
+        let mut map = LogIndex::default();
+        for m in &session.scan.modules {
+            map.insert(m.full_name(), log_entry(session, &root, &m.file));
         }
-        *shown = diags;
+        *self.index.lock().unwrap_or_else(|e| e.into_inner()) = map;
+        let sourcemap = editor::dir(&root).join("sourcemap.json");
+        if let Err(e) = editor::write_if_changed(&sourcemap, &self.tree.sourcemap_json(Some(&root))) {
+            eprintln!("{e}");
+        }
+        self.show(session);
+        self.server.publish(self.tree.clone())
     }
-    let mut map = LogIndex::default();
-    for m in &session.scan.modules {
-        let rel = m.file.strip_prefix(&root).unwrap_or(&m.file).display().to_string();
-        let lines = session.compiled.get(&slashed(&m.file)).map(|c| Arc::clone(&c.lines));
-        map.insert(m.full_name(), (rel, lines));
+
+    /// Only sources changed: sets them on the tree and publishes, unless the shape changed after all: a module that
+    /// had no output gained one (its node is a folder, or nothing), or the runtime library came or went.
+    fn edit(&mut self, session: &mut Session, luau: &[PathBuf]) -> u32 {
+        let mut files: Vec<PathBuf> = session.rendered.drain(..).map(PathBuf::from).collect();
+        files.extend(luau.iter().cloned());
+        let root = session.cfg.root.clone();
+        if self.tree.find(&format!("{RUNTIME}/RuntimeLib")).is_some() != session.needs_runtime() {
+            return self.reshape(session);
+        }
+        let mut edits = Vec::with_capacity(files.len());
+        let mut entries = Vec::with_capacity(files.len());
+        for file in &files {
+            let Some(m) = session.scan.find(file).cloned() else { continue };
+            // the node at the module's path must be its own script, not a folder made for its children or a clashing
+            // place/ instance
+            let id = self.tree.find(&m.instance.join("/")).filter(|&id| {
+                self.tree.get(id).is_some_and(|n| {
+                    n.origin == place::Origin::Script
+                        && n.file.as_deref() == Some(m.file.as_path())
+                        && n.class == script_class(script_kind(m.class))
+                })
+            });
+            match (id, session.module_source(&m)) {
+                (Some(id), Some(source)) => edits.push((id, source)),
+                _ => return self.reshape(session),
+            }
+            entries.push((m.full_name(), log_entry(session, &root, file)));
+        }
+        self.tree.set_sources(edits);
+        self.index.lock().unwrap_or_else(|e| e.into_inner()).extend(entries);
+        self.show(session);
+        self.server.publish(self.tree.clone())
     }
-    *index.lock().unwrap_or_else(|e| e.into_inner()) = map;
-    let sourcemap = editor::dir(&root).join("sourcemap.json");
-    if let Err(e) = editor::write_if_changed(&sourcemap, &place::sourcemap_json(&place, Some(&root))) {
-        eprintln!("{e}");
+
+    /// Prints the errors and warnings when they differ from the last ones shown.
+    fn show(&mut self, session: &Session) {
+        let root = &session.cfg.root;
+        let diags: Vec<String> = session
+            .diagnostics()
+            .iter()
+            .filter(|d| d.severity != crate::diag::Severity::Note)
+            .map(|d| d.human(root))
+            .collect();
+        if diags != self.shown {
+            for d in &diags {
+                println!("{d}");
+            }
+            self.shown = diags;
+        }
     }
-    server.publish(snapshot(&place, &root))
 }
 
-/// The instances opossum mounted (scripts and the folders made for them), with the instances above them up to
-/// their service.
-fn snapshot(place: &Place, root: &Path) -> Snapshot {
-    let mut snap = Snapshot::new();
-    for inst in place.dom.descendants() {
-        let r = inst.referent();
-        if !place.is_owned(r) {
-            continue;
-        }
-        let path = place.path_of(r);
-        let mut props = Vec::new();
-        let mut source = None;
-        for (key, value) in &inst.properties {
-            match (key.as_str(), value) {
-                ("Source", Variant::String(s)) => source = Some(Arc::from(s.as_str())),
-                ("RunContext", Variant::Enum(e)) => {
-                    let context = match e.to_u32() {
-                        1 => "Server",
-                        2 => "Client",
-                        _ => "Legacy",
-                    };
-                    props.push(("RunContext".to_owned(), Prop::Enum("RunContext".into(), context.into())));
-                }
-                ("Disabled", Variant::Bool(b)) => props.push(("Enabled".to_owned(), Prop::Bool(!*b))),
-                _ => {}
-            }
-        }
-        let file = place.file_of(r).map(|f| f.strip_prefix(root).unwrap_or(f).display().to_string());
-        // the instances above it that opossum did not make, below the service
-        let mut parent = inst.parent();
-        let mut at = path.as_str();
-        while let Some((up, _)) = at.rsplit_once('/') {
-            if !up.contains('/') || snap.contains_key(up) {
-                break;
-            }
-            if let Some(p) = place.dom.get_by_ref(parent) {
-                snap.insert(
-                    up.to_owned(),
-                    Node { class: p.class.to_string(), source: None, props: Vec::new(), file: None },
-                );
-                parent = p.parent();
-            }
-            at = up;
-        }
-        snap.insert(path, Node { class: inst.class.to_string(), source, props, file });
-    }
-    snap
+fn log_entry(session: &Session, root: &Path, file: &Path) -> (String, Option<Arc<LineMap>>) {
+    let rel = file.strip_prefix(root).unwrap_or(file).display().to_string();
+    (rel, session.compiled.get(&slashed(file)).map(|c| Arc::clone(&c.lines)))
 }
 
 fn print_logs(lines: Receiver<LogLine>, index: &Mutex<LogIndex>) {
@@ -271,14 +279,15 @@ fn print_logs(lines: Receiver<LogLine>, index: &Mutex<LogIndex>) {
             map_log(&line.text, &index)
         };
         let realm = match line.realm {
-            sync::Realm::Edit => "edit",
-            sync::Realm::Server => "server",
-            sync::Realm::Client => "client",
+            Realm::Edit => "edit",
+            Realm::Server => "server",
+            Realm::Client => "client",
+            Realm::Sync => "sync",
         };
         match line.kind {
             LogKind::Warning => println!("[{realm}] warning: {text}"),
             LogKind::Error => println!("[{realm}] error: {text}"),
-            LogKind::Output | LogKind::Info => println!("[{realm}] {text}"),
+            LogKind::Output => println!("[{realm}] {text}"),
         }
     }
 }

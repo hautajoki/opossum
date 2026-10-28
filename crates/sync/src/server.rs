@@ -1,409 +1,292 @@
-//! HTTP/1.1 over std::net: one request per connection (`Connection: close`), a thread per connection.
+//! Sockets: an acceptor thread, then per socket a reader (the plugin's JSON) and a writer that builds its subscriber's
+//! frame when the last one is acked. `publish` only swaps the tree under the lock and wakes the writers.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::io::BufReader;
+use std::net::{Shutdown, TcpListener, TcpStream};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
-use std::time::{Duration, Instant};
 
-use serde_json::{Map, Value, json};
+use place::{Id, Tree};
+use rustc_hash::{FxHashMap, FxHashSet};
+use serde_json::{Value, json};
 
-use crate::{Entry, LogKind, LogLine, Op, Prop, Realm, Shared};
+use crate::sub::{Context, Role, Sub};
+use crate::{LogKind, LogLine, Realm, ws};
 
-/// How long `/patch` waits for a newer generation before answering with no ops.
-const POLL: Duration = Duration::from_secs(25);
-const MAX_HEAD: usize = 16 << 10;
-const MAX_BODY: usize = 8 << 20;
+/// Generations kept for hydrating a reconnect whose stamps are a little behind.
+pub const RING: usize = 16;
 
-pub(crate) fn serve(listener: TcpListener, shared: Arc<Shared>) {
+pub struct Info {
+    pub project: String,
+    pub place: u64,
+    pub unpublished: bool,
+    pub hot_reload: bool,
+}
+
+pub enum Event {
+    Hello(Role, Vec<(String, String)>),
+    /// The generation applied, and its failures.
+    Ack(u32, Vec<(Id, u8, String)>),
+    Lost(Vec<Id>),
+    Verify,
+    Pong(Vec<u8>),
+}
+
+#[derive(Default)]
+struct Inbox {
+    events: Vec<Event>,
+    closed: bool,
+}
+
+pub struct State {
+    pub info: Info,
+    pub generation: u32,
+    pub tree: Tree,
+    /// The last generations' trees, oldest first; the current one is last.
+    pub ring: VecDeque<Tree>,
+    inboxes: FxHashMap<u64, Inbox>,
+    next: u64,
+}
+
+pub struct Shared {
+    pub session: String,
+    pub port: u16,
+    pub log: Option<Sender<LogLine>>,
+    pub state: Mutex<State>,
+    pub wake: Condvar,
+    noticed: Mutex<FxHashSet<String>>,
+}
+
+impl Shared {
+    pub fn new(info: Info, session: String, port: u16, log: Option<Sender<LogLine>>) -> Shared {
+        let state = State {
+            info,
+            generation: 0,
+            tree: Tree::new(),
+            ring: VecDeque::new(),
+            inboxes: FxHashMap::default(),
+            next: 0,
+        };
+        Shared { session, port, log, state: Mutex::new(state), wake: Condvar::new(), noticed: Mutex::default() }
+    }
+
+    pub fn lock(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn say(&self, kind: LogKind, text: String) {
+        match &self.log {
+            Some(log) => {
+                let _ = log.send(LogLine { kind, realm: Realm::Sync, text });
+            }
+            None => eprintln!("opossum: {text}"),
+        }
+    }
+
+    /// Says `text` once for the life of the server.
+    fn notice(&self, text: String) {
+        if self.noticed.lock().unwrap_or_else(|e| e.into_inner()).insert(text.clone()) {
+            self.say(LogKind::Warning, text);
+        }
+    }
+
+    fn push(&self, conn: u64, event: Event) {
+        if let Some(inbox) = self.lock().inboxes.get_mut(&conn) {
+            inbox.events.push(event);
+        }
+        self.wake.notify_all();
+    }
+}
+
+pub fn serve(listener: TcpListener, shared: Arc<Shared>) {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let shared = shared.clone();
-        let _ = thread::Builder::new()
-            .name("sync-conn".into())
-            .spawn(move || handle(stream, &shared));
+        let _ = thread::Builder::new().name("sync-socket".into()).spawn(move || socket(stream, &shared));
     }
 }
 
-struct Request {
-    method: String,
-    path: String,
-    query: String,
-    host: Option<String>,
-    origin: Option<String>,
-    body: Vec<u8>,
-}
-
-struct Response {
-    status: u16,
-    kind: &'static str,
-    body: Vec<u8>,
-}
-
-const JSON: &str = "application/json";
-const TEXT: &str = "text/plain; charset=utf-8";
-
-fn handle(mut stream: TcpStream, shared: &Shared) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
-    let res = match read_request(&mut stream) {
-        Some(req) if !local(&req, shared.port) => {
-            text(403, "opossum only answers 127.0.0.1 and localhost")
+fn socket(mut stream: TcpStream, shared: &Arc<Shared>) {
+    let _ = stream.set_nodelay(true);
+    let reader = match ws::accept(&mut stream, shared.port) {
+        Ok(reader) => reader,
+        Err(reason) => {
+            if reason.starts_with("refused") {
+                shared.notice(reason);
+            }
+            return;
         }
-        Some(req) => route(&req, shared),
-        None => text(400, "bad request"),
     };
-    let reason = match res.status {
-        200 => "OK",
-        400 => "Bad Request",
-        403 => "Forbidden",
-        404 => "Not Found",
-        _ => "",
+    let hello = {
+        let state = shared.lock();
+        let info = &state.info;
+        json!({
+            "t": "hello",
+            "project": info.project,
+            "place": info.place,
+            "unpublished": info.unpublished,
+            "session": shared.session,
+            "hotReload": info.hot_reload,
+        })
     };
-    let head = format!(
-        "HTTP/1.1 {} {reason}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        res.status,
-        res.kind,
-        res.body.len()
-    );
-    let _ = stream
-        .write_all(head.as_bytes())
-        .and_then(|()| stream.write_all(&res.body));
-}
-
-fn route(req: &Request, shared: &Shared) -> Response {
-    match (req.method.as_str(), req.path.as_str()) {
-        ("GET", "/hello") => hello(shared),
-        ("GET", "/patch") => patch(req, shared),
-        ("GET", path) if path.starts_with("/blob/") => blob(&path[6..], shared),
-        ("POST", "/blobs") => blobs(&req.body, shared),
-        ("POST", "/log") => log(&req.body, shared),
-        _ => text(404, "not found"),
+    if ws::write(&mut stream, ws::TEXT, hello.to_string().as_bytes()).is_err() {
+        return;
     }
+    let conn = {
+        let mut state = shared.lock();
+        state.next += 1;
+        let conn = state.next;
+        state.inboxes.insert(conn, Inbox::default());
+        conn
+    };
+    let writer = stream.try_clone().ok().and_then(|out| {
+        let shared = shared.clone();
+        thread::Builder::new().name("sync-writer".into()).spawn(move || write_loop(out, &shared, conn)).ok()
+    });
+    if writer.is_some() {
+        read_loop(reader, shared, conn);
+    }
+    if let Some(inbox) = shared.lock().inboxes.get_mut(&conn) {
+        inbox.closed = true;
+    }
+    shared.wake.notify_all();
+    let _ = stream.shutdown(Shutdown::Both);
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
+    shared.lock().inboxes.remove(&conn);
 }
 
-fn hello(shared: &Shared) -> Response {
-    let generation = shared.lock().generation;
-    let config = &shared.config;
-    json(json!({
-        "project": config.project,
-        "place": config.place,
-        "unpublished": config.unpublished,
-        "roots": config.roots,
-        "session": shared.session,
-        "generation": generation,
-    }))
-}
-
-/// `?since=G&session=S[&only=a,b]`: the ops from G to the current generation, waiting up to `POLL` while G is
-/// current or nothing was published yet. A `since` of 0, from another (or no) session or older than the log is
-/// answered with the full snapshot.
-fn patch(req: &Request, shared: &Shared) -> Response {
-    let mut since = 0;
-    let mut session = "";
-    let mut only = Vec::new();
-    for pair in req.query.split('&') {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        match key {
-            "since" => since = value.parse().unwrap_or(0),
-            "session" => session = value,
-            "only" => only.extend(
-                decode(value)
-                    .split(',')
-                    .map(|p| p.trim_matches('/').to_string())
-                    .filter(|p| !p.is_empty()),
-            ),
-            _ => {}
+fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) {
+    let mut realm = Realm::Edit;
+    loop {
+        let Ok((op, payload)) = ws::read(&mut reader) else { return };
+        match op {
+            ws::PING => shared.push(conn, Event::Pong(payload)),
+            ws::CLOSE => return,
+            ws::TEXT => {
+                let Ok(message) = serde_json::from_slice::<Value>(&payload) else { continue };
+                match message["t"].as_str() {
+                    Some("hello") => {
+                        let role = match message["role"].as_str() {
+                            Some("server") => Role::Server,
+                            Some("client") => Role::Client,
+                            _ => Role::Edit,
+                        };
+                        realm = match role {
+                            Role::Edit => Realm::Edit,
+                            Role::Server => Realm::Server,
+                            Role::Client => Realm::Client,
+                        };
+                        let roots = message["roots"].as_object().map_or_else(Vec::new, |roots| {
+                            roots
+                                .iter()
+                                .map(|(path, stamp)| (path.clone(), stamp.as_str().unwrap_or("").to_owned()))
+                                .collect()
+                        });
+                        shared.push(conn, Event::Hello(role, roots));
+                    }
+                    Some("ack") => {
+                        let failed = message["failed"].as_array().map_or_else(Vec::new, |list| {
+                            list.iter()
+                                .filter_map(|f| {
+                                    let id = u32::try_from(f[0].as_u64()?).ok()?;
+                                    let tag = u8::try_from(f[1].as_u64()?).ok()?;
+                                    Some((id, tag, clean(f[2].as_str().unwrap_or(""))))
+                                })
+                                .collect()
+                        });
+                        // an ack without a generation matches no frame
+                        let generation = message["gen"].as_u64().and_then(|g| u32::try_from(g).ok()).unwrap_or(0);
+                        shared.push(conn, Event::Ack(generation, failed));
+                    }
+                    Some("lost") => {
+                        let ids = message["ids"].as_array().map_or_else(Vec::new, |ids| {
+                            ids.iter().filter_map(|i| u32::try_from(i.as_u64()?).ok()).collect()
+                        });
+                        shared.push(conn, Event::Lost(ids));
+                    }
+                    Some("verify") => shared.push(conn, Event::Verify),
+                    Some("log") => {
+                        let Some(log) = &shared.log else { continue };
+                        for line in message["lines"].as_array().into_iter().flatten() {
+                            let kind = match line[0].as_str() {
+                                Some("warning") => LogKind::Warning,
+                                Some("error") => LogKind::Error,
+                                _ => LogKind::Output,
+                            };
+                            let text = clean(line[1].as_str().unwrap_or(""));
+                            let _ = log.send(LogLine { kind, realm, text });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // upstream is text only
+            _ => return,
         }
     }
+}
 
-    let stale = session != shared.session;
-    let deadline = Instant::now() + POLL;
-    let mut state = shared.lock();
-    while state.generation == 0 || (state.generation == since && !stale) {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            break;
-        }
-        state = shared
-            .changed
-            .wait_timeout(state, left)
-            .unwrap_or_else(|e| e.into_inner())
-            .0;
-    }
+/// Log and failure text from Studio with control characters other than newlines and tabs removed, so it cannot
+/// drive the terminal.
+fn clean(text: &str) -> String {
+    text.chars().filter(|&c| !c.is_control() || c == '\n' || c == '\t').collect()
+}
 
-    let oldest = state
-        .log
-        .front()
-        .map_or(state.generation, |p| p.generation - 1);
-    let full = stale || since == 0 || since > state.generation || since < oldest;
-    let mut ops = Vec::new();
-    if full {
-        let mut keep = BTreeSet::new();
-        for (path, entry) in &state.tree {
-            if matches(&only, path, entry) {
-                // Ancestors come along so a scoped snapshot can still build its parents.
-                let mut at = path.as_ref();
-                while keep.insert(at) {
-                    let Some(slash) = at.rfind('/') else { break };
-                    at = &at[..slash];
+fn write_loop(mut out: TcpStream, shared: &Shared, conn: u64) {
+    let mut sub = Sub::new();
+    let mut seen = 0;
+    loop {
+        let (events, tree, ring, generation, hot_reload) = {
+            let mut state = shared.lock();
+            loop {
+                // nothing is built before the first publish: an empty tree would remove every root
+                let ready = state.generation > 0;
+                let generation = state.generation;
+                let Some(inbox) = state.inboxes.get_mut(&conn) else { return };
+                if inbox.closed {
+                    return;
+                }
+                if ready && (!inbox.events.is_empty() || (sub.sent.is_none() && generation > seen)) {
+                    break;
+                }
+                state = shared.wake.wait(state).unwrap_or_else(|e| e.into_inner());
+            }
+            let events = std::mem::take(&mut state.inboxes.get_mut(&conn).expect("checked above").events);
+            let ring: Vec<Tree> = state.ring.iter().cloned().collect();
+            (events, state.tree.clone(), ring, state.generation, state.info.hot_reload)
+        };
+        let notice = |text: String| shared.notice(text);
+        let say = |text: String| shared.say(LogKind::Error, text);
+        let cx = Context { cur: &tree, ring: &ring, hot_reload, notice: &notice, say: &say };
+        for event in events {
+            match event {
+                Event::Hello(role, roots) => sub.hello(role, roots, hot_reload),
+                Event::Ack(generation, failed) => {
+                    sub.ack(&cx, generation, &failed);
+                }
+                Event::Lost(ids) => sub.lost(&tree, &ids),
+                Event::Verify => sub.resync(&tree),
+                Event::Pong(payload) => {
+                    if ws::write(&mut out, ws::PONG, &payload).is_err() {
+                        return;
+                    }
                 }
             }
         }
-        for path in keep {
-            if let Some(entry) = state.tree.get(path) {
-                ops.push(set(path, entry));
-            }
-        }
-    } else {
-        let mut merged = BTreeMap::new();
-        for patch in state.log.iter().filter(|p| p.generation > since) {
-            for (path, op) in &patch.ops {
-                merged.insert(path.clone(), op.clone());
-            }
-        }
-        // Sets parent-first (a parent's path sorts before its children's), dels children-first.
-        for (path, op) in &merged {
-            if let Op::Set(entry) = op
-                && matches(&only, path, entry)
-            {
-                ops.push(set(path, entry));
-            }
-        }
-        for (path, op) in merged.iter().rev() {
-            if let Op::Del(entry) = op
-                && matches(&only, path, entry)
-            {
-                ops.push(json!({ "op": "del", "path": path.as_ref() }));
-            }
-        }
-    }
-    let generation = state.generation;
-    drop(state);
-    json(json!({ "session": shared.session, "generation": generation, "full": full, "ops": ops }))
-}
-
-fn matches(only: &[String], path: &str, entry: &Entry) -> bool {
-    only.is_empty()
-        || only.iter().any(|prefix| {
-            under(path, prefix) || entry.file.as_deref().is_some_and(|f| under(f, prefix))
-        })
-}
-
-/// `path` is `prefix` or below it, component-wise (`a/bc` is not under `a/b`).
-fn under(path: &str, prefix: &str) -> bool {
-    path.strip_prefix(prefix)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-}
-
-fn set(path: &str, entry: &Entry) -> Value {
-    let mut props = Map::new();
-    for (name, prop) in &entry.props {
-        let value = match prop {
-            Prop::Bool(b) => json!(b),
-            Prop::Number(n) => json!(n),
-            Prop::String(s) => json!(s),
-            Prop::Enum(ty, item) => json!({ "enum": ty, "item": item }),
-        };
-        props.insert(name.clone(), value);
-    }
-    json!({
-        "op": "set",
-        "path": path,
-        "class": entry.class,
-        "hash": entry.hash.map(|h| format!("{h:032x}")),
-        "props": props,
-    })
-}
-
-fn blob(hex: &str, shared: &Shared) -> Response {
-    match parse_hash(hex).and_then(|h| shared.lock().blobs.get(&h).cloned()) {
-        Some(source) => Response {
-            status: 200,
-            kind: TEXT,
-            body: source.as_bytes().to_vec(),
-        },
-        None => text(404, "no such blob"),
-    }
-}
-
-/// `["<hash>", ...]` → `{"<hash>": source, ...}`; hashes no longer held are left out.
-fn blobs(body: &[u8], shared: &Shared) -> Response {
-    let Ok(Value::Array(hashes)) = serde_json::from_slice::<Value>(body) else {
-        return text(400, "expected a JSON array of hashes");
-    };
-    let sources: Vec<(&str, Arc<str>)> = {
-        let state = shared.lock();
-        hashes
-            .iter()
-            .filter_map(|h| {
-                let hex = h.as_str()?;
-                Some((hex, state.blobs.get(&parse_hash(hex)?)?.clone()))
-            })
-            .collect()
-    };
-    // Written by hand so megabytes of source are escaped once instead of copied into a `Value` first.
-    let mut out = String::from("{");
-    for (i, (hex, source)) in sources.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str(&Value::from(*hex).to_string());
-        out.push(':');
-        out.push_str(&serde_json::to_string(source.as_ref()).unwrap_or_default());
-    }
-    out.push('}');
-    Response {
-        status: 200,
-        kind: JSON,
-        body: out.into_bytes(),
-    }
-}
-
-/// `[{"kind": "MessageError", "realm": "server", "text": "..."}, ...]`, the plugin's batched LogService output.
-fn log(body: &[u8], shared: &Shared) -> Response {
-    let Ok(Value::Array(lines)) = serde_json::from_slice::<Value>(body) else {
-        return text(400, "expected a JSON array of log lines");
-    };
-    let Some(sink) = &shared.config.log else {
-        return text(200, "");
-    };
-    for line in &lines {
-        let kind = match line["kind"].as_str() {
-            Some("MessageInfo") => LogKind::Info,
-            Some("MessageWarning") => LogKind::Warning,
-            Some("MessageError") => LogKind::Error,
-            _ => LogKind::Output,
-        };
-        let realm = match line["realm"].as_str() {
-            Some("server") => Realm::Server,
-            Some("client") => Realm::Client,
-            _ => Realm::Edit,
-        };
-        let text = line["text"].as_str().unwrap_or_default().to_string();
-        let _ = sink.send(LogLine { kind, realm, text });
-    }
-    text(200, "")
-}
-
-fn parse_hash(hex: &str) -> Option<u128> {
-    if hex.len() != 32 {
-        return None;
-    }
-    u128::from_str_radix(hex, 16).ok()
-}
-
-fn json(value: Value) -> Response {
-    Response {
-        status: 200,
-        kind: JSON,
-        body: value.to_string().into_bytes(),
-    }
-}
-
-fn text(status: u16, body: &str) -> Response {
-    Response {
-        status,
-        kind: TEXT,
-        body: body.as_bytes().to_vec(),
-    }
-}
-
-/// DNS rebinding guard: a page on evil.com resolving to 127.0.0.1 still sends `Host: evil.com`, and a browser's
-/// cross-site request carries its `Origin`. Studio sends neither.
-fn local(req: &Request, port: u16) -> bool {
-    let host_ok = |host: &str| {
-        let (name, p) = host
-            .rsplit_once(':')
-            .map_or((host, None), |(n, p)| (n, Some(p)));
-        matches!(name, "127.0.0.1" | "localhost") && p.is_none_or(|p| p.parse() == Ok(port))
-    };
-    req.host.as_deref().is_some_and(host_ok)
-        && req
-            .origin
-            .as_deref()
-            .is_none_or(|o| o.strip_prefix("http://").is_some_and(host_ok))
-}
-
-fn read_request(stream: &mut TcpStream) -> Option<Request> {
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 8192];
-    let head_len = loop {
-        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-            break i;
-        }
-        if buf.len() > MAX_HEAD {
-            return None;
-        }
-        let n = stream.read(&mut chunk).ok()?;
-        if n == 0 {
-            return None;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-    };
-    let head = std::str::from_utf8(&buf[..head_len]).ok()?;
-    let mut lines = head.split("\r\n");
-    let mut first = lines.next()?.split(' ');
-    let method = first.next()?.to_string();
-    let target = first.next()?;
-    let (path, query) = target.split_once('?').unwrap_or((target, ""));
-
-    let (mut host, mut origin, mut length) = (None, None, 0usize);
-    for line in lines {
-        let Some((name, value)) = line.split_once(':') else {
+        if sub.sent.is_some() {
             continue;
-        };
-        let value = value.trim();
-        match name.trim().to_ascii_lowercase().as_str() {
-            "host" => host = Some(value.to_string()),
-            "origin" => origin = Some(value.to_string()),
-            "content-length" => length = value.parse().ok()?,
-            _ => {}
         }
-    }
-    if length > MAX_BODY {
-        return None;
-    }
-    let mut body = buf[head_len + 4..].to_vec();
-    if body.len() < length {
-        let start = body.len();
-        body.resize(length, 0);
-        stream.read_exact(&mut body[start..]).ok()?;
-    }
-    body.truncate(length);
-    Some(Request {
-        method,
-        path: path.to_string(),
-        query: query.to_string(),
-        host,
-        origin,
-        body,
-    })
-}
-
-/// Percent-decoding for query values (`HttpService:UrlEncode` output); `+` is a space.
-fn decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let hex = bytes
-            .get(i + 1..i + 3)
-            .and_then(|h| std::str::from_utf8(h).ok());
-        match (bytes[i], hex.and_then(|h| u8::from_str_radix(h, 16).ok())) {
-            (b'%', Some(b)) => {
-                out.push(b);
-                i += 3;
-            }
-            (b'+', _) => {
-                out.push(b' ');
-                i += 1;
-            }
-            (b, _) => {
-                out.push(b);
-                i += 1;
+        seen = generation;
+        let Some(parts) = sub.frame(&cx, generation.max(sub.base + 1)) else { continue };
+        for part in parts {
+            if ws::write(&mut out, ws::BINARY, &part).is_err() {
+                let _ = out.shutdown(Shutdown::Both);
+                return;
             }
         }
     }
-    String::from_utf8_lossy(&out).into_owned()
 }

@@ -19,6 +19,8 @@ pub struct Config {
     pub profiles: Vec<Profile>,
     /// `[place]`: service and instance properties.
     pub place_props: place::PlaceConfig,
+    /// `[dev] hotReload`: a running playtest's server swaps the modules an edit changed.
+    pub hot_reload: bool,
 }
 
 pub struct Profile {
@@ -68,6 +70,7 @@ fn parse(text: &str, root: PathBuf) -> Result<Config, String> {
         ts: Vec::new(),
         profiles: Vec::new(),
         place_props: Vec::new(),
+        hot_reload: false,
     };
     for (key, value) in &doc {
         match key.as_str() {
@@ -108,6 +111,16 @@ fn parse(text: &str, root: PathBuf) -> Result<Config, String> {
                 }
             }
             "place" => config.place_props = place::config_from_toml(table(value, key)?)?,
+            "dev" => {
+                for (k, v) in table(value, key)? {
+                    match k.as_str() {
+                        "hotReload" => {
+                            config.hot_reload = v.as_bool().ok_or("`dev.hotReload` must be true or false")?;
+                        }
+                        _ => return Err(unknown(&format!("dev.{k}"))),
+                    }
+                }
+            }
             _ => return Err(unknown(key)),
         }
     }
