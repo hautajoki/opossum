@@ -82,12 +82,13 @@ impl Fences {
     }
 }
 
-/// The playtest's DataModels connected now, and what they logged since the first of them connected while none was:
-/// counts of errors and warnings and the first error lines, mapped. `play` and `stop` wait on its condvar.
+/// How many of the playtest's DataModels are connected now (a test started by hand may have several clients), and
+/// what they logged since the first of them connected while none was: counts of errors and warnings and the first error
+/// lines, mapped. `play` and `stop` wait on its condvar.
 #[derive(Default)]
 struct Playtest {
-    server: bool,
-    client: bool,
+    server: usize,
+    client: usize,
     errors: usize,
     warnings: usize,
     first: Vec<Value>,
@@ -586,13 +587,13 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
         }
         let (lock, changed) = &*self.playtest;
         let left = limit.saturating_sub(start.elapsed());
-        let up = |p: &mut Playtest| !(p.server && (run || p.client));
+        let up = |p: &mut Playtest| !(p.server > 0 && (run || p.client > 0));
         let (playtest, waited) = changed
             .wait_timeout_while(lock.lock().unwrap_or_else(|e| e.into_inner()), left, up)
             .unwrap_or_else(|e| e.into_inner());
         let mut realms = Vec::new();
-        realms.extend(playtest.server.then_some("server"));
-        realms.extend(playtest.client.then_some("client"));
+        realms.extend((playtest.server > 0).then_some("server"));
+        realms.extend((playtest.client > 0).then_some("client"));
         drop(playtest);
         if waited.timed_out() {
             let error = format!("the playtest's DataModels did not all connect within {} s", limit.as_secs_f64());
@@ -644,7 +645,7 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
         }
         let (lock, changed) = &*self.playtest;
         let left = limit.saturating_sub(start.elapsed());
-        let running = |p: &mut Playtest| p.server || p.client;
+        let running = |p: &mut Playtest| p.server + p.client > 0;
         let (playtest, waited) = changed
             .wait_timeout_while(lock.lock().unwrap_or_else(|e| e.into_inner()), left, running)
             .unwrap_or_else(|e| e.into_inner());
@@ -969,7 +970,7 @@ fn log_entry(session: &Session, root: &Path, file: &Path) -> (String, Option<Arc
 }
 
 /// Shows what the sync server reports until it stops, Studio's output mapped to the files it came from, and keeps the
-/// playtest's tally. A socket reports its log lines before it disconnects, so a tally is whole once both are gone.
+/// playtest's tally. A socket reports its log lines before it disconnects, so a tally is whole once all are gone.
 fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, playtest: &Playtests, out: &Out, port: u16) {
     let (lock, changed) = &**playtest;
     let connect = |realm: Realm, connected: bool| {
@@ -977,14 +978,11 @@ fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, playtest: &P
             return;
         }
         let mut playtest = lock.lock().unwrap_or_else(|e| e.into_inner());
-        if connected && !playtest.server && !playtest.client {
+        if connected && playtest.server + playtest.client == 0 {
             *playtest = Playtest::default();
         }
-        if realm == Realm::Server {
-            playtest.server = connected;
-        } else {
-            playtest.client = connected;
-        }
+        let count = if realm == Realm::Server { &mut playtest.server } else { &mut playtest.client };
+        *count = if connected { *count + 1 } else { count.saturating_sub(1) };
         changed.notify_all();
     };
     for report in reports {

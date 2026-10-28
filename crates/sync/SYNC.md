@@ -380,10 +380,11 @@ be nil ("Argument 1 missing or nil", measured). dev then waits for the server's 
 and sends the play server an empty exec, whose answer says the build it holds; the playtest runs whatever that answers.
 Stop runs `StudioTestService:EndTest("opossum")` in the play server, which ends any Studio test, not only one a plugin
 started (measured: Play Solo, Run, and one the Studio MCP started), as a `now` exec (Exec), so a long exec or frame
-there never holds it up; its answer may be lost to the socket closing, and dev waits for both sockets to close. Their log lines all arrive before the close, so the tally dev keeps of the playtest's errors
-and warnings (from the first of its DataModels connecting while none was) is whole by then. StudioTestService's
-multiplayer test is not offered. Measured in the blank place (2026-10-29): play returns 1.9 s after the request (0.7 s
-for Run), stop 0.3–0.5 s.
+there never holds it up; its answer may be lost to the socket closing, and dev waits for every socket of the playtest to
+close (it counts them: a test started by hand may have several clients). Their log lines all arrive before the close, so
+the tally dev keeps of the playtest's errors and warnings (from the first of its DataModels connecting while none was)
+is whole by then. StudioTestService's multiplayer test is not offered. Measured in the blank place (2026-10-29): play
+returns 1.9 s after the request (0.7 s for Run), stop 0.3–0.5 s.
 
 **Hot reload** (`[dev] hotReload = true`). `require` caches per instance and a running Script ignores a new Source, so
 in the play server a changed script is swapped, never edited: the server sends `swap id` with the whole new instance
