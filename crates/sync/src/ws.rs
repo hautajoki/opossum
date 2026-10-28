@@ -7,7 +7,7 @@ use std::net::TcpStream;
 
 const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const MAX_HEAD: usize = 16 << 10;
-/// Upstream is acks and logs; anything bigger is not the plugin.
+/// Upstream is acks, logs and exec results (the plugin cuts those to a few MB); anything bigger is not the plugin.
 const MAX_MESSAGE: usize = 32 << 20;
 
 pub const TEXT: u8 = 1;

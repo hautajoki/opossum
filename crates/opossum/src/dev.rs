@@ -36,8 +36,8 @@ use crate::{editor, project_path};
 const QUIET: Duration = Duration::from_millis(30);
 /// How long a request waits for its fence: the watcher's latency plus the build of that burst.
 const FENCE_WAIT: Duration = Duration::from_secs(60);
-/// How much longer than its own time limit an exec waits for Studio to take it and answer.
-const EXEC_SLACK: Duration = Duration::from_secs(30);
+/// The longest time limit an exec may ask for, in seconds.
+const MAX_TIMEOUT: f64 = 86400.0;
 
 /// Instance full name (`ServerScriptService.server.app`) → its file relative to the root, and for a compiled
 /// module the map from output lines to TypeScript lines.
@@ -411,7 +411,8 @@ impl Execs {
             Some("edit") => Realm::Edit,
             Some("server") => Realm::Server,
             Some("client") => Realm::Client,
-            None if connected.contains(&Realm::Server) => Realm::Server,
+            // by default a DataModel that holds every build: the play server only when it takes frames
+            None if connected.contains(&Realm::Server) && self.server.hot_reload() => Realm::Server,
             None => Realm::Edit,
             Some(other) => return Err((400, format!("no realm {other}: edit, server or client"))),
         };
@@ -420,17 +421,17 @@ impl Execs {
             return Err((503, format!("no {} DataModel is connected to opossum dev on port {port}", realm.name())));
         }
         self.fence().map_err(|e| (503, e))?;
-        let timeout = request["timeout"].as_f64().filter(|t| *t > 0.0).unwrap_or(60.0);
+        let timeout =
+            request["timeout"].as_f64().filter(|t| t.is_finite() && *t > 0.0).map_or(60.0, |t| t.min(MAX_TIMEOUT));
         let name = request["name"].as_str().unwrap_or("exec");
         let message = json!({
             "t": "exec",
             "name": name,
             "source": request["source"],
             "modules": request["modules"],
-            "timeout": timeout,
         });
-        let wait = Duration::from_secs_f64(timeout) + EXEC_SLACK;
-        let ran = self.server.exec(realm, message, wait).map_err(|e| (503, e))?;
+        let fresh = request["fresh"].as_bool() == Some(true);
+        let ran = self.server.exec(realm, message, Duration::from_secs_f64(timeout), fresh).map_err(|e| (503, e))?;
         let index = self.index.lock().unwrap_or_else(|e| e.into_inner());
         let map = |v: &Value| v.as_str().map(|text| map_log(&sync::clean(text), &index).0);
         let result = &ran.result;
@@ -460,6 +461,7 @@ impl Execs {
             "values": values,
             "error": error,
             "trace": trace,
+            "lost": result["lost"] == true,
         }))
     }
 

@@ -125,18 +125,18 @@ listener answers one plain `POST /exec` per connection (Exec, below).
 {"t":"verify", "quiet":bool, "roots":{...}}   # Resync, an undo over a sync, a dropped or failed frame
 {"t":"log", "lines":[["output"|"warning"|"error","text"], ...]}
 {"t":"result", "id":N, "ok":bool, "output":[["output"|"warning","text"], ...], "values":[...], "error":"...",
- "trace":"...", "ms":M}           # an exec's answer
+ "trace":"...", "ms":M, "late":bool}   # an exec's answer
 ```
 
-The `hello` lists every instance carrying an `opossum` attribute that sits directly under a service or nested
-container, by `/`-joined path from the DataModel, with its stamp; a path that appears twice goes out as `""`, so its
-root is verified and the duplicate removed. `verify` carries the same `roots`. Each generation gets exactly one `ack` or one
-`verify`; an ack for another generation than the one in flight is reported and otherwise ignored. An ack's `ms` is the
-wall time (`os.clock`) from the generation's first part arriving, or from the worker finishing an exec it queued
-behind if that came later, to the ack: queueing behind other frames and every part's apply included, an exec's run
-not.
-The plugin `Close()`s every socket it drops. A verify is `quiet` when an undo or redo asked for it, or when the frame that failed or was
-dropped was itself quiet.
+The `hello` lists every instance carrying an `opossum` attribute that sits directly under a service or nested container,
+by `/`-joined path from the DataModel, with its stamp; a path that appears twice goes out as `""`, so its root is
+verified and the duplicate removed. A playtest DataModel that takes no frames lists them too: they are the stamps Play
+copied from edit, and tell the server which build it holds (Exec). `verify` carries the same `roots`. Each generation
+gets exactly one `ack` or one `verify`; an ack for another generation than the one in flight is reported and otherwise
+ignored. An ack's `ms` is the wall time (`os.clock`) from the generation's first part arriving, or from the worker
+finishing an exec it queued behind if that came later, to the ack: queueing behind other frames and every part's apply
+included, an exec's run not. The plugin `Close()`s every socket it drops. A verify is `quiet` when an undo or redo asked
+for it, or when the frame that failed or was dropped was itself quiet.
 
 The server reports to the dev session (`sync::Report`), in order per socket: a hello (connected, with its realm and
 place), the ack of the frame in flight (its failures one by one, then applied, with `ms` and the failure count), a
@@ -147,13 +147,13 @@ the frame's own number, which a repair takes past the last publish. A late ack r
 
 ### Down
 
-The first message is JSON text: `{"t":"hello","project","place","unpublished","session","hotReload"}`. The plugin
-closes the socket unless `place == game.PlaceId`, or `PlaceId == 0` and `unpublished`; otherwise it drops its id map
-and queue, waits for any apply in flight, and answers with its own `hello`. Every later server message is a binary
-**frame**, or an exec: four zero bytes (generation 0, which no frame has), then
-`{"t":"exec","id","name","source","modules","timeout"}`. The server sends no frame before its first publish, so a Studio that connects during the first build is
-never answered from an empty tree. A config change to `placeId`, `unpublished` or `hotReload` closes every socket, so
-each plugin checks the new hello; other changes keep them.
+The first message is JSON text: `{"t":"hello","project","place","unpublished","session","hotReload"}`. The plugin closes
+the socket unless `place == game.PlaceId`, or `PlaceId == 0` and `unpublished`; otherwise it drops its id map and queue,
+waits for any apply in flight, and answers with its own `hello`. Every later server message is a binary **frame**, or an
+exec: four zero bytes (generation 0, which no frame has), then
+`{"t":"exec","id","name","source","modules","timeout","start"}`. The server sends no frame before its first publish, so
+a Studio that connects during the first build is never answered from an empty tree. A config change to `placeId`,
+`unpublished` or `hotReload` closes every socket, so each plugin checks the new hello; other changes keep them.
 
 ## Frames
 
@@ -359,9 +359,9 @@ is server, which includes Run mode, and the rest is client). Ids are `u32`; `0xF
   persist after Stop.
 - **server** always connects, to forward the play server's output, including what it printed before the socket
   opened (`LogService:GetLogHistory()` plus a buffer of up to 1000 lines; the client does the same). Only with
-  `hotReload` does its `hello` list roots and does it receive frames. It hydrates from the stamps it inherited,
-  tolerantly: extra live children are runtime state, a node that does not pair is dropped from that subscriber's tree
-  and logged. It never verifies, never prunes, never watches, and receives only changes made after its hydrate. It
+  `hotReload` does it receive frames (without, its `hello`'s roots only say which build it holds, Exec). It hydrates
+  from the stamps it inherited, tolerantly: extra live children are runtime state, a node that does not pair is
+  dropped from that subscriber's tree and logged. It never verifies, never prunes, never watches, and receives only changes made after its hydrate. It
   keeps the stamps it applies in memory, never in the attribute, and lists them in its `hello` and `verify`, so a
   reconnect hydrates from where it is; a failure clears its remembered stamp. When it answers a frame that threw with
   `verify`, it first destroys that generation's inserts and detaches what moved into them, then is sent everything
@@ -391,9 +391,20 @@ which makes sure its build covers every file saved before the request (its fence
 **When.** The socket's writer sends the exec only once nothing is in flight and nothing is left to send: the DataModel
 has acked the newest published tree (edit, or the play server with hot reload), so it holds every build up to the
 request. A DataModel that takes no frames (the play server without hot reload, the client) gets it at once and runs
-the code it connected with; the answer says so (`fresh: false`) when a build was published since its hello. The
-plugin queues the exec behind the frames that arrived before it, and the frames after it wait for it: one worker, so
-no frame applies while the code runs. Its `result` goes back up the same socket.
+the code it started with. Which build that is comes from the stamps in its hello, which Play copied from edit: the
+newest of the last 16 builds whose every root it lists with that build's hash (a client, which sees only replicated
+roots, counts the roots it lists), or 0 for none. So a playtest started while edit was still applying a save holds the
+build before it, however late its plugin says hello. The answer is `fresh` when that is the newest build; an exec that
+asks for fresh code (`opossum test`) is refused instead of sent to a DataModel that is not. The plugin queues the exec
+behind the frames that arrived before it, and the frames after it wait for it: one worker, so no frame applies while
+the code runs. Its `result` goes back up the same socket.
+
+**Giving up.** An exec may wait 30 s to start, in the writer and then in the plugin's queue; `start` tells the plugin
+how many seconds of that are left when it is sent. Until the writer hands it over, a waiter that gives up takes it
+back, so it never runs. A plugin that gets to it after `start` ran out answers `late` without running it. Once it ran,
+the waiter gives the plugin its `timeout` and 5 s more past the start; when that runs out, or the socket closes, the
+answer is the server's own `{"ok": false, "lost": true}`: the code may have run, or still be running. An answer that
+it never ran is only ever given when it never will.
 
 **Running.** The chunk is a nil-parented ModuleScript named after the file, holding
 `return function(print, warn, ...) ` spliced in front of the source's first code, on that line (directives such as

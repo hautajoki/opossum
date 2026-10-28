@@ -20,7 +20,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use place::Tree;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 pub use frame::{BIND, CHILDREN, HYDRATE, MOVE, PROPS, REF, RELOAD, REMOVE, SOURCE, STAMP, SWAP};
 pub use install::{PLUGIN_SOURCE, install_plugin, plugin_rbxm};
@@ -30,6 +30,11 @@ pub use sub::hex;
 pub const DEFAULT_PORT: u16 = 34900;
 /// Ports tried from `Config::port` upward when it is taken.
 const PORT_TRIES: u16 = 16;
+/// How long an exec may wait to start: in the writer until its DataModel holds the newest tree, then in the plugin's
+/// queue behind earlier work. Past it, it never runs.
+const START: Duration = Duration::from_secs(30);
+/// How much longer than its start and time limit an exec's waiter gives the plugin to answer.
+const ANSWER: Duration = Duration::from_secs(5);
 
 pub struct Config {
     pub project: String,
@@ -55,18 +60,20 @@ pub struct Request {
 
 /// What a DataModel made of an exec.
 pub struct Ran {
-    /// The generation it held: the newest published for a DataModel that takes frames, else the one published when
-    /// it connected.
+    /// The build it held: the newest for a DataModel that takes frames, else the newest of the last 16 whose every
+    /// root it holds as stamped by edit before Play copied it (0 for none).
     pub generation: u32,
-    /// False when a build was published since a DataModel that takes no frames connected: it runs older code.
+    /// False when that is not the newest build: a DataModel that takes no frames runs older code.
     pub fresh: bool,
     /// The plugin's `result` message.
     pub result: Value,
 }
 
-/// How an exec's waiter hears from the socket: the writer sends it, then the reader brings the plugin's answer.
+/// How an exec's waiter hears from the socket: the writer hands it over (or finds its DataModel too old for it),
+/// then the reader brings the plugin's answer.
 pub(crate) enum Reply {
     Started { generation: u32, fresh: bool },
+    Stale { generation: u32, published: u32 },
     Done(Value),
 }
 
@@ -223,40 +230,86 @@ impl Server {
         realms
     }
 
-    /// Sends `message` (the plugin's `exec`, its `id` filled in here) to the newest connected DataModel of `realm` as
-    /// soon as that DataModel holds the newest published tree (SYNC.md, Exec), and waits up to `wait` for its result.
-    /// An error means it never ran or never answered: no such DataModel, it disconnected, or the wait ran out.
-    pub fn exec(&self, realm: Realm, mut message: Value, wait: Duration) -> Result<Ran, String> {
+    /// Whether the play server takes frames (`hotReload`), so it holds every build as edit does.
+    pub fn hot_reload(&self) -> bool {
+        self.shared.lock().info.hot_reload
+    }
+
+    /// Sends `message` (the plugin's `exec`, its `id`, `timeout` and `start` filled in here) to the newest connected
+    /// DataModel of `realm` as soon as that DataModel holds the newest published tree (SYNC.md, Exec), and waits for
+    /// its result. With `fresh`, a DataModel holding older code (one that takes no frames) refuses it instead.
+    ///
+    /// An error means it never ran and never will: no such DataModel, it holds older code than allowed, or it could
+    /// not start in time. When Studio had it but did not answer in time or disconnected, the result is the server's
+    /// own, `{"ok": false, "lost": true, "error"}`: it may have run, or still be running.
+    pub fn exec(&self, realm: Realm, mut message: Value, timeout: Duration, fresh: bool) -> Result<Ran, String> {
         let (tx, rx) = mpsc::channel();
+        let start_by = Instant::now() + START;
+        let name = realm.name();
         let id = {
             let mut state = self.shared.lock();
             let conn = state.inboxes.iter().filter(|(_, i)| i.realm == Some(realm) && !i.closed).map(|(&c, _)| c).max();
-            let Some(conn) = conn else { return Err(format!("no {} DataModel is connected", realm.name())) };
+            let Some(conn) = conn else { return Err(format!("no {name} DataModel is connected")) };
             state.next += 1;
             let id = state.next;
             message["id"] = id.into();
-            state.execs.insert(id, (conn, tx));
-            state.push(conn, server::Event::Exec(id, message.to_string()));
+            message["timeout"] = timeout.as_secs_f64().into();
+            state.execs.insert(id, server::Waiter { conn, tx, fresh, start_by, sent: false });
+            state.push(conn, server::Event::Exec(id, message));
             id
         };
         self.shared.wake.notify_all();
-        let deadline = Instant::now() + wait;
-        let mut started = None;
-        loop {
-            match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-                Ok(Reply::Started { generation, fresh }) => started = Some((generation, fresh)),
-                Ok(Reply::Done(result)) => {
-                    let (generation, fresh) = started.unwrap_or((0, false));
-                    return Ok(Ran { generation, fresh, result });
+        let first = match rx.recv_timeout(START) {
+            Ok(reply) => reply,
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(format!("the {name} DataModel disconnected"));
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                // the writer hands an exec over under this lock: it did already, or it never will
+                let mut state = self.shared.lock();
+                match rx.try_recv() {
+                    Ok(reply) => reply,
+                    Err(_) => {
+                        state.execs.remove(&id);
+                        let wait = START.as_secs();
+                        return Err(format!("the {name} DataModel did not take it within {wait} s"));
+                    }
                 }
-                Err(RecvTimeoutError::Timeout) => {
-                    self.shared.lock().execs.remove(&id);
-                    let what = if started.is_some() { "answer" } else { "take it" };
-                    return Err(format!("the {} DataModel did not {what} within {} s", realm.name(), wait.as_secs()));
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Err(format!("the {} DataModel disconnected", realm.name()));
-                }
+            }
+        };
+        let (generation, fresh) = match first {
+            Reply::Started { generation, fresh } => (generation, fresh),
+            Reply::Stale { generation, published } => {
+                return Err(format!(
+                    "the {name} DataModel takes no frames and runs older code than the files (build {generation}, \
+                     newest {published}): restart the playtest, or turn on hotReload for the server"
+                ));
+            }
+            Reply::Done(_) => unreachable!("the reader answers only an exec the writer sent"),
+        };
+        let wait = start_by.saturating_duration_since(Instant::now()) + timeout + ANSWER;
+        match rx.recv_timeout(wait) {
+            // the plugin got to it only after its start ran out
+            Ok(Reply::Done(result)) if result["late"] == true => {
+                let error = result["error"].as_str().unwrap_or("it started too late");
+                Err(format!("in the {name} DataModel, {error}"))
+            }
+            Ok(Reply::Done(result)) => Ok(Ran { generation, fresh, result }),
+            Ok(_) => unreachable!("an exec is handed over once"),
+            Err(e) => {
+                self.shared.lock().execs.remove(&id);
+                let error = match e {
+                    RecvTimeoutError::Timeout => {
+                        format!(
+                            "the {name} DataModel did not answer within {} s; it may still be running",
+                            wait.as_secs()
+                        )
+                    }
+                    RecvTimeoutError::Disconnected => {
+                        format!("the {name} DataModel disconnected; the code may have run")
+                    }
+                };
+                Ok(Ran { generation, fresh, result: json!({"t": "result", "ok": false, "lost": true, "error": error}) })
             }
         }
     }

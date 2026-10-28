@@ -1,6 +1,7 @@
 //! One socket end to end, with tungstenite as the plugin: the handshake, the hello exchange, an adopting verify, an
 //! edit, a repair after a failed ack, a late ack after a verify, an exec held back until the frame in flight is
-//! acked, an orphan a verify lists, and a reconfigure, with what the server reports to the dev session along the way.
+//! acked, a play server's exec by the build its stamps hold, an orphan a verify lists, and a reconfigure, with what
+//! the server reports to the dev session along the way.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -224,7 +225,8 @@ fn socket_session() {
     );
     assert_eq!(verify.blob, ["Folder"]);
     let stamp = &verify.ops[2].1;
-    assert_eq!(stamp[1], Field::S(sync::hex(cur.get(shared).unwrap().hash)));
+    let first = sync::hex(cur.get(shared).unwrap().hash);
+    assert_eq!(stamp[1], Field::S(first.clone()));
     send(&mut socket, serde_json::json!({"t": "ack", "gen": verify.generation, "failed": [], "ms": 1.5}));
     assert_eq!(report(&reports), Report::Connected { realm: Realm::Edit, place: 0 });
     let applied = Report::Applied { realm: Realm::Edit, generation: verify.generation, ms: 1.5, failed: 0 };
@@ -283,7 +285,7 @@ fn socket_session() {
     // an exec asked while that frame is in flight runs only once Studio holds it: nothing comes before the ack
     let execs = server.clone();
     let message = serde_json::json!({"t": "exec", "name": "x", "source": "return 1"});
-    let exec = std::thread::spawn(move || execs.exec(Realm::Edit, message, Duration::from_secs(5)));
+    let exec = std::thread::spawn(move || execs.exec(Realm::Edit, message, Duration::from_secs(5), true));
     socket.get_mut().set_read_timeout(Some(Duration::from_millis(100))).unwrap();
     assert!(socket.read().is_err(), "the exec went out before the ack");
     socket.get_mut().set_read_timeout(None).unwrap();
@@ -294,12 +296,41 @@ fn socket_session() {
         other => panic!("expected the exec, got {other:?}"),
     };
     assert_eq!(request["source"], "return 1");
+    // how long it may still wait in the plugin's queue before it starts
+    assert!(request["start"].as_f64().is_some_and(|s| s > 25.0 && s <= 30.0));
     send(&mut socket, serde_json::json!({"t": "result", "id": request["id"], "ok": true, "values": [1]}));
     let ran = exec.join().unwrap().unwrap();
     assert_eq!(
         (ran.generation, ran.fresh, &ran.result["values"]),
         (server.generation(), true, &serde_json::json!([1]))
     );
+
+    // a play server without hot reload holds what Play copied from edit: its stamps say which build that was, however
+    // late it says hello
+    assert!(matches!(report(&reports), Report::Applied { generation, .. } if generation == server.generation()));
+    let mut play = connect(port, None).unwrap();
+    play.read().unwrap();
+    send(
+        &mut play,
+        serde_json::json!({"t": "hello", "role": "server", "place": 0, "roots": {"ReplicatedStorage/shared": first}}),
+    );
+    assert_eq!(report(&reports), Report::Connected { realm: Realm::Server, place: 0 });
+    let execs = server.clone();
+    let message = serde_json::json!({"t": "exec", "name": "x", "source": "return 1"});
+    let exec = std::thread::spawn(move || execs.exec(Realm::Server, message, Duration::from_secs(5), false));
+    let request: serde_json::Value = match play.read().unwrap() {
+        Message::Binary(bytes) => serde_json::from_slice(&bytes[4..]).unwrap(),
+        other => panic!("expected the exec, got {other:?}"),
+    };
+    send(&mut play, serde_json::json!({"t": "result", "id": request["id"], "ok": true, "values": []}));
+    let ran = exec.join().unwrap().unwrap();
+    assert_eq!((ran.generation, ran.fresh), (verify.generation, false));
+    // a test asks for the files' code, which that DataModel does not run: it never gets it
+    let message = serde_json::json!({"t": "exec", "name": "x", "source": "return 1"});
+    let refused = server.exec(Realm::Server, message, Duration::from_secs(5), true);
+    assert!(refused.is_err());
+    drop(play);
+    assert_eq!(report(&reports), Report::Disconnected { realm: Realm::Server, place: 0 });
 
     // a verify lists the stamped roots: one that is no longer a root is bound by its stamp alone and removed
     let roots = serde_json::json!({"ReplicatedStorage/shared": "", "ReplicatedStorage/old": "00"});
@@ -314,6 +345,6 @@ fn socket_session() {
     server.configure("test".into(), 42, false, false);
     assert!(matches!(socket.read(), Err(_) | Ok(Message::Close(_))));
     let last = std::iter::from_fn(|| reports.recv_timeout(Duration::from_secs(5)).ok())
-        .find(|r| matches!(r, Report::Disconnected { .. }));
+        .find(|r| matches!(r, Report::Disconnected { realm: Realm::Edit, .. }));
     assert_eq!(last, Some(Report::Disconnected { realm: Realm::Edit, place: 0 }));
 }

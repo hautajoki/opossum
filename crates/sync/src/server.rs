@@ -9,12 +9,13 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
+use std::time::Instant;
 
 use place::{Id, Tree};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::{Value, json};
 
-use crate::sub::{Context, Role, Sub};
+use crate::sub::{Context, Role, Sub, hex};
 use crate::{LogKind, LogLine, Realm, Reply, Report, Request, ws};
 
 /// Generations kept for hydrating a reconnect whose stamps are a little behind.
@@ -36,7 +37,20 @@ pub enum Event {
     Verify(Vec<(String, String)>, bool),
     Pong(Vec<u8>),
     /// An exec's id and its message, sent once the DataModel holds the newest tree.
-    Exec(u64, String),
+    Exec(u64, Value),
+}
+
+/// An exec waiting for its result.
+pub struct Waiter {
+    /// The connection it goes to.
+    pub conn: u64,
+    pub tx: Sender<Reply>,
+    /// Refused by a DataModel holding older code.
+    pub fresh: bool,
+    /// Past this it may no longer start: the plugin drops it instead.
+    pub start_by: Instant,
+    /// The writer handed it over, so a result for it can come.
+    pub sent: bool,
 }
 
 #[derive(Default)]
@@ -57,8 +71,8 @@ pub struct State {
     pub inboxes: FxHashMap<u64, Inbox>,
     /// The last connection or exec id given out.
     pub next: u64,
-    /// Execs waiting for their result, with the connection they went to.
-    pub execs: FxHashMap<u64, (u64, Sender<Reply>)>,
+    /// Execs waiting for their result, by id.
+    pub execs: FxHashMap<u64, Waiter>,
 }
 
 pub struct Shared {
@@ -124,13 +138,6 @@ impl Shared {
     fn push(&self, conn: u64, event: Event) {
         self.lock().push(conn, event);
         self.wake.notify_all();
-    }
-
-    /// Tells an exec's waiter, if it still waits.
-    fn reply(&self, id: u64, reply: Reply) {
-        if let Some((_, tx)) = self.lock().execs.get(&id) {
-            let _ = tx.send(reply);
-        }
     }
 }
 
@@ -201,7 +208,7 @@ fn socket(mut stream: TcpStream, shared: &Arc<Shared>) {
         let mut state = shared.lock();
         state.inboxes.remove(&conn);
         // their waiters hear the disconnect
-        state.execs.retain(|_, (c, _)| *c != conn);
+        state.execs.retain(|_, waiter| waiter.conn != conn);
     }
     if let Some((realm, place)) = hello {
         shared.report(Report::Disconnected { realm, place });
@@ -274,8 +281,11 @@ fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) -> Op
                     }
                     Some("result") => {
                         let id = message["id"].as_u64().unwrap_or(0);
-                        if let Some((_, tx)) = shared.lock().execs.remove(&id) {
-                            let _ = tx.send(Reply::Done(message));
+                        let mut state = shared.lock();
+                        if state.execs.get(&id).is_some_and(|w| w.sent && w.conn == conn)
+                            && let Some(waiter) = state.execs.remove(&id)
+                        {
+                            let _ = waiter.tx.send(Reply::Done(message));
                         }
                     }
                     Some("verify") => {
@@ -318,9 +328,9 @@ pub fn clean(text: &str) -> String {
 fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
     let mut sub = Sub::new();
     let mut seen = 0;
-    // execs waiting until the subscriber holds the newest tree, and the generation published at its hello
-    let mut execs: Vec<(u64, String)> = Vec::new();
-    let mut hello = 0;
+    // execs waiting until the subscriber holds the newest tree, and the build a subscriber that takes no frames holds
+    let mut execs: Vec<(u64, Value)> = Vec::new();
+    let mut held = 0;
     loop {
         let (events, tree, ring, generation, hot_reload) = {
             let mut state = shared.lock();
@@ -347,10 +357,10 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
         for event in events {
             match event {
                 Event::Hello(role, roots) => {
+                    held = holds(&ring, generation, &roots, role == Role::Server);
                     sub.hello(role, roots, hot_reload);
-                    hello = generation;
                 }
-                Event::Exec(id, text) => execs.push((id, text)),
+                Event::Exec(id, message) => execs.push((id, message)),
                 Event::Ack(number, failed, ms) => {
                     // an ack the plugin sent after asking for a verify is covered by that verify's frame
                     if let Some(generation) = sub.ack(&cx, number, &failed) {
@@ -384,15 +394,49 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
             continue;
         }
         let takes = sub.role == Role::Edit || (sub.role == Role::Server && hot_reload);
-        for (id, text) in execs.drain(..) {
-            let started = if takes { (generation, true) } else { (hello, hello == generation) };
-            shared.reply(id, Reply::Started { generation: started.0, fresh: started.1 });
+        let (has, fresh) = if takes { (generation, true) } else { (held, held == generation) };
+        for (id, mut message) in execs.drain(..) {
+            let start_by = {
+                let mut state = shared.lock();
+                // its waiter gave up: it never runs
+                let Some(waiter) = state.execs.get_mut(&id) else { continue };
+                if waiter.fresh && !fresh {
+                    let _ = waiter.tx.send(Reply::Stale { generation: has, published: generation });
+                    state.execs.remove(&id);
+                    continue;
+                }
+                waiter.sent = true;
+                let _ = waiter.tx.send(Reply::Started { generation: has, fresh });
+                waiter.start_by
+            };
+            message["start"] = start_by.saturating_duration_since(Instant::now()).as_secs_f64().into();
             // generation 0, which no frame has, marks a JSON message
-            let mut message = vec![0; 4];
-            message.extend_from_slice(text.as_bytes());
-            if ws::write(out, ws::BINARY, &message).is_err() {
+            let mut bytes = vec![0; 4];
+            bytes.extend_from_slice(message.to_string().as_bytes());
+            if ws::write(out, ws::BINARY, &bytes).is_err() {
                 return;
             }
         }
     }
+}
+
+/// The build a playtest DataModel that takes no frames holds, by the stamps in its hello (edit's, as Play copied
+/// them): the newest kept tree whose every root it lists with that tree's hash, or 0. A client sees only replicated
+/// roots, so for it only the roots it lists count, and it must list one.
+fn holds(ring: &[Tree], generation: u32, roots: &[(String, String)], all: bool) -> u32 {
+    let stamps: FxHashMap<&str, &str> = roots.iter().map(|(path, stamp)| (path.as_str(), stamp.as_str())).collect();
+    for (age, tree) in ring.iter().rev().enumerate() {
+        let mut listed = false;
+        let held = tree.roots().into_iter().all(|root| match stamps.get(tree.path_of(root).as_str()) {
+            Some(stamp) => {
+                listed = true;
+                *stamp == hex(tree.get(root).expect("a root").hash)
+            }
+            None => !all,
+        });
+        if held && listed {
+            return generation - age as u32;
+        }
+    }
+    0
 }

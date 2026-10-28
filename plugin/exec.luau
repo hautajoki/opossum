@@ -30,6 +30,8 @@ export type Request = {
 	source: string,
 	modules: { [string]: string }?,
 	timeout: number?,
+	-- seconds it may wait in the plugin's queue before it starts; past that dev no longer waits, so it never runs
+	start: number?,
 }
 
 -- The copy loading now, by token: the original it stands for and the require it gets. Read by the copy's first line.
@@ -239,15 +241,18 @@ local function trim(trace: string): string
 	return table.concat(lines, "\n")
 end
 
--- The `result` message for an exec that did not run to an answer.
-local function failed(request: Request, problem: unknown): string
+-- The `result` message for an exec that did not run to an answer: `late` when it never started.
+local function failed(request: Request, problem: unknown, late: boolean?): string
 	local text = cut(describe(problem), ANSWER_LIMIT)
-	return HttpService:JSONEncode { t = "result", id = request.id, ok = false, error = text, values = {} }
+	return HttpService:JSONEncode { t = "result", id = request.id, ok = false, late = late == true, error = text, values = {} }
 end
 
--- Runs one exec and returns the upstream `result` message. Never throws.
-local function run(request: Request): string
+-- Runs one exec that arrived at os.clock() `at` and returns the upstream `result` message. Never throws.
+local function run(request: Request, at: number): string
 	local started = os.clock()
+	if request.start and started - at > request.start then
+		return failed(request, `waited {math.floor(started - at)} s behind earlier work in Studio and was not run`, true)
+	end
 	local output: { { string } } = {}
 	local room, dropped = ANSWER_LIMIT, 0
 	local function capture(kind: string): (...any) -> ()

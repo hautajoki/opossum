@@ -1,6 +1,7 @@
 //! `opossum exec`, `test` and `bench`: Luau run in a Studio DataModel through the running `opossum dev`, one
 //! `POST /exec` on the port it wrote to `.opossum/port` (DESIGN.md, Exec). The exit status is 0 when it ran clean, 1
-//! for a script error or a failed test, 2 when dev or the DataModel cannot be reached.
+//! for a script error, a failed test or an answer that never came, 2 when it never ran (dev or the DataModel cannot be
+//! reached, or holds older code than a test allows).
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -82,8 +83,9 @@ pub fn test(cfg: &Config, options: &Options, mode: &str, filter: Option<&str>) -
         "local HttpService = game:GetService(\"HttpService\")
 return HttpService:JSONDecode(require(script.cloud_runner).run({{ mode = \"{mode}\", filter = {filter} }}))"
     );
-    let mut answer =
-        post(cfg, options, json!({ "name": "hexagon", "source": source, "modules": modules, "map": true }))?;
+    // specs must never pass against older code than the files: a playtest DataModel holding it refuses
+    let body = json!({ "name": "hexagon", "source": source, "modules": modules, "map": true, "fresh": true });
+    let mut answer = post(cfg, options, body)?;
     let report = Some(answer["values"][0].clone()).filter(Value::is_object);
     if options.json {
         if let Some(object) = answer.as_object_mut() {
@@ -149,8 +151,10 @@ fn print_output(answer: &Value) {
     }
     if answer["fresh"] == Value::Bool(false) {
         let realm = answer["realm"].as_str().unwrap_or("?");
+        let generation = &answer["gen"];
         eprintln!(
-            "opossum: the {realm} DataModel runs the code it connected with; later builds are not in it (hotReload)"
+            "opossum: the {realm} DataModel takes no frames and runs build {generation}, older than the files (restart \
+             the playtest, or turn on hotReload for the server)"
         );
     }
 }

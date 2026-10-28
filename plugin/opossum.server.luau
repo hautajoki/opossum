@@ -52,7 +52,7 @@ local function drain(mine: number)
 		local item = table.remove(queue, 1) :: Item
 		local request = item.exec
 		if request then
-			local ok, result = pcall(exec.run, request)
+			local ok, result = pcall(exec.run, request, item.at)
 			freed = os.clock()
 			if epoch == mine then send(if ok then result else exec.failed(request, result)) end
 			continue
@@ -90,11 +90,11 @@ local function work()
 	if not ok then warn(`opossum: the worker stopped: {problem}`) end
 end
 
-local function hello(server: Hello): string
+local function hello(): string
 	local found = apply.roots()
 	watch.scan(found)
-	local roots = if ROLE == "edit" or (ROLE == "server" and server.hotReload) then apply.listing(found) else "{}"
-	return `\{"t":"hello","role":"{ROLE}","place":{game.PlaceId},"roots":{roots}}`
+	-- a playtest DataModel that takes no frames lists the stamps Play copied from edit: they tell dev which build it holds
+	return `\{"t":"hello","role":"{ROLE}","place":{game.PlaceId},"roots":{apply.listing(found)}}`
 end
 
 local lines: { { string } } = {}
@@ -199,7 +199,7 @@ local function connect(port: number): "live" | "next" | "busy"
 	links = connections
 	project = server.project
 	state = "live"
-	send(hello(server))
+	send(hello())
 	show()
 	print(`opossum: syncing {project} ({ROLE}) from port {port}`)
 	flush()
