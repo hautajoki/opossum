@@ -132,7 +132,9 @@ The `hello` lists every instance carrying an `opossum` attribute that sits direc
 container, by `/`-joined path from the DataModel, with its stamp; a path that appears twice goes out as `""`, so its
 root is verified and the duplicate removed. `verify` carries the same `roots`. Each generation gets exactly one `ack` or one
 `verify`; an ack for another generation than the one in flight is reported and otherwise ignored. An ack's `ms` is the
-wall time (`os.clock`) from the generation's first part arriving to the ack, queueing and every part's apply included.
+wall time (`os.clock`) from the generation's first part arriving, or from the worker finishing an exec it queued
+behind if that came later, to the ack: queueing behind other frames and every part's apply included, an exec's run
+not.
 The plugin `Close()`s every socket it drops. A verify is `quiet` when an undo or redo asked for it, or when the frame that failed or was
 dropped was itself quiet.
 
@@ -393,14 +395,20 @@ the code it connected with; the answer says so (`fresh: false`) when a build was
 plugin queues the exec behind the frames that arrived before it, and the frames after it wait for it: one worker, so
 no frame applies while the code runs. Its `result` goes back up the same socket.
 
-**Running.** The chunk is a nil-parented ModuleScript named after the file, holding `return function(print, warn) `
-in front of the source on its first line (line numbers stay the user's) and `\nend` after it; `modules` become its
-children (`@self/<name>`). Its print and warn record into the answer's `output`, so only its own output is captured;
-what the modules it requires print goes to Output and the dev terminal as usual. It runs in a thread under `xpcall`:
-an error answers with its message and `debug.traceback` less the plugin's own frames; returned values are JSON when
-`JSONEncode` takes them (nil as null), `tostring` otherwise (Instances, Vector3, inf, nan). After `timeout` seconds
-(default 60) the thread is cancelled; a loop that never yields holds the plugin until Studio's script timeout stops
-it. The chunk and everything below are destroyed after, so nothing is left in the DataModel. In edit the run is one
+**Running.** The chunk is a nil-parented ModuleScript named after the file, holding
+`return function(print, warn, ...) ` spliced in front of the source's first code, on that line (directives such as
+`--!native` stay first, line numbers stay the user's, a top-level `...` is legal as in any script), and `\nend` after
+it; `modules` become its children (`@self/<name>`). A source of 200,000 characters or more is set with
+`UpdateSourceAsync`, which `Source` refuses. Its print and warn record into the answer's `output`, so only its own
+output is captured; what the modules it requires print goes to Output and the dev terminal as usual. It runs in a
+thread under `xpcall`: an error answers with its message and `debug.traceback` less the plugin's own frames; returned
+values are JSON, every leaf JSON has no word for (an Instance, a Vector3, a function, inf, nan) as its `tostring`,
+nested ones included, and a value with a cycle or keys JSON cannot hold as its `tostring` whole. A `tostring` that
+throws shows the value's type. Output, returned values, and the error and its trace are each cut at 1 MB, saying how
+much was cut, so a result stays far below what one message may carry. After `timeout` seconds (default 60) the
+thread is cancelled; a loop that never yields holds the plugin until Studio's script timeout stops it. Nothing the
+code does can stop the worker: whatever escapes the run is answered as the exec's error, and the worker carries on.
+The chunk and everything below are destroyed after, so nothing is left in the DataModel. In edit the run is one
 "opossum: exec" ChangeHistory recording: what the script writes is a waypoint of its own that Ctrl+Z takes back (and
 the stamps watch.luau keeps catch any synced instance it touched).
 

@@ -17,11 +17,20 @@ local apply = require("./apply")
 
 -- `.Source` refuses sources this long; UpdateSourceAsync takes them.
 local SOURCE_LIMIT = 200000
+-- Bytes of output, of returned values, and of an error and its trace an answer carries, each: the rest is cut, so a
+-- result stays far below what the socket takes in one message.
+local ANSWER_LIMIT = 1000000
 -- Traceback lines from the plugin itself, below the exec's own frames.
 local OWN = script.Parent and script.Parent:GetFullName() or "opossum"
 local LOADING = table.freeze {}
 
-export type Request = { id: number, name: string, source: string, modules: { [string]: string }?, timeout: number? }
+export type Request = {
+	id: number,
+	name: string,
+	source: string,
+	modules: { [string]: string }?,
+	timeout: number?,
+}
 
 -- The copy loading now, by token: the original it stands for and the require it gets. Read by the copy's first line.
 local pending: { [number]: { any } } = {}
@@ -80,6 +89,28 @@ end
 
 type Session = { cache: { [Instance]: any }, folders: { [string]: Instance }, tops: { Instance } }
 
+local function set_source(module: ModuleScript, source: string)
+	if #source < SOURCE_LIMIT then
+		module.Source = source
+	else
+		ScriptEditorService:UpdateSourceAsync(module, function()
+			return source
+		end)
+	end
+end
+
+-- tostring that cannot throw: a value whose __tostring errors is shown by its type.
+local function describe(value: unknown): string
+	local ok, text = pcall(tostring :: (any) -> string, value)
+	return apply.clean(if ok and type(text) == "string" then text else typeof(value))
+end
+
+-- At most `room` bytes of `text`, saying how much was cut.
+local function cut(text: string, room: number): string
+	if #text <= room then return text end
+	return `{apply.clean(string.sub(text, 1, math.max(room, 0)))}... ({#text - math.max(room, 0)} more bytes cut)`
+end
+
 local load: (session: Session, original: ModuleScript) -> any
 
 local function bound(session: Session, from: Instance): (any) -> any
@@ -129,13 +160,7 @@ load = function(session: Session, original: ModuleScript): any
 	source = if at then string.sub(source, 1, at - 1) .. line .. string.sub(source, at) else source .. "\n" .. line
 	local copy = Instance.new("ModuleScript")
 	copy.Name = original.Name
-	if #source < SOURCE_LIMIT then
-		copy.Source = source
-	else
-		ScriptEditorService:UpdateSourceAsync(copy, function()
-			return source
-		end)
-	end
+	set_source(copy, source)
 	local parent = folder_for(session, original)
 	if parent then
 		copy.Parent = parent
@@ -163,15 +188,46 @@ load = function(session: Session, original: ModuleScript): any
 	return result
 end
 
-local function encode(value: unknown): string
+-- A copy of `value` JSONEncode keeps whole: every leaf JSON has no word for (an Instance, a Vector3, a function, nan)
+-- as its tostring, where JSONEncode would make it null. False for a table with a cycle, or with keys that are neither
+-- all strings nor all array indices.
+local function plain(value: unknown, seen: { [any]: true }): (boolean, unknown)
 	local kind = type(value)
-	if value == nil then return "null" end
-	local plain = kind == "boolean" or kind == "table" or (kind == "number" and value == value and math.abs(value :: number) ~= math.huge)
-	if kind == "string" or plain then
-		local ok, text = pcall(HttpService.JSONEncode, HttpService, if kind == "string" then apply.clean(value :: string) else value)
-		if ok then return text end
+	if kind == "string" then return true, apply.clean(value :: string) end
+	if kind == "boolean" then return true, value end
+	if kind == "number" and value == value and math.abs(value :: number) ~= math.huge then return true, value end
+	if kind ~= "table" then return true, describe(value) end
+	local t = value :: { [any]: any }
+	if seen[t] then return false, nil end
+	seen[t] = true
+	local n, strings, numbers = #t, false, false
+	local copy: { [any]: any } = {}
+	for k, v in next, t do
+		if type(k) == "string" then
+			strings = true
+		elseif type(k) == "number" and k >= 1 and k <= n and k % 1 == 0 then
+			numbers = true
+		else
+			return false, nil
+		end
+		local ok, inner = plain(v, seen)
+		if not ok or (strings and numbers) then return false, nil end
+		copy[if type(k) == "string" then apply.clean(k) else k] = inner
 	end
-	return HttpService:JSONEncode(apply.clean(tostring(value)))
+	seen[t] = nil
+	return true, copy
+end
+
+-- One returned value as JSON, at most `room` bytes of it (a value cut short becomes a string).
+local function encode(value: unknown, room: number): string
+	if value == nil then return "null" end
+	local ok, copy = plain(value, {})
+	local encoded, text = false, ""
+	if ok then
+		encoded, text = pcall(HttpService.JSONEncode, HttpService, copy)
+	end
+	if not encoded then return HttpService:JSONEncode(cut(describe(value), room)) end
+	return if #text <= room then text else HttpService:JSONEncode(cut(text, room))
 end
 
 -- `trace` without the plugin's own frames.
@@ -183,38 +239,60 @@ local function trim(trace: string): string
 	return table.concat(lines, "\n")
 end
 
--- Runs one exec and returns the upstream `result` message.
+-- The `result` message for an exec that did not run to an answer.
+local function failed(request: Request, problem: unknown): string
+	local text = cut(describe(problem), ANSWER_LIMIT)
+	return HttpService:JSONEncode { t = "result", id = request.id, ok = false, error = text, values = {} }
+end
+
+-- Runs one exec and returns the upstream `result` message. Never throws.
 local function run(request: Request): string
 	local started = os.clock()
 	local output: { { string } } = {}
+	local room, dropped = ANSWER_LIMIT, 0
 	local function capture(kind: string): (...any) -> ()
 		return function(...)
+			if room <= 0 then
+				dropped += 1
+				return
+			end
 			local parts = table.pack(...)
 			for i = 1, parts.n do
 				parts[i] = tostring(parts[i])
 			end
-			table.insert(output, { kind, apply.clean(table.concat(parts :: { any }, " ", 1, parts.n)) })
+			local text = cut(apply.clean(table.concat(parts :: { any }, " ", 1, parts.n)), room)
+			room -= #text
+			table.insert(output, { kind, text })
 		end
 	end
-	local chunk = Instance.new("ModuleScript")
-	chunk.Name = request.name
-	-- one line in front, so the user's lines keep their numbers; print and warn are this exec's own
-	chunk.Source = `return function(print, warn) {request.source}\nend`
-	for name, source in request.modules or {} do
-		local module = Instance.new("ModuleScript")
-		module.Name = name
-		module.Source = source
-		module.Parent = chunk
-	end
+	local chunk: ModuleScript? = nil
 	local session: Session = { cache = {}, folders = {}, tops = {} }
 	-- in edit, what the script writes is one waypoint of its own, so Ctrl+Z takes it back
 	local recording = if apply.role == "edit" then ChangeHistoryService:TryBeginRecording("opossum: exec") else nil
 	local result: { n: number, [number]: any }? = nil
 	local thread = task.spawn(function()
 		result = table.pack(xpcall(function()
-			return load(session, chunk)(capture("output"), capture("warning"))
+			local made = Instance.new("ModuleScript")
+			chunk = made
+			made.Name = request.name
+			-- spliced in front of the first code, on its line, so directives stay first and lines keep their numbers;
+			-- print and warn are this exec's own
+			local source = request.source
+			local code = first_code(source)
+			local open = "return function(print, warn, ...) "
+			set_source(
+				made,
+				if code then `{string.sub(source, 1, code - 1)}{open}{string.sub(source, code)}\nend` else `{source}\n{open}\nend`
+			)
+			for name, text in request.modules or {} do
+				local module = Instance.new("ModuleScript")
+				module.Name = name
+				set_source(module, text)
+				module.Parent = made
+			end
+			return load(session, made)(capture("output"), capture("warning"))
 		end, function(e: unknown)
-			return { message = if type(e) == "string" then e else tostring(e), trace = trim(debug.traceback(nil, 2)) }
+			return { message = if type(e) == "string" then e else describe(e), trace = trim(debug.traceback(nil, 2)) }
 		end))
 	end)
 	local deadline = started + (request.timeout or 60)
@@ -223,27 +301,36 @@ local function run(request: Request): string
 	end
 	if not result then pcall(task.cancel, thread) end
 	if recording then ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit) end
-	chunk:Destroy()
+	if chunk then chunk:Destroy() end
 	for _, top in session.tops do
 		top:Destroy()
 	end
+	if dropped > 0 then table.insert(output, { "warning", `... {dropped} more lines cut` }) end
 	local message = { t = "result", id = request.id, ok = false, output = output, ms = (os.clock() - started) * 1000 } :: { [string]: any }
 	local values: { string } = {}
 	if not result then
 		message.error = `timed out after {request.timeout or 60} s`
 	elseif result[1] then
 		message.ok = true
+		room = ANSWER_LIMIT
 		for i = 2, result.n do
-			values[i - 1] = encode(result[i])
+			local text = encode(result[i], room)
+			room -= #text
+			values[i - 1] = text
 		end
 	else
-		local failure = result[2] :: { message: string, trace: string }
-		message.error = apply.clean(failure.message)
-		message.trace = apply.clean(failure.trace)
+		-- a handler that threw anyway leaves a string ("error in error handling")
+		local failure = result[2]
+		local text, trace = describe(failure), ""
+		if type(failure) == "table" then
+			text, trace = failure.message, failure.trace
+		end
+		message.error = cut(apply.clean(text), ANSWER_LIMIT)
+		message.trace = cut(apply.clean(trace), ANSWER_LIMIT)
 	end
 	-- values may hold nils, which a Luau array cannot: spliced in as JSON
 	local body = HttpService:JSONEncode(message)
 	return `{string.sub(body, 1, -2)},"values":[{table.concat(values, ",")}]}`
 end
 
-return table.freeze { run = run }
+return table.freeze { run = run, failed = failed }

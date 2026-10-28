@@ -30,8 +30,11 @@ local epoch = 0
 -- Frames and execs waiting for the worker, in order, each with the os.clock() it arrived at.
 type Item = { data: string, at: number, exec: exec.Request? }
 local queue: { Item } = {}
--- When the generation being applied got its first part: its ack carries the milliseconds since.
+-- When the generation being applied got its first part, or the worker got to it after an exec it queued behind: its
+-- ack carries the milliseconds since.
 local started: number? = nil
+-- When the worker last finished an exec.
+local freed = 0
 local busy = false
 local status: PluginToolbarButton? = nil
 
@@ -43,18 +46,18 @@ local function show()
 	if status then status:SetActive(socket ~= nil) end
 end
 
--- The single apply worker: runs queued frames in order until the queue is empty or the socket changes.
-local function work()
-	busy = true
-	local mine = epoch
+-- Runs queued frames and execs in order until the queue is empty or the socket changes.
+local function drain(mine: number)
 	while queue[1] and epoch == mine do
 		local item = table.remove(queue, 1) :: Item
-		if item.exec then
-			local result = exec.run(item.exec)
-			if epoch == mine then send(result) end
+		local request = item.exec
+		if request then
+			local ok, result = pcall(exec.run, request)
+			freed = os.clock()
+			if epoch == mine then send(if ok then result else exec.failed(request, result)) end
 			continue
 		end
-		local since = started or item.at
+		local since = started or math.max(item.at, freed)
 		local ok, result = pcall(apply.frame, item.data)
 		if epoch ~= mine then break end
 		started = if ok and result == "part" then since else nil
@@ -77,7 +80,14 @@ local function work()
 			end
 		end
 	end
+end
+
+-- The single worker. Whatever throws, it stops being busy, so the next message starts it again.
+local function work()
+	busy = true
+	local ok, problem = pcall(drain, epoch)
 	busy = false
+	if not ok then warn(`opossum: the worker stopped: {problem}`) end
 end
 
 local function hello(server: Hello): string
