@@ -164,6 +164,16 @@ pub fn cloud(cfg: Config, options: &Options, cloud: &Cloud, mode: &str, filter: 
     let Some(mut report) = report.filter(Value::is_object) else {
         return failed("the run returned no hexagon report".to_owned());
     };
+    // tessera built the place with its own build command: one that left out the suites this build has passes nothing
+    let suffix = if mode == "bench" { ".bench" } else { ".spec" };
+    let suites = session.scan.modules.iter().filter(|m| m.class == route::Class::ModuleScript);
+    let suites = suites.filter(|m| m.instance.last().is_some_and(|name| name.ends_with(suffix))).count();
+    if report["discovered"] == 0 && suites > 0 {
+        return failed(format!(
+            "the place tessera uploaded holds no {suffix} module, and this build has {suites}: does \
+             tessera.config.ts build this project with them (opossum build, without a profile that excludes them)?"
+        ));
+    }
     dev::map_strings(&mut report, &index);
     let logs = result["logs"].as_array().into_iter().flatten().filter_map(Value::as_str);
     let output: Vec<String> = logs.map(|line| dev::map_log(line, &index).0).collect();
