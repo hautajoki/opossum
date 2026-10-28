@@ -92,6 +92,8 @@ pub struct Sub {
     dropped: FxHashSet<Id>,
     /// Roots to verify in the next frame.
     verify: Vec<Id>,
+    /// Paths whose root is verified in the first frame where the node there differs from this hash (edit only).
+    adopts: Vec<(String, u128)>,
     /// Stamped paths a `verify` listed that are no longer roots, removed by the next frame.
     orphans: Vec<String>,
     /// A blob threw: one insert or verify per frame until no work waits.
@@ -176,6 +178,7 @@ impl Sub {
             scope: FxHashSet::default(),
             dropped: FxHashSet::default(),
             verify: Vec::new(),
+            adopts: Vec::new(),
             orphans: Vec::new(),
             isolate: false,
             sent: None,
@@ -237,6 +240,16 @@ impl Sub {
             _ => {}
         }
         build
+    }
+
+    /// [`crate::Server::adopt`]: once the tree's node at `path` differs from `hash`, its root is verified rather than
+    /// diffed, so the instances Studio already holds there pair with it instead of having its new nodes inserted
+    /// beside them. Only edit pairs: the play server never verifies.
+    pub fn adopt(&mut self, path: String, hash: u128) {
+        if self.role == Role::Edit {
+            self.adopts.retain(|(p, _)| *p != path);
+            self.adopts.push((path, hash));
+        }
     }
 
     /// Instances someone else removed: they leave the known tree, so the next frame puts them back, and refs into
@@ -308,6 +321,12 @@ impl Sub {
         // a failed node the files dropped leaves nothing behind to hold its root unstamped
         self.parked.retain(|&id, _| cur.get(id).is_some());
         self.fails.retain(|&id, _| cur.get(id).is_some());
+        for (path, hash) in std::mem::take(&mut self.adopts) {
+            match cur.find(&path).and_then(|id| Some((id, cur.get(id)?.hash))) {
+                Some((id, now)) if now != hash => self.verify.extend(cur.root_of(id)),
+                _ => self.adopts.push((path, hash)),
+            }
+        }
         let mut verify = std::mem::take(&mut self.verify);
         verify.sort_unstable();
         verify.dedup();
@@ -1248,6 +1267,36 @@ mod tests {
         moves.sort_unstable();
         assert_eq!(moves, [f.min(c), f.max(c)]);
         assert!(plan.tops.is_empty() && plan.removes.is_empty());
+    }
+
+    #[test]
+    fn a_pulled_path_is_verified_once_the_files_bring_it() {
+        let quiet = |_: String| {};
+        let a = |text| ("ReplicatedStorage/shared/a", ScriptKind::Module, text);
+        let gen1 = tree(&[a("return 1")]);
+        let cx = Context { cur: &gen1, published: 0, ring: &[], hot_reload: false, notice: &quiet, fail: &|_| {} };
+        let mut sub = Sub::new();
+        sub.hello(Role::Edit, Vec::new(), false);
+        sub.frame(&cx, 1).unwrap();
+        sub.ack(&cx, 1, &[]);
+        sub.adopt("ReplicatedStorage/shared/b".into(), 0);
+
+        // a build before the pulled file is read leaves it waiting
+        let mut gen2 = gen1.clone();
+        gen2.update(tree(&[a("return 2")]));
+        let cx = Context { cur: &gen2, ..cx };
+        sub.frame(&cx, 2).unwrap();
+        assert!(sub.sent.as_ref().unwrap().reconciled.is_empty() && sub.adopts.len() == 1);
+        sub.ack(&cx, 2, &[]);
+
+        // the build that reads it verifies its root: b pairs with what Studio holds, never inserted beside it
+        let mut gen3 = gen2.clone();
+        gen3.update(tree(&[a("return 2"), ("ReplicatedStorage/shared/b", ScriptKind::Module, "return 3")]));
+        let cx = Context { cur: &gen3, ..cx };
+        sub.frame(&cx, 3).unwrap();
+        let sent = sub.sent.as_ref().unwrap();
+        let b = gen3.find("ReplicatedStorage/shared/b").unwrap();
+        assert!(sent.reconciled.contains_key(&b) && sent.inserted.is_empty() && sub.adopts.is_empty());
     }
 
     #[test]

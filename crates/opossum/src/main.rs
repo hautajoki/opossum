@@ -34,6 +34,8 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
                                                              place version to Roblox)
   play [--run] [--timeout <s>] [--json]                      start a Studio playtest through opossum dev
   stop [--timeout <s>] [--json]                              end it and sum up what it logged
+  pull [--timeout <s>] [--json] <Instance.Path> [<file.rbxm>]
+                                                             write an instance from Studio into the files
   where <file | Instance.Path[:line]>                        a file's instance, or an instance's file
   sourcemap                                                  .opossum/sourcemap.json for luau-lsp
   plugin install [<path>]                                    the Studio plugin .rbxm
@@ -48,6 +50,7 @@ enum Command {
     Cloud(exec::Options, exec::Cloud, &'static str, Option<String>),
     Play(exec::Options, bool),
     Stop(exec::Options),
+    Pull(exec::Options, String, Option<PathBuf>),
     Where(String),
     Sourcemap,
     Plugin(Option<PathBuf>),
@@ -94,7 +97,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     }
     let verb = rest.first().copied();
     let studio = matches!(verb, Some("exec" | "test" | "bench"));
-    let timed = studio || matches!(verb, Some("play" | "stop"));
+    let timed = studio || matches!(verb, Some("play" | "stop" | "pull"));
     let stray = realm.is_some() && !studio || timeout.is_some() && !timed;
     let tessera = place.is_some() || environment.is_some();
     if stray || code.is_some() && verb != Some("exec") || run && verb != Some("play") {
@@ -125,6 +128,11 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         }
         (Some("play"), []) if profile.is_none() && out.is_none() && emit.is_none() => Command::Play(options(), run),
         (Some("stop"), []) if profile.is_none() && out.is_none() && emit.is_none() => Command::Stop(options()),
+        (Some("pull"), [path, file @ ..])
+            if file.len() <= 1 && profile.is_none() && out.is_none() && emit.is_none() =>
+        {
+            Command::Pull(options(), (*path).to_owned(), file.first().map(PathBuf::from))
+        }
         (Some("where"), [target]) => Command::Where((*target).to_owned()),
         (Some("sourcemap"), []) => Command::Sourcemap,
         (Some("plugin"), ["install"]) => Command::Plugin(None),
@@ -186,6 +194,7 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Command::Test(options, mode, filter) => return exec::test(&cfg, &options, mode, filter.as_deref()),
         Command::Play(options, run) => return exec::play(&cfg, &options, run),
         Command::Stop(options) => return exec::stop(&cfg, &options),
+        Command::Pull(options, path, file) => return exec::pull(&cfg, &options, &path, file.as_deref()),
         // builds itself, for the log index
         Command::Cloud(options, cloud, mode, filter) => {
             return exec::cloud(cfg, &options, &cloud, mode, filter.as_deref());
@@ -205,7 +214,8 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         | Command::Test(..)
         | Command::Cloud(..)
         | Command::Play(..)
-        | Command::Stop(..) => unreachable!("handled above"),
+        | Command::Stop(..)
+        | Command::Pull(..) => unreachable!("handled above"),
     }
 }
 
@@ -358,7 +368,7 @@ pub fn project_path(cfg: &Config, path: &Path) -> PathBuf {
 }
 
 /// `path` with its longest existing ancestor canonicalized (a deleted file keeps its name).
-fn canonical_prefix(path: &Path) -> std::io::Result<PathBuf> {
+pub fn canonical_prefix(path: &Path) -> std::io::Result<PathBuf> {
     match std::fs::canonicalize(path) {
         Ok(p) => Ok(p),
         Err(e) => match (path.parent(), path.file_name()) {

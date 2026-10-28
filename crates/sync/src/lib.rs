@@ -48,12 +48,13 @@ pub struct Config {
     pub port: u16,
     /// Receives what each DataModel prints and does with its frames, and the server's own notices.
     pub reports: Sender<Report>,
-    /// Receives each `POST` to [`PATHS`] (`opossum exec`, `test`, `play` and `stop`); nobody listening answers 503.
+    /// Receives each `POST` to [`PATHS`] (`opossum exec`, `test`, `play`, `stop` and `pull`); nobody listening answers
+    /// 503.
     pub requests: Sender<Request>,
 }
 
 /// The paths the dev session answers a `POST` on; any other is 404.
-pub const PATHS: &[&str] = &["/exec", "/play", "/stop"];
+pub const PATHS: &[&str] = &["/exec", "/play", "/stop", "/pull"];
 
 /// A `POST` to one of [`PATHS`]: the path, its body as sent, and where its answer goes (HTTP status, JSON body).
 pub struct Request {
@@ -224,6 +225,26 @@ impl Server {
         drop(state);
         self.shared.wake.notify_all();
         generation
+    }
+
+    /// The tree published last.
+    pub fn tree(&self) -> Tree {
+        self.shared.lock().tree.clone()
+    }
+
+    /// Instance content is about to come from the files at `path` (`opossum pull` writing what Studio holds there):
+    /// edit DataModels verify its root in the first frame whose tree differs from the current one at `path`, so what
+    /// Studio holds pairs with that content, keeping its identity, instead of the new nodes being inserted beside it.
+    pub fn adopt(&self, path: &str) {
+        let mut state = self.shared.lock();
+        let hash = state.tree.find(path).and_then(|id| state.tree.get(id)).map_or(0, |n| n.hash);
+        let edits: Vec<u64> =
+            state.inboxes.iter().filter(|(_, i)| i.realm == Some(Realm::Edit)).map(|(&c, _)| c).collect();
+        for conn in edits {
+            state.push(conn, server::Event::Adopt(path.to_owned(), hash));
+        }
+        drop(state);
+        self.shared.wake.notify_all();
     }
 
     /// The realms of the DataModels connected now (said hello), each once.

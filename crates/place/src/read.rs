@@ -131,6 +131,25 @@ pub fn service_for_dir(dir: &str) -> Option<String> {
     Some(class.name.to_string())
 }
 
+/// The top-level `place/` directory a frame of reference's children are read from, the inverse of
+/// [`service_for_dir`]: `Workspace` -> `workspace`, `StarterPlayer/StarterPlayerScripts` -> `starter-player-scripts`;
+/// None when `path` is no service or nested container.
+pub fn frame_dir(path: &str) -> Option<String> {
+    match path.split_once('/') {
+        Some((service, child)) => NESTED.contains(&(service, child)).then(|| kebab(child)),
+        None => crate::props::is_service(path).then(|| kebab(path)),
+    }
+}
+
+/// The class of the one top-level instance an `.rbxm` holds, as the reader would take it.
+pub fn rbxm_class(bytes: &[u8]) -> Result<String, String> {
+    let model = rbx_binary::from_reader(bytes).map_err(|e| e.to_string())?;
+    match model.root().children() {
+        [root] => Ok(model.get_by_ref(*root).map(|i| i.class.to_string()).unwrap_or_default()),
+        roots => Err(format!("holds {} top-level instances; a model file holds one", roots.len())),
+    }
+}
+
 /// `ReplicatedStorage` -> `replicated-storage`, `VRService` -> `vr-service`.
 pub(crate) fn kebab(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
@@ -683,6 +702,12 @@ mod tests {
         // Only the kebab spelling names a service, and only services are directories.
         assert_eq!(service_for_dir("ReplicatedStorage"), None);
         assert_eq!(service_for_dir("folder"), None);
+        // frame_dir is its inverse, for services and nested containers only
+        for path in ["ReplicatedStorage", "VRService", "StarterPlayer/StarterPlayerScripts", "Workspace/Terrain"] {
+            assert_eq!(service_for_dir(&frame_dir(path).unwrap()).as_deref(), Some(path));
+        }
+        assert_eq!(frame_dir("Workspace/Map"), None);
+        assert_eq!(frame_dir("Folder"), None);
     }
 
     #[test]

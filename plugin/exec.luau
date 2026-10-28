@@ -19,7 +19,7 @@ local apply = require("./apply")
 -- `.Source` refuses sources this long; UpdateSourceAsync takes them.
 local SOURCE_LIMIT = 200000
 -- Bytes of output, of returned values, and of an error and its trace an answer carries, each: the rest is cut, so a
--- result stays far below what the socket takes in one message.
+-- result stays far below what the socket takes in one message. An exec's `limit` raises it for returned values.
 local ANSWER_LIMIT = 1000000
 -- Traceback lines from the plugin itself, below the exec's own frames.
 local OWN = script.Parent and script.Parent:GetFullName() or "opossum"
@@ -33,6 +33,8 @@ export type Request = {
 	timeout: number?,
 	-- seconds it may wait in the plugin's queue before it starts; past that dev no longer waits, so it never runs
 	start: number?,
+	-- bytes of returned values the answer may carry (ANSWER_LIMIT when nil): `opossum pull` returns a whole model
+	limit: number?,
 }
 
 -- Module bodies by the module's full name, with the Source each was compiled from.
@@ -335,7 +337,7 @@ local function run(request: Request, at: number): string
 		message.error = `timed out after {request.timeout or 60} s`
 	elseif result[1] then
 		message.ok = true
-		room = ANSWER_LIMIT
+		room = request.limit or ANSWER_LIMIT
 		for i = 2, result.n do
 			local text = encode(result[i], room)
 			room -= #text

@@ -17,7 +17,9 @@
 //!
 //! `opossum play` and `opossum stop` reach it the same way (`POST /play`, `/stop`): play is an exec in edit that starts
 //! a playtest through StudioTestService, stop one in the play server that ends it, and each waits for the playtest's
-//! DataModels to come or go. The session keeps a tally of what the playtest logged for stop to print.
+//! DataModels to come or go. The session keeps a tally of what the playtest logged for stop to print. `opossum pull`
+//! (`POST /pull`) is an exec in edit that serializes an instance, which the session writes into `place/` for its own
+//! watcher to read back, telling the sync server so edit pairs it with the instances it came from.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -35,7 +37,8 @@ use crate::build::{LineMap, RUNTIME, Session, script_class, script_kind, slashed
 use crate::config::{self, Config};
 use crate::diag::Severity;
 use crate::event::{Event, Out};
-use crate::{editor, project_path};
+use crate::exec::luau_string;
+use crate::{canonical_prefix, editor, project_path};
 
 const QUIET: Duration = Duration::from_millis(30);
 /// How long a request waits for its fence: the watcher's latency plus the build of that burst.
@@ -46,6 +49,8 @@ pub const MAX_TIMEOUT: f64 = 86400.0;
 const FIRST_ERRORS: usize = 5;
 /// The changes to the stale files [`Stale`] keeps.
 const STALE_KEPT: usize = 64;
+/// Bytes of base64 a pull's answer may carry: an 18 MB model, within the 32 MB a message up the socket may hold.
+const PULL_LIMIT: usize = 24 << 20;
 
 /// Instance full name (`ServerScriptService.server.app`) → its file relative to the root, and for a compiled
 /// module the map from output lines to TypeScript lines.
@@ -431,7 +436,7 @@ impl Dev<'_> {
     }
 }
 
-/// What answers `POST /exec`, `/play` and `/stop`: the newest DataModel of the asked realm runs the code once it holds
+/// What answers `POST /exec`, `/play`, `/stop` and `/pull`: the newest DataModel of the asked realm runs the code once it holds
 /// every save made before the request (the module doc), with Studio's output and errors mapped like log lines.
 #[derive(Clone)]
 struct Execs {
@@ -440,7 +445,7 @@ struct Execs {
     stale: Arc<Mutex<Stale>>,
     index: Arc<Mutex<LogIndex>>,
     playtest: Playtests,
-    /// Held through a play or stop, so two never race each other's checks.
+    /// Held through a play, stop or pull, so two never race each other's checks or files.
     lifecycle: Arc<Mutex<()>>,
     out: Out,
     root: PathBuf,
@@ -451,6 +456,7 @@ impl Execs {
         let answer = self.parse(&request.body).and_then(|body| match request.path.as_str() {
             "/play" => self.play(&body),
             "/stop" => self.stop(&body),
+            "/pull" => self.pull(&body),
             _ => self.exec(&body),
         });
         let (status, body) = match answer {
@@ -623,6 +629,113 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
         Ok(json!({ "ok": true, "errors": errors, "warnings": warnings, "first": first, "ms": ms }))
     }
 
+    /// `{root, path, file?, timeout?}` (DESIGN.md, Pull): the instance at `path` (`/`-separated) in edit, serialized by
+    /// the plugin and written as an `.rbxm`: to `file`, or where `place/` reads it from ([`destination`]). Answers once
+    /// the build reading it is published, `{ok, path, class, file, bytes, gen, ms, warning?}`; an error status when
+    /// nothing was written.
+    fn pull(&self, request: &Value) -> Result<Value, (u16, String)> {
+        let _lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        let start = Instant::now();
+        let path = request["path"].as_str().unwrap_or("");
+        let names: Vec<&str> = path.split('/').collect();
+        if names.iter().any(|n| n.is_empty() || n.starts_with('.')) {
+            return Err((400, format!("{path:?} is no instance path pull can write (a name is empty or hidden)")));
+        }
+        if !self.server.realms().contains(&Realm::Edit) {
+            let port = self.server.port();
+            return Err((503, format!("no edit DataModel is connected to opossum dev on port {port}")));
+        }
+        self.fence().map_err(|e| (503, e))?;
+        let tree = self.server.tree();
+        if place::frame_dir(path).is_some() || tree.find(path).is_some_and(|id| tree.is_frame(id)) {
+            let error = format!(
+                "{path} is a service (or a container like one), which cannot be serialized; its properties live in \
+                 place/*.toml"
+            );
+            return Err((409, error));
+        }
+        let place = self.root.join("place");
+        let found = destination(&tree, &self.root, path);
+        let file = match request["file"].as_str() {
+            Some(file) if !file.ends_with(".rbxm") => return Err((400, format!("{file}: pull writes .rbxm files"))),
+            Some(file) if Path::new(file).is_dir() => return Err((409, format!("{file} is a directory"))),
+            // the place reader's own spelling of it, so a pull into place/ is one however the path was spelled
+            Some(file) => match &found {
+                Ok(at) if canonical_prefix(at).ok() == canonical_prefix(Path::new(file)).ok() => at.clone(),
+                _ => PathBuf::from(file),
+            },
+            None => found.clone().map_err(|e| (409, e))?,
+        };
+
+        // a copy, so a root's stamp stays out of the file
+        let lookup: Vec<String> = names.iter().map(|n| luau_string(n)).collect();
+        let source = format!(
+            "local at: Instance = game
+for _, name in {{ {} }} do
+	local child = at:FindFirstChild(name)
+	if not child then error(`{{at:GetFullName()}} has no child {{name}}`, 0) end
+	at = child
+end
+local copy = at:Clone()
+if not copy then error(`{{at:GetFullName()}} is not Archivable, so it cannot be copied`, 0) end
+copy:SetAttribute(\"opossum\", nil)
+local data = game:GetService(\"SerializationService\"):SerializeInstancesAsync({{ copy }})
+copy:Destroy()
+return at.ClassName, buffer.tostring(game:GetService(\"EncodingService\"):Base64Encode(data))",
+            lookup.join(", ")
+        );
+        let message = json!({ "t": "exec", "name": "pull", "source": source, "limit": PULL_LIMIT });
+        let ran = self.server.exec(Realm::Edit, message, timeout(request), false).map_err(|e| (503, e))?;
+        let result = &ran.result;
+        if result["ok"] != true {
+            let error = result["error"].as_str().unwrap_or("it did not answer");
+            return Err((409, format!("Studio did not serialize {path}: {error}")));
+        }
+        let (class, text) = (result["values"][0].as_str().unwrap_or(""), result["values"][1].as_str().unwrap_or(""));
+        if text.ends_with(" more bytes cut)") {
+            return Err((
+                413,
+                format!("{path} is over {} MB as an .rbxm, more than pull carries", (PULL_LIMIT / 4 * 3) >> 20),
+            ));
+        }
+        let bytes = base64(text).ok_or((502, "the plugin's answer is not base64".to_owned()))?;
+        // what place/ could not read back is never written
+        match place::rbxm_class(&bytes) {
+            Ok(read) if read == class => {}
+            Ok(read) => return Err((502, format!("Studio serialized a {read}, not the {class} at {path}"))),
+            Err(e) => return Err((502, format!("opossum cannot read what Studio serialized: {e}"))),
+        }
+
+        let into_place = found.as_ref().is_ok_and(|f| *f == file);
+        if into_place {
+            self.server.adopt(path);
+        }
+        let io = |e: std::io::Error| (500, format!("{}: {e}", file.display()));
+        let dir = file.parent().unwrap_or(&place);
+        std::fs::create_dir_all(dir).map_err(io)?;
+        // whole or not at all: a name the place reader skips, then renamed over
+        let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let part = dir.join(format!(".{name}.pull"));
+        std::fs::write(&part, &bytes).and_then(|()| std::fs::rename(&part, &file)).map_err(io)?;
+
+        let shown = file.strip_prefix(&self.root).unwrap_or(&file).display().to_string();
+        let mut answer = json!({
+            "ok": true, "path": path, "class": class, "file": shown, "bytes": bytes.len(), "gen": Value::Null,
+        });
+        match self.fence() {
+            Ok(generation) => answer["gen"] = generation.into(),
+            Err(e) => answer["warning"] = format!("written, but {e}").into(),
+        }
+        let tree = self.server.tree();
+        let read = tree.find(path).and_then(|id| tree.get(id)).is_some_and(|n| n.file.as_deref() == Some(&*file));
+        if into_place && answer["gen"].is_u64() && !read {
+            answer["warning"] =
+                format!("opossum dev did not read {path} back from {shown}: see its diagnostics").into();
+        }
+        answer["ms"] = (start.elapsed().as_secs_f64() * 1000.0).into();
+        Ok(answer)
+    }
+
     /// The files build `generation` holds older code of than their source.
     fn stale(&self, generation: u32) -> Value {
         self.stale.lock().unwrap_or_else(|e| e.into_inner()).of(generation)
@@ -655,6 +768,107 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
             _ => Err(format!("the file watcher did not bring {} within {} s", file.display(), FENCE_WAIT.as_secs())),
         }
     }
+}
+
+/// The `.rbxm` the place reader takes the instance at `path` from, or would: its own file when it comes from an
+/// `.rbxm`, else `<name>.rbxm` in its parent's directory, when that parent is a service, a nested container or a
+/// directory of `place/`. An error says why no such file can be written: it comes from another kind of file (never
+/// overwritten), is inside a model file, is a folder or a synced module, or its parent is not in the files.
+fn destination(tree: &Tree, root: &Path, path: &str) -> Result<PathBuf, String> {
+    let shown = |file: &Path| file.strip_prefix(root).unwrap_or(file).display().to_string();
+    // the node and the nearest of it and its ancestors (below its frame of reference) a file made
+    let holder = |id: place::Id| {
+        let mut at = id;
+        loop {
+            let node = tree.get(at)?;
+            if let Some(file) = &node.file {
+                return Some((at, file.clone()));
+            }
+            if tree.is_frame(node.parent) {
+                return None;
+            }
+            at = node.parent;
+        }
+    };
+    if let Some(id) = tree.find(path) {
+        let node = tree.get(id).expect("found");
+        return match (node.origin, holder(id)) {
+            (place::Origin::Script, file) => {
+                let from = file.map_or("src/".to_owned(), |(_, f)| shown(&f));
+                Err(format!("{path} is synced from {from}; name an .rbxm file to write it to instead"))
+            }
+            (place::Origin::Folder, _) => Err(format!("{path} is a folder of modules synced from src/")),
+            (_, Some((at, file))) if at == id && file.extension().is_some_and(|e| e == "rbxm") => {
+                Ok(file.to_path_buf())
+            }
+            (_, Some((at, file))) if at == id => Err(format!(
+                "{path} comes from {}, which pull never overwrites; name an .rbxm file to write it to instead",
+                shown(&file)
+            )),
+            (_, Some((at, file))) => Err(format!(
+                "{path} is inside {}, which holds {}: pull that, or name a file",
+                shown(&file),
+                tree.path_of(at)
+            )),
+            (_, None) => Err(format!(
+                "{path} is a folder of place/ (a directory, or made by a properties file): pull what is in it, or \
+                 name a file"
+            )),
+        };
+    }
+    // new: written into its parent's directory, mirroring the instance path
+    let (parent, name) = path.rsplit_once('/').ok_or_else(|| format!("{path} is not in this place"))?;
+    let place = root.join("place");
+    // a nested container's directory may also sit in its service's (place/workspace/Terrain)
+    let frame_dir = |frame: &str| {
+        let own = place.join(place::frame_dir(frame)?);
+        let (service, child) = frame.split_once('/').unwrap_or((frame, ""));
+        let inside = place.join(place::frame_dir(service)?).join(child);
+        Some(if !child.is_empty() && inside.is_dir() { inside } else { own })
+    };
+    if let Some(dir) = frame_dir(parent) {
+        return Ok(dir.join(format!("{name}.rbxm")));
+    }
+    let not_in_files = || format!("{path}'s parent {parent} is not in the files: pull it instead, or name a file");
+    let id = tree.find(parent).ok_or_else(not_in_files)?;
+    let node = tree.get(id).expect("found");
+    if node.origin != place::Origin::Place || holder(id).is_some() {
+        return Err(not_in_files());
+    }
+    let mut frame = id;
+    while !tree.is_frame(frame) {
+        frame = tree.get(frame).map_or(place::ROOT, |n| n.parent);
+    }
+    let frame_path = tree.path_of(frame);
+    let below = &parent[frame_path.len() + 1..];
+    let dir = frame_dir(&frame_path).ok_or_else(not_in_files)?.join(below);
+    if !dir.is_dir() {
+        return Err(format!("{parent} is made by a properties file, not a directory: name a file"));
+    }
+    Ok(dir.join(format!("{name}.rbxm")))
+}
+
+/// Standard base64, as EncodingService:Base64Encode writes it; None for anything else.
+fn base64(text: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    let (mut acc, mut bits) = (0u32, 0);
+    for &c in text.trim_end_matches('=').as_bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        };
+        acc = (acc << 6 | u32::from(v)) & 0xffff;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
 }
 
 /// A request's time limit (default 60 s, at most [`MAX_TIMEOUT`]).
@@ -837,5 +1051,61 @@ mod tests {
         map_strings(&mut failure, &index);
         let mapped = json!({"labels": ["src/m.luau", "adds"], "source": "src/m.luau", "line": 7, "trace": "hexagon.expect:69\nsrc/m.luau:7"});
         assert_eq!(failure, mapped);
+    }
+
+    #[test]
+    fn pull_writes_where_place_reads_and_never_over_other_files() {
+        let root = std::env::temp_dir().join(format!("opossum-pull-{}", std::process::id()));
+        let models = root.join("place/replicated-storage/models");
+        std::fs::create_dir_all(&models).unwrap();
+        let door = r#"{ "className": "Model", "children": [{ "name": "hinge", "className": "Part" }] }"#;
+        std::fs::write(models.join("door.model.json"), door).unwrap();
+        std::fs::write(models.join("hull.model.json"), r#"{ "className": "Part" }"#).unwrap();
+        let (place, _) = place::read_place(&root.join("place"));
+        let mut bytes = Vec::new();
+        place::write_rbxm(&place, &[place.find("ReplicatedStorage/models/hull").unwrap()], &mut bytes).unwrap();
+        assert_eq!(place::rbxm_class(&bytes).as_deref(), Ok("Part"));
+        std::fs::remove_file(models.join("hull.model.json")).unwrap();
+        std::fs::write(models.join("hull.rbxm"), &bytes).unwrap();
+        let (place, diags) = place::read_place(&root.join("place"));
+        let mut fresh = Tree::new();
+        fresh.add_place(&place);
+        let module = place::Source::new(Arc::from("return 1"));
+        let file = Some(Arc::from(root.join("src/shared/m.luau")));
+        fresh.set_script("ReplicatedStorage/shared/m", place::ScriptKind::Module, module, file).unwrap();
+        let mut tree = Tree::new();
+        tree.update(fresh);
+        let at = |path| destination(&tree, &root, path).map(|f| f.strip_prefix(&root).unwrap().display().to_string());
+        let written = at("ReplicatedStorage/models/hull");
+        let new =
+            [at("ReplicatedStorage/models/boat"), at("Workspace/boat"), at("StarterPlayer/StarterPlayerScripts/x")];
+        let refused = [
+            "ReplicatedStorage/models/door",
+            "ReplicatedStorage/models/door/hinge",
+            "ReplicatedStorage/models/door/hinge/x",
+            "ReplicatedStorage/models",
+            "ReplicatedStorage/shared/m",
+            "ReplicatedStorage/shared/x",
+            "Workspace/map/boat",
+        ]
+        .map(|path| at(path).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+
+        assert!(diags.is_empty(), "{diags:?}");
+        // its own .rbxm, or the directory of a parent place/ reads, as the reader would name it
+        assert_eq!(written.as_deref(), Ok("place/replicated-storage/models/hull.rbxm"));
+        let new = new.map(Result::unwrap);
+        assert_eq!(
+            new,
+            [
+                "place/replicated-storage/models/boat.rbxm",
+                "place/workspace/boat.rbxm",
+                "place/starter-player-scripts/x.rbxm"
+            ]
+        );
+        // a model.json and what it holds, a folder, a module, and what is under neither files nor a service
+        assert_eq!(refused, [true; 7]);
+        assert_eq!(base64("TWFueQ=="), Some(b"Many".to_vec()));
+        assert_eq!(base64("TW!u"), None);
     }
 }

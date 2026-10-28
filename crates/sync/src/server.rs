@@ -1,7 +1,7 @@
 //! Sockets: an acceptor thread, then per socket a reader (the plugin's JSON) and a writer that builds its subscriber's
 //! frame when the last one is acked. `publish` only swaps the tree under the lock and wakes the writers. A connection
-//! that is a `POST` instead (`/exec`, `/play`, `/stop`) goes to the dev session as a [`Request`] and is answered with
-//! what it replies.
+//! that is a `POST` instead (`/exec`, `/play`, `/stop`, `/pull`) goes to the dev session as a [`Request`] and is
+//! answered with what it replies.
 
 use std::collections::VecDeque;
 use std::io::BufReader;
@@ -39,6 +39,8 @@ pub enum Event {
     Pong(Vec<u8>),
     /// An exec's id and its message, sent once the DataModel holds the newest tree.
     Exec(u64, Value),
+    /// [`crate::Server::adopt`]: a path and the hash of the node there now (0 for none).
+    Adopt(String, u128),
 }
 
 /// An exec waiting for its result.
@@ -219,7 +221,7 @@ fn socket(mut stream: TcpStream, shared: &Arc<Shared>) {
 /// Hands a `POST` to the dev session and answers with its reply.
 fn post(stream: &mut TcpStream, shared: &Shared, path: String, body: Vec<u8>) {
     if !PATHS.contains(&path.as_str()) {
-        return ws::respond(stream, 404, "text/plain", "opossum dev answers POST /exec, /play and /stop only");
+        return ws::respond(stream, 404, "text/plain", "opossum dev answers POST /exec, /play, /stop and /pull only");
     }
     let (reply, answer) = mpsc::channel();
     let request = Request { path, body, reply };
@@ -363,6 +365,7 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
                     sub.hello(role, roots, hot_reload);
                 }
                 Event::Exec(id, message) => execs.push((id, message)),
+                Event::Adopt(path, hash) => sub.adopt(path, hash),
                 Event::Ack(number, failed, ms) => {
                     // an ack the plugin sent after asking for a verify is covered by that verify's frame
                     if let Some(generation) = sub.ack(&cx, number, &failed) {

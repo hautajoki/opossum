@@ -99,7 +99,8 @@ free only when nothing answers on `127.0.0.1:port`: std binds with `SO_REUSEADDR
 wildcard listener and would take its loopback traffic. The plugin tries each port in turn, closing every client that
 fails before the next and disconnecting its handlers (a WebStreamClient with live connections is never collected,
 measured), so a plugin that loses a front proxy falls back to opossum's own port. The server speaks first. The same
-listener answers one plain `POST` per connection, to `/exec` (Exec, below), `/play` or `/stop` (Playtests).
+listener answers one plain `POST` per connection, to `/exec` (Exec, below), `/play` or `/stop` (Playtests), or `/pull`
+(Pull).
 
 - Studio allows 5 `RequestAsync` in flight per process, shared by every plugin and DataModel, and the play client may
   not use it at all. Plugins get 4 WebStreamClients per DataModel and other plugins use some. So: no HTTP, one socket
@@ -151,7 +152,7 @@ The first message is JSON text: `{"t":"hello","project","place","unpublished","s
 the socket unless `place == game.PlaceId`, or `PlaceId == 0` and `unpublished`; otherwise it drops its id map and queue,
 waits for any apply in flight, and answers with its own `hello`. Every later server message is a binary **frame**, or an
 exec: four zero bytes (generation 0, which no frame has), then
-`{"t":"exec","id","name","source","modules","timeout","start"}`. The server sends no frame before its first publish, so
+`{"t":"exec","id","name","source","modules","timeout","start","limit"}`. The server sends no frame before its first publish, so
 a Studio that connects during the first build is never answered from an empty tree. A config change to `placeId`,
 `unpublished` or `hotReload` closes every socket, so each plugin checks the new hello; other changes keep them.
 
@@ -430,7 +431,8 @@ thread under `xpcall`: an error answers with its message and `debug.traceback` l
 values are JSON, every leaf JSON has no word for (an Instance, a Vector3, a function, inf, nan) as its `tostring`,
 nested ones included, and a value with a cycle or keys JSON cannot hold as its `tostring` whole. A `tostring` that
 throws shows the value's type. Output, returned values, and the error and its trace are each cut at 1 MB, saying how
-much was cut, so a result stays far below what one message may carry. After `timeout` seconds (default 60) the
+much was cut, so a result stays far below what one message may carry; an exec's `limit` raises the cut for returned
+values (pull's, 24 MB of base64 within the 32 MB a message up may hold; a 10.7 MB message measured). After `timeout` seconds (default 60) the
 thread is cancelled; a loop that never yields holds the plugin until Studio's script timeout stops it. Nothing the
 code does can stop the worker: whatever escapes the run is answered as the exec's error, and the worker carries on.
 The chunk and everything below are destroyed after, so nothing is left in the DataModel. In edit the run is one
@@ -463,6 +465,21 @@ require of it" runs saw the new value, for a `.luau` module and for a TypeScript
 of 20 "write a module and a spec expecting its value, immediately `opossum test` it" runs passed, 155 ms each in edit
 (1.26 s while every run compiled every module afresh). `opossum test` over a large project's 1,203 cases: 13.7 s in edit, steady
 over 15 runs in a row, 24 s in the play server; the 176 suites hexagon also runs locally hold the same 1,107 cases.
+
+## Pull
+
+`opossum pull` (DESIGN.md, Pull) is an exec dev writes, run in edit: it finds the instance by name from `game`, clones
+it, clears the clone's `opossum` attribute and returns its class and `EncodingService:Base64Encode` of
+`SerializationService:SerializeInstancesAsync({clone})`, with a `limit` that lets the model through. Writing the file
+alone would sync wrong: the root is dirty (what the user built or tuned there cleared its stamp), but the server does not
+know, and the diff of the new build inserts every node it has not mapped (what was built in Studio) beside the live
+instance, which the next verify removes as a stray (measured: a second copy). So before writing into `place/`, dev
+calls `Server::adopt(path)`: each edit subscriber keeps the path with the hash of the tree's node there now (0 for
+none), and in the first frame whose tree differs there verifies that node's root instead of diffing it. The reconcile
+pairs the live instances by `(name, class, ordinal)`, as a connect does, so they keep their identity, and removes only
+what the files do not hold. A build before the file is read leaves the path waiting; a pull whose content equals the
+files' leaves it waiting until the next change there, which then verifies its root (a verify is always correct, only
+larger). A file written outside `place/` is not adopted, and the play server, which never verifies, is not told.
 
 ## Budgets
 

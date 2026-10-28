@@ -2,8 +2,9 @@
 //! `POST /exec` on the port it wrote to `.opossum/port` (DESIGN.md, Exec). The exit status is 0 when it ran clean, 1
 //! for a script error, a failed test or an answer that never came, 2 when it never ran (dev or the DataModel cannot be
 //! reached, or holds older code than a test allows). `opossum play` and `stop` start and end a playtest the same way
-//! (`POST /play`, `/stop`; DESIGN.md, Play). `opossum test --cloud` runs the specs on Open Cloud through tessera
-//! instead, with no dev or Studio involved (DESIGN.md, Cloud tests).
+//! (`POST /play`, `/stop`; DESIGN.md, Play), and `opossum pull` writes an instance from Studio into the files
+//! (`POST /pull`; DESIGN.md, Pull). `opossum test --cloud` runs the specs on Open Cloud through tessera instead, with
+//! no dev or Studio involved (DESIGN.md, Cloud tests).
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -345,6 +346,30 @@ pub fn stop(cfg: &Config, options: &Options) -> Result<bool, String> {
     Ok(true)
 }
 
+/// Writes the instance at `path` (`Workspace.Boat`, or `Workspace/Boat` when a name holds a dot) from Studio into the
+/// files as an `.rbxm`: `file`, or where `place/` reads it from.
+pub fn pull(cfg: &Config, options: &Options, path: &str, file: Option<&Path>) -> Result<bool, String> {
+    let slashed = if path.contains('/') { path.to_owned() } else { path.replace('.', "/") };
+    let mut body = json!({ "path": slashed });
+    if let Some(file) = file {
+        let file = std::path::absolute(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        body["file"] = file.to_string_lossy().into();
+    }
+    let answer = post(cfg, options, "/pull", body)?;
+    if options.json {
+        println!("{answer}");
+        return Ok(true);
+    }
+    let kb = answer["bytes"].as_f64().unwrap_or(0.0) / 1024.0;
+    let class = answer["class"].as_str().unwrap_or("?");
+    let file = answer["file"].as_str().unwrap_or("?");
+    println!("pulled {path} ({class}, {kb:.1} KB) into {file}, generation {}", answer["gen"]);
+    if let Some(warning) = answer["warning"].as_str() {
+        eprintln!("opossum: warning: {warning}");
+    }
+    Ok(true)
+}
+
 /// What the script printed (warnings marked), and a note when the DataModel runs older code than the files.
 fn print_output(answer: &Value) {
     for line in answer["output"].as_array().into_iter().flatten() {
@@ -450,7 +475,7 @@ fn shown(root: &Path, file: &Path) -> String {
 }
 
 /// `text` as a Luau string literal.
-fn luau_string(text: &str) -> String {
+pub fn luau_string(text: &str) -> String {
     let mut out = String::from("\"");
     for c in text.chars() {
         match c {
