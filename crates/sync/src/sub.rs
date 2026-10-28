@@ -538,7 +538,7 @@ impl Sub {
         ids.sort_unstable();
         ids.dedup();
         let edit = self.role == Role::Edit;
-        // a new frame of reference (a service `[place]` started setting) is bound, never inserted
+        // a new frame of reference (a service a properties file started setting) is bound, never inserted
         let bound: FxHashSet<Id> =
             ids.iter().copied().filter(|&id| known.get(id).is_none() && cur.is_frame(id)).collect();
         // a root of `cur` that a removed known node was in, and a moved node's old root, lose their stamps in Studio
