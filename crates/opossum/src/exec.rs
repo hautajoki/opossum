@@ -121,12 +121,7 @@ pub struct Cloud {
 /// Roblox, and its log index maps the report like `test`'s.
 pub fn cloud(cfg: Config, options: &Options, cloud: &Cloud, mode: &str, filter: Option<&str>) -> Result<bool, String> {
     let json = options.json;
-    let refused = |error: String| {
-        if json {
-            println!("{}", json!({ "ok": false, "ran": false, "error": error }));
-        }
-        error
-    };
+    let refused = |error| refused(json, error);
     if options.timeout.is_some_and(|t| t > CLOUD_TIMEOUT) {
         return Err(refused(format!("--timeout with --cloud is at most {CLOUD_TIMEOUT} s, Open Cloud's limit")));
     }
@@ -158,14 +153,7 @@ pub fn cloud(cfg: Config, options: &Options, cloud: &Cloud, mode: &str, filter: 
     tessera.args(["--fresh", cloud.place.as_deref().unwrap_or("main")]);
     // its progress and errors go straight to the terminal
     let run = tessera.stderr(Stdio::inherit()).output().map_err(|e| refused(format!("could not run tessera: {e}")))?;
-    let failed = |error: String| {
-        if json {
-            println!("{}", json!({ "ok": false, "error": error }));
-        } else {
-            eprintln!("opossum: {error}");
-        }
-        Ok(false)
-    };
+    let failed = |error| failed(json, error);
     if !run.status.success() {
         return failed(format!("tessera failed ({})", run.status));
     }
@@ -425,11 +413,7 @@ fn print_error(answer: &Value) -> bool {
 /// Sends `body` to this project's `opossum dev` and returns its answer; an error (exit status 2) when the code never
 /// ran, which `--json` prints as `{"ok": false, "ran": false, "error"}` too.
 fn post(cfg: &Config, options: &Options, path: &str, body: Value) -> Result<Value, String> {
-    send(cfg, options, path, body).inspect_err(|error| {
-        if options.json {
-            println!("{}", json!({ "ok": false, "ran": false, "error": error }));
-        }
-    })
+    send(cfg, options, path, body).map_err(|error| refused(options.json, error))
 }
 
 fn send(cfg: &Config, options: &Options, path: &str, mut body: Value) -> Result<Value, String> {
@@ -543,12 +527,7 @@ pub fn status(cfg: &Config, options: &Options) -> Result<bool, String> {
 pub fn attach(cfg: &Config, options: &Options, force: bool) -> Result<bool, String> {
     let start = Instant::now();
     let json = options.json;
-    let refused = |error: String| {
-        if json {
-            println!("{}", json!({ "ok": false, "ran": false, "error": error }));
-        }
-        error
-    };
+    let refused = |error| refused(json, error);
     let devs = devs();
     let here = devs.iter().find(|d| serves(d, &cfg.root));
     let here = here.ok_or_else(|| refused("opossum dev is not running here".to_owned()))?;
@@ -629,6 +608,14 @@ pub fn attach(cfg: &Config, options: &Options, force: bool) -> Result<bool, Stri
         ms / 1000.0
     );
     Ok(true)
+}
+
+/// An error that never ran (exit status 2), which `--json` prints as `{"ok": false, "ran": false, "error"}` too.
+fn refused(json: bool, error: String) -> String {
+    if json {
+        println!("{}", json!({ "ok": false, "ran": false, "error": error }));
+    }
+    error
 }
 
 /// An `ok: false` answer (exit status 1): it was asked, and did not come to pass.
