@@ -72,9 +72,30 @@ pub fn metadata_type(state: &mut TransformState<'_>, t: P<Type>) -> Option<P<Typ
     t.types().iter().copied().find(|&member| marker(state, member).is_some())
 }
 
-/// `declaration` carries a `@metadata` JSDoc tag that says `macro`.
+/// The function-like `declaration` is tagged `@metadata macro`: on any declaration of its symbol (an overload), or on
+/// what holds its JSDoc (the variable statement of `const f = () => {}`, the property of `f: () => void`).
 pub fn is_metadata_macro(declaration: P<Node>) -> bool {
-    declaration.jsdoc(None).iter().any(|doc| {
+    let declarations = declaration.symbol().map_or(std::slice::from_ref(&declaration), |s| s.declarations());
+    declarations.iter().any(|&declaration| {
+        let mut host = Some(declaration);
+        if let Some(parent) = declaration.parent()
+            && matches!(parent.kind(), Kind::PropertySignature | Kind::PropertyDeclaration)
+        {
+            host = Some(parent);
+        }
+        while let Some(node) = host {
+            if has_metadata_macro_tag(node) {
+                return true;
+            }
+            host = tsrs_ast::get_next_jsdoc_comment_location(node);
+        }
+        false
+    })
+}
+
+/// `node`'s own JSDoc has a `@metadata` tag that says `macro`.
+fn has_metadata_macro_tag(node: P<Node>) -> bool {
+    node.jsdoc(None).iter().any(|doc| {
         doc.as_jsdoc().tags.is_some_and(|tags| {
             tags.nodes().iter().any(|&tag| {
                 tag.kind() == Kind::JSDocUnknownTag
