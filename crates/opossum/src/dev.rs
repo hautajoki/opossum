@@ -701,7 +701,7 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
             clash(&tree, &self.root, path, &file).map_err(|e| (409, e))?;
         }
 
-        // a copy, so a root's stamp stays out of the file
+        // a copy, so a root's stamp stays out of the file, and so does what routes mount inside it (src/ makes that)
         let lookup: Vec<String> = names.iter().map(|n| luau_string(n)).collect();
         let source = format!(
             "local at: Instance = game
@@ -713,10 +713,18 @@ end
 local copy = at:Clone()
 if not copy then error(`{{at:GetFullName()}} is not Archivable, so it cannot be copied`, 0) end
 copy:SetAttribute(\"opossum\", nil)
+for _, names in {{ {} }} do
+	local synced: Instance? = copy
+	for _, name in names do
+		synced = synced and synced:FindFirstChild(name)
+	end
+	if synced then synced:Destroy() end
+end
 local data = game:GetService(\"SerializationService\"):SerializeInstancesAsync({{ copy }})
 copy:Destroy()
 return at.ClassName, buffer.tostring(game:GetService(\"EncodingService\"):Base64Encode(data))",
-            lookup.join(", ")
+            lookup.join(", "),
+            mounted(&tree, path).join(", ")
         );
         let message = json!({ "t": "exec", "name": "pull", "source": source, "limit": PULL_LIMIT });
         let ran = self.server.exec(Realm::Edit, message, timeout(request), false).map_err(|e| (503, e))?;
@@ -934,6 +942,24 @@ fn destination(tree: &Tree, root: &Path, path: &str) -> Result<PathBuf, String> 
         return Err(format!("{parent} is made by a properties file, not a directory: name a file"));
     }
     Ok(dir.join(format!("{name}.rbxm")))
+}
+
+/// What routes mount inside the place instance at `path`, each as a Luau list of names from it: the tops of the
+/// subtrees `src/` makes there, which a pull leaves out of the file.
+fn mounted(tree: &Tree, path: &str) -> Vec<String> {
+    let Some(id) = tree.find(path) else { return Vec::new() };
+    let synced = |d: &place::Id| {
+        tree.get(*d).is_some_and(|n| {
+            n.origin != place::Origin::Place && tree.get(n.parent).is_some_and(|p| p.origin == place::Origin::Place)
+        })
+    };
+    let base = tree.path_of(id).len() + 1;
+    let tops = tree.preorder_from(id).into_iter().skip(1).filter(synced);
+    tops.map(|d| {
+        let below = tree.path_of(d)[base..].split('/').map(luau_string).collect::<Vec<_>>();
+        format!("{{ {} }}", below.join(", "))
+    })
+    .collect()
 }
 
 /// Refuses a `file` of `place/` that another entry of its directory would make the same instance as: the place reader
@@ -1189,7 +1215,10 @@ mod tests {
         fresh.add_place(&place);
         let module = place::Source::new(Arc::from("return 1"));
         let file = Some(Arc::from(root.join("src/shared/m.luau")));
-        fresh.set_script("ReplicatedStorage/shared/m", place::ScriptKind::Module, module, file).unwrap();
+        fresh.set_script("ReplicatedStorage/shared/m", place::ScriptKind::Module, module.clone(), file).unwrap();
+        // a route mounting inside a place model
+        let script = Some(Arc::from(root.join("src/ctl/x.luau")));
+        fresh.set_script("ReplicatedStorage/models/hull/ctl/x", place::ScriptKind::Module, module, script).unwrap();
         let mut tree = Tree::new();
         tree.update(fresh);
         let at = |path| destination(&tree, &root, path).map(|f| f.strip_prefix(&root).unwrap().display().to_string());
@@ -1225,6 +1254,8 @@ mod tests {
         );
         // a model.json and what it holds, a folder, a module, and what is under neither files nor a service
         assert_eq!(refused, [true; 7]);
+        // what routes mount inside it stays out of its file
+        assert_eq!(mounted(&tree, "ReplicatedStorage/models/hull"), ["{ \"ctl\" }"]);
         assert_eq!(clashes.each_ref().map(Result::is_err), [true, true, false, false], "{clashes:?}");
         assert_eq!(base64("TWFueQ=="), Some(b"Many".to_vec()));
         assert_eq!(base64("TW!u"), None);

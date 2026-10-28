@@ -473,17 +473,19 @@ over 15 runs in a row, 24 s in the play server; the 176 suites hexagon also runs
 ## Pull
 
 `opossum pull` (DESIGN.md, Pull) is an exec dev writes, run in edit: it finds the instance by name from `game`, clones
-it, clears the clone's `opossum` attribute and returns its class and `EncodingService:Base64Encode` of
-`SerializationService:SerializeInstancesAsync({clone})`, with a `limit` that lets the model through. Writing the file
-alone would sync wrong: the root is dirty (what the user built or tuned there cleared its stamp), but the server does not
-know, and the diff of the new build inserts every node it has not mapped (what was built in Studio) beside the live
-instance, which the next verify removes as a stray (measured: a second copy). So before writing into `place/`, dev
-calls `Server::adopt(path)`: each edit subscriber keeps the path with the hash of the tree's node there now (0 for
-none), and in the first frame whose tree differs there verifies that node's root instead of diffing it. The reconcile
-pairs the live instances by `(name, class, ordinal)`, as a connect does, so they keep their identity, and removes only
-what the files do not hold. A build before the file is read leaves the path waiting; a pull whose content equals the
-files' leaves it waiting until the next change there, which then verifies its root (a verify is always correct, only
-larger). A file written outside `place/` is not adopted, and the play server, which never verifies, is not told.
+it, clears the clone's `opossum` attribute, destroys in the clone what routes mount inside it (each by its names from
+the instance, which dev lists: the tree's own copy comes from `src/`, so the file must not hold another) and returns its
+class and `EncodingService:Base64Encode` of `SerializationService:SerializeInstancesAsync({clone})`, with a `limit` that
+lets the model through. Writing the file alone would sync wrong: the root is dirty (what the user built or tuned there
+cleared its stamp), but the server does not know, and the diff of the new build inserts every node it has not mapped
+(what was built in Studio) beside the live instance, which the next verify removes as a stray (measured: a second copy).
+So before writing into `place/`, dev calls `Server::adopt(path)`: each edit subscriber keeps the path with the hash of
+the tree's node there now (0 for none), and in the first frame whose tree differs there verifies that node's root
+instead of diffing it. The reconcile pairs the live instances by `(name, class, ordinal)`, as a connect does, so they
+keep their identity, and removes only what the files do not hold. A build before the file is read leaves the path
+waiting; a pull whose content equals the files' leaves it waiting until the next change there, which then verifies its
+root (a verify is always correct, only larger). A file written outside `place/` is not adopted, and the play server,
+which never verifies, is not told.
 
 ## Attach
 
