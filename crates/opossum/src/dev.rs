@@ -28,7 +28,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher};
@@ -451,7 +451,7 @@ struct Execs {
     stale: Arc<Mutex<Stale>>,
     index: Arc<Mutex<LogIndex>>,
     playtest: Playtests,
-    /// Held through a play, stop or pull, so two never race each other's checks or files.
+    /// Held through a play, stop or pull, so two never race each other's checks or files ([`Execs::lifecycle`]).
     lifecycle: Arc<Mutex<()>>,
     out: Out,
     root: PathBuf,
@@ -557,7 +557,7 @@ impl Execs {
     /// server holds the newest build it will: `{ok, realms, gen, fresh, stale, ms}`, or `ok` false with an `error` when they
     /// did not come within the time limit. An error status when it never started.
     fn play(&self, request: &Value) -> Result<Value, (u16, String)> {
-        let _lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        let _lifecycle = self.lifecycle()?;
         let start = Instant::now();
         let (limit, run) = (timeout(request), request["run"] == true);
         let connected = self.server.realms();
@@ -609,7 +609,7 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
     /// disconnected, with the tally of what they logged: `{ok, errors, warnings, first, ms}`, `first` the first error
     /// lines `{realm, text, file, line}`. An error status when nothing runs or it could not be asked to end.
     fn stop(&self, request: &Value) -> Result<Value, (u16, String)> {
-        let _lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        let _lifecycle = self.lifecycle()?;
         let start = Instant::now();
         let limit = timeout(request);
         let connected = self.server.realms();
@@ -648,7 +648,7 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
     /// the build reading it is published, `{ok, path, class, file, bytes, gen, ms, warning?}`; an error status when
     /// nothing was written.
     fn pull(&self, request: &Value) -> Result<Value, (u16, String)> {
-        let _lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        let _lifecycle = self.lifecycle()?;
         let start = Instant::now();
         let path = request["path"].as_str().unwrap_or("");
         let names: Vec<&str> = path.split('/').collect();
@@ -789,6 +789,16 @@ return at.ClassName, buffer.tostring(game:GetService(\"EncodingService\"):Base64
             std::thread::sleep(Duration::from_millis(10));
         }
         Ok(json!({ "ok": true, "realms": names }))
+    }
+
+    /// The lifecycle lock for a play, stop or pull. One asked while another holds it is refused, never queued: it could
+    /// wait out the other's whole time limit and then act long after its CLI gave up, on a playtest started since.
+    fn lifecycle(&self) -> Result<MutexGuard<'_, ()>, (u16, String)> {
+        match self.lifecycle.try_lock() {
+            Ok(guard) => Ok(guard),
+            Err(TryLockError::Poisoned(e)) => Ok(e.into_inner()),
+            Err(TryLockError::WouldBlock) => Err((409, "a play, stop or pull is running".into())),
+        }
     }
 
     /// The files build `generation` holds older code of than their source.
