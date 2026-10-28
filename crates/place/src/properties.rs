@@ -72,7 +72,8 @@ pub fn read_properties(dir: &Path, diags: &mut Vec<Diag>) -> Properties {
                 for entry in entries {
                     match props.entries.iter().find(|e| e.path == entry.path) {
                         Some(first) => {
-                            let message = format!("{} is already set in {}", entry.path, first.file.display());
+                            let first = first.file.file_name().unwrap_or_default().to_string_lossy();
+                            let message = format!("{} is already set in place/{first}", entry.path);
                             diags.push(Diag::error("place.pathClash", &file, message));
                         }
                         None => props.entries.push(entry),
