@@ -135,27 +135,44 @@ fn parse(text: &str, root: PathBuf) -> Result<Config, String> {
 const MOVED: &str = "[place] moved to properties files, place/*.toml; `opossum migrate` moves it there";
 
 /// opossum.toml's text without its `[place]` sections, and the table they held; None when it has none. Every other
-/// byte stays, comments included. Err when `[place]` is spelled in a way a section cut does not remove.
+/// byte stays, comments included: the comments and blank lines a cut section ends with stay when they lead into a
+/// section that stays, as its own. Only the blank lines a cut at the end of the file leaves trailing go. Err when
+/// `[place]` is spelled in a way a section cut does not remove.
 pub fn cut_place(text: &str) -> Result<Option<(String, toml::Table)>, String> {
     let doc: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
     let Some(place) = doc.get("place") else { return Ok(None) };
     let place = table(place, "place")?.clone();
     let mut out = String::with_capacity(text.len());
     let mut cutting = false;
+    // the comment and blank lines since the cut section's last key
+    let mut held: Vec<&str> = Vec::new();
     for line in text.split_inclusive('\n') {
         // a header line parses on its own as the table it opens
         if line.trim_start().starts_with('[')
             && let Ok(header) = line.parse::<toml::Table>()
         {
-            cutting = header.contains_key("place");
+            let place = header.contains_key("place");
+            if cutting && !place {
+                // the blank lines before them only set the cut section apart
+                out.extend(held.iter().copied().skip_while(|l| l.trim().is_empty()));
+            }
+            held.clear();
+            cutting = place;
         }
+        let bare = line.trim();
         if !cutting {
             out.push_str(line);
+        } else if bare.is_empty() || bare.starts_with('#') {
+            held.push(line);
+        } else {
+            held.clear();
         }
     }
-    // the blank line that set the cut section apart now ends the file
-    while out.ends_with("\n\n") {
-        out.pop();
+    if cutting {
+        // the blank line that set the cut section apart now ends the file
+        while out.ends_with("\n\n") {
+            out.pop();
+        }
     }
     let mut rest = doc;
     rest.remove("place");
@@ -188,12 +205,32 @@ mod tests {
 
     #[test]
     fn cutting_place_keeps_the_rest_byte_for_byte() {
-        let text = "name = \"x\"  # the name\n\n[place.Lighting]   # sky\nClockTime = 16.9\n\n[place.\"Workspace/Terrain\"]\nWaterColor = [1, 2, 3]\n\n[routes]\n# shared code\nshared = \"ReplicatedStorage/shared\"\n\n[place]\nHttpService = { HttpEnabled = true }\n";
+        let text = r#"name = "x"  # the name
+
+[place.Lighting]   # sky
+ClockTime = 16.9
+
+[place."Workspace/Terrain"]
+# the cut takes this comment with its section
+WaterColor = [1, 2, 3]
+
+# but leaves this one, which leads into [routes]
+[routes]
+# shared code
+shared = "ReplicatedStorage/shared"
+
+[place]
+HttpService = { HttpEnabled = true }
+"#;
+        let kept = r#"name = "x"  # the name
+
+# but leaves this one, which leads into [routes]
+[routes]
+# shared code
+shared = "ReplicatedStorage/shared"
+"#;
         let (rest, place) = cut_place(text).unwrap().unwrap();
-        assert_eq!(
-            rest,
-            "name = \"x\"  # the name\n\n[routes]\n# shared code\nshared = \"ReplicatedStorage/shared\"\n"
-        );
+        assert_eq!(rest, kept);
         assert_eq!(place.keys().collect::<Vec<_>>(), ["Lighting", "Workspace/Terrain", "HttpService"]);
         assert!(cut_place(&rest).unwrap().is_none());
     }
