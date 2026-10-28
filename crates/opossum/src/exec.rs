@@ -153,9 +153,11 @@ fn print_output(answer: &Value) {
     if answer["fresh"] == Value::Bool(false) {
         let realm = answer["realm"].as_str().unwrap_or("?");
         let generation = &answer["gen"];
+        // a client never takes frames; the play server does with hot reload
+        let hint = if realm == "server" { ", or turn on hotReload" } else { "" };
         eprintln!(
             "opossum: the {realm} DataModel takes no frames and runs build {generation}, older than the files (restart \
-             the playtest, or turn on hotReload for the server)"
+             the playtest{hint})"
         );
     }
 }

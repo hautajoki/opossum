@@ -280,9 +280,11 @@ impl Server {
         let (generation, fresh) = match first {
             Reply::Started { generation, fresh } => (generation, fresh),
             Reply::Stale { generation, published } => {
+                // a client never takes frames; the play server does with hot reload
+                let hint = if realm == Realm::Server { ", or turn on hotReload" } else { "" };
                 return Err(format!(
                     "the {name} DataModel takes no frames and runs older code than the files (build {generation}, \
-                     newest {published}): restart the playtest, or turn on hotReload for the server"
+                     newest {published}): restart the playtest{hint}"
                 ));
             }
             Reply::Done(_) => unreachable!("the reader answers only an exec the writer sent"),
