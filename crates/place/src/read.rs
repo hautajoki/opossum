@@ -2,7 +2,8 @@
 //! is ReplicatedStorage; `starter-player-scripts` is StarterPlayer's StarterPlayerScripts). Inside, directories
 //! are Folders, `.model.json` files are instance trees, `.rbxm`/`.rbxmx` files are Roblox models and `.txt`
 //! files are StringValues. Loose top-level `*.toml` files are properties files ([`crate::properties`]); `place/assets`
-//! (tessera's upload root) and other loose top-level files are not content.
+//! (tessera's upload root) and other loose top-level files are not content. Rojo's formats, `*.meta.json` files and
+//! `Rojo_Id` / `Rojo_Target_<Property>` attributes, are errors that `opossum migrate` converts.
 //!
 //! `dev` keeps the [`Place`] it read and re-reads only the entry a file event touched ([`Place::replace_entry`]).
 //! Entry order is not kept in the dom: a re-read entry lands last among its siblings, so [`Place::entry_name`] gives
@@ -441,7 +442,8 @@ impl Reader<'_> {
                 Err(e) => self.diags.push(Diag::error("place.io", path, e.to_string())),
             }
         } else if name.ends_with(".meta.json") {
-            self.diags.push(Diag::note("place.ignored", path, "properties come from place/*.toml"));
+            let message = "a Rojo meta file; properties live in place/*.toml, and `opossum migrate` moves them there";
+            self.diags.push(Diag::error("place.rojoMeta", path, message));
         } else {
             self.diags.push(Diag::note("place.ignored", path, "not place content"));
         }
@@ -453,6 +455,13 @@ impl Reader<'_> {
             .and_then(|text| serde_json::from_str::<Value>(&text).map_err(|e| format!("invalid JSON: {e}")));
         match json {
             Ok(json) => {
+                let rojo = crate::migrate::rojo_attributes(&json);
+                if rojo > 0 {
+                    let message = format!(
+                        "{rojo} Rojo_Id / Rojo_Target_ attributes are Rojo refs, which set nothing; `opossum migrate` turns them into paths"
+                    );
+                    self.diags.push(Diag::error("place.rojoRef", path, message));
+                }
                 if let Some(r) = self.model(&json, name, parent, path) {
                     self.place.set_file(r, path.to_path_buf());
                 }
