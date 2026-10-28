@@ -45,6 +45,8 @@ pub struct MultiTransformState {
     pub get_module_exports_alias_map_cache: FxHashMap<P<Symbol>, Rc<FxHashMap<P<Symbol>, Expr>>>,
     /// rbxts-rs: whether a declaration file is under `node_modules/@rbxts/types` (`isRobloxType`, `isBuiltinDeclaration`).
     pub is_rbxts_types_file_cache: FxHashMap<P<SourceFile>, bool>,
+    /// opossum: which parameters of each called declaration a call may have filled in.
+    pub callsite_plans: FxHashMap<P<Node>, crate::callsite::Plan>,
 }
 
 impl MultiTransformState {

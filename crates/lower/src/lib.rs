@@ -22,6 +22,7 @@ pub mod util;
 pub mod vector;
 pub mod ecs;
 pub mod callsite;
+pub mod flamework;
 
 pub use groups::{Lowered, lower_files};
 pub use locate::{Location, Locator, Realm};

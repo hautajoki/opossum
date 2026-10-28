@@ -234,6 +234,20 @@ pub mod errors {
     pub fn missing_macro(node: P<Node>, name: &str) -> P<Diagnostic> {
         at_node(node, new_ad_hoc_message(&format!("macro.missing: `{name}` has no lowering")), Category::Error)
     }
+
+    /// `metadata.untagged`: a call leaves out a parameter typed with Flamework metadata of a function not tagged
+    /// `@metadata macro`, which would pass `nil`.
+    pub fn untagged_metadata(node: P<Node>) -> P<Diagnostic> {
+        let text = "metadata.untagged: a left-out parameter holds Flamework metadata, but the function is not tagged \
+                    `@metadata macro`";
+        at_node(node, new_ad_hoc_message(text), Category::Error)
+    }
+
+    /// `metadata.unsupported`: a `@metadata macro`'s parameter type holds `part`, which has no compile-time value.
+    pub fn unsupported_metadata(node: P<Node>, part: &str) -> P<Diagnostic> {
+        let text = format!("metadata.unsupported: {part} has no compile-time value");
+        at_node(node, new_ad_hoc_message(&text), Category::Error)
+    }
 }
 
 /// rbxts-rs: a compiler bug caught while transforming a file (a failed assertion or a panic).

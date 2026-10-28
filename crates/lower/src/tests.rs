@@ -25,7 +25,8 @@ declare namespace math { function ceil(x: number): number; function floor(x: num
 declare function print(...args: Array<unknown>): void;
 "#;
 
-/// Lowers `files` (`name` under `src/`, source text) and renders each, by name. Panics on a lowering error.
+/// Lowers `files` (`name` under `src/`, or under the project root for a `node_modules/` package file; source text)
+/// and renders each source, by name. Panics on a lowering error.
 /// `options.native_files` name files under `src/` too.
 pub fn lower(files: &[(&str, &str)], mut options: Options) -> FxHashMap<String, String> {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -44,6 +45,12 @@ pub fn lower(files: &[(&str, &str)], mut options: Options) -> FxHashMap<String, 
     options.native_files = options.native_files.iter().map(|name| format!("{root_name}/src/{name}")).collect();
     let mut paths = Vec::new();
     for (name, text) in files {
+        if name.starts_with("node_modules/") {
+            let path = root.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+            continue;
+        }
         let path = format!("{root_name}/src/{name}");
         std::fs::write(&path, text).unwrap();
         paths.push(path);
