@@ -44,6 +44,8 @@ const FENCE_WAIT: Duration = Duration::from_secs(60);
 pub const MAX_TIMEOUT: f64 = 86400.0;
 /// The error lines of a playtest `opossum stop` shows.
 const FIRST_ERRORS: usize = 5;
+/// The changes to the stale files [`Stale`] keeps.
+const STALE_KEPT: usize = 64;
 
 /// Instance full name (`ServerScriptService.server.app`) → its file relative to the root, and for a compiled
 /// module the map from output lines to TypeScript lines.
@@ -81,6 +83,28 @@ struct Playtest {
 }
 
 type Playtests = Arc<(Mutex<Playtest>, Condvar)>;
+
+/// The files each build left running older code than their source ([`Session::stale`], relative to the root), from
+/// the generation they changed in, oldest first: an answer names the ones of the build its DataModel holds.
+#[derive(Default)]
+struct Stale(Vec<(u32, Vec<String>)>);
+
+impl Stale {
+    fn set(&mut self, generation: u32, files: Vec<String>) {
+        if self.0.last().is_some_and(|(_, last)| *last == files) {
+            return;
+        }
+        if self.0.len() == STALE_KEPT {
+            self.0.remove(0);
+        }
+        self.0.push((generation, files));
+    }
+
+    /// The stale files of build `generation`; null when it is not known (0, or older than the changes kept).
+    fn of(&self, generation: u32) -> Value {
+        self.0.iter().rev().find(|(g, _)| *g <= generation).map_or(Value::Null, |(_, files)| json!(files))
+    }
+}
 
 fn fence_dir(root: &Path) -> PathBuf {
     editor::dir(root).join("fence")
@@ -129,9 +153,11 @@ fn session(cfg: Config, out: &Out) -> Result<bool, String> {
         .spawn(move || show_reports(reports, &printer, &tally, &studio, port))
         .map_err(|e| e.to_string())?;
     let fences: Arc<Mutex<Fences>> = Arc::default();
+    let stale: Arc<Mutex<Stale>> = Arc::default();
     let execs = Execs {
         server: server.clone(),
         fences: Arc::clone(&fences),
+        stale: Arc::clone(&stale),
         index: Arc::clone(&index),
         playtest,
         lifecycle: Arc::default(),
@@ -152,10 +178,18 @@ fn session(cfg: Config, out: &Out) -> Result<bool, String> {
     let mut watcher = notify::recommended_watcher(tx).map_err(|e| format!("watcher: {e}"))?;
     let mut cfg = cfg;
     // ids live as long as the server, across config reloads
-    let mut tree = Tree::new();
+    let mut dev = Dev {
+        server: &server,
+        tree: Tree::new(),
+        index: &index,
+        fences: &fences,
+        stale: &stale,
+        out,
+        shown: Vec::new(),
+    };
     loop {
         watch(&mut watcher, &cfg)?;
-        let reload = serve(cfg, &server, &mut tree, &index, &fences, &events, out)?;
+        let reload = serve(cfg, &mut dev, &events)?;
         cfg = reload;
         server.configure(cfg.name.clone(), cfg.place.unwrap_or(0), cfg.place.is_none(), cfg.hot_reload);
         let _ = editor::write(&cfg.root, &cfg.ts);
@@ -184,32 +218,26 @@ fn fence_of(path: &Path) -> Option<u64> {
     (editor && dir.file_name()? == "fence").then(|| path.file_name()?.to_str()?.parse().ok()).flatten()
 }
 
-/// What a burst of edits did to the tree.
+/// The session's tree and what publishing a build into it reaches, for the whole run.
 struct Dev<'a> {
     server: &'a sync::Server,
-    tree: &'a mut Tree,
+    tree: Tree,
     index: &'a Mutex<LogIndex>,
     fences: &'a Mutex<Fences>,
+    stale: &'a Mutex<Stale>,
     out: &'a Out,
     shown: Vec<String>,
 }
 
 /// Builds and serves one configuration until its config files change; returns the new configuration.
-fn serve(
-    cfg: Config,
-    server: &sync::Server,
-    tree: &mut Tree,
-    index: &Mutex<LogIndex>,
-    fences: &Mutex<Fences>,
-    events: &Receiver<notify::Result<notify::Event>>,
-    out: &Out,
-) -> Result<Config, String> {
+fn serve(cfg: Config, dev: &mut Dev, events: &Receiver<notify::Result<notify::Event>>) -> Result<Config, String> {
     let start = Instant::now();
+    let out = dev.out;
     // a fence written before this full build read the files is covered by it
-    let covered = fences.lock().unwrap_or_else(|e| e.into_inner()).next;
+    let covered = dev.fences.lock().unwrap_or_else(|e| e.into_inner()).next;
     let mut session = Session::new(cfg, None)?;
     let stats = session.build()?;
-    let mut dev = Dev { server, tree, index, fences, out, shown: Vec::new() };
+    dev.shown.clear();
     dev.reshape(&mut session);
     dev.publish(&session, false, start, &stats.times, 0, stats.lowered);
     dev.answer(covered);
@@ -366,9 +394,9 @@ impl Dev<'_> {
         self.index.lock().unwrap_or_else(|e| e.into_inner()).extend(entries);
     }
 
-    /// Shows the build's errors and warnings when they differ from the last ones shown, and says it built; then
-    /// publishes the tree, so Studio's acks of the generation always come after. The session is the only publisher,
-    /// so the generation is the next one.
+    /// Shows the build's errors and warnings when they differ from the last ones shown, says it built and keeps its
+    /// stale files; then publishes the tree, so Studio's acks of the generation always come after. The session is the
+    /// only publisher, so the generation is the next one.
     fn publish(
         &mut self,
         session: &Session,
@@ -400,6 +428,8 @@ impl Dev<'_> {
             errors,
             warnings: diags.len() - errors,
         });
+        let stale = session.stale().iter().map(|f| f.strip_prefix(root).unwrap_or(f).display().to_string()).collect();
+        self.stale.lock().unwrap_or_else(|e| e.into_inner()).set(generation, stale);
         let published = self.server.publish(self.tree.clone());
         debug_assert_eq!(published, generation);
     }
@@ -411,6 +441,7 @@ impl Dev<'_> {
 struct Execs {
     server: sync::Server,
     fences: Arc<Mutex<Fences>>,
+    stale: Arc<Mutex<Stale>>,
     index: Arc<Mutex<LogIndex>>,
     playtest: Playtests,
     /// Held through a play or stop, so two never race each other's checks.
@@ -495,6 +526,7 @@ impl Execs {
             "realm": realm.name(),
             "gen": generation,
             "fresh": fresh,
+            "stale": self.stale(generation),
             "ms": ms,
             "output": output,
             "values": values,
@@ -506,7 +538,7 @@ impl Execs {
 
     /// `{root, run?, timeout?}` (DESIGN.md, Play): once edit holds every save made before the request, starts a Play
     /// Solo (or with `run`, Run) playtest from the edit plugin, and answers when its DataModels connected and the play
-    /// server holds the newest build it will: `{ok, realms, gen, fresh, ms}`, or `ok` false with an `error` when they
+    /// server holds the newest build it will: `{ok, realms, gen, fresh, stale, ms}`, or `ok` false with an `error` when they
     /// did not come within the time limit. An error status when it never started.
     fn play(&self, request: &Value) -> Result<Value, (u16, String)> {
         let _lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
@@ -553,7 +585,8 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
         let message = json!({ "t": "exec", "name": "play", "source": "return" });
         let ran = self.server.exec(Realm::Server, message, limit, false).map_err(|e| (503, e))?;
         let ms = start.elapsed().as_secs_f64() * 1000.0;
-        Ok(json!({ "ok": true, "realms": realms, "gen": ran.generation, "fresh": ran.fresh, "ms": ms }))
+        let (generation, fresh, stale) = (ran.generation, ran.fresh, self.stale(ran.generation));
+        Ok(json!({ "ok": true, "realms": realms, "gen": generation, "fresh": fresh, "stale": stale, "ms": ms }))
     }
 
     /// `{root, timeout?}` (DESIGN.md, Play): ends the running playtest from its server and answers once its DataModels
@@ -592,6 +625,11 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         let (errors, warnings, first) = (playtest.errors, playtest.warnings, playtest.first.clone());
         Ok(json!({ "ok": true, "errors": errors, "warnings": warnings, "first": first, "ms": ms }))
+    }
+
+    /// The files build `generation` holds older code of than their source.
+    fn stale(&self, generation: u32) -> Value {
+        self.stale.lock().unwrap_or_else(|e| e.into_inner()).of(generation)
     }
 
     /// Runs one of play's and stop's own snippets in the newest DataModel of `realm` and returns the plugin's result.

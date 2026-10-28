@@ -602,6 +602,16 @@ impl Session {
         tree
     }
 
+    /// The compiled modules whose current source has no output: it failed to compile, so the tree holds their last
+    /// good output, or nothing.
+    pub fn stale(&self) -> Vec<&Path> {
+        let failed = |name: &str| {
+            !self.compiled.contains_key(name) || self.file_diags.get(name).is_some_and(|d| d.iter().any(Diag::is_error))
+        };
+        let modules = self.scan.modules.iter().filter(|m| m.kind != route::Kind::Luau && failed(&slashed(&m.file)));
+        modules.map(|m| m.file.as_path()).collect()
+    }
+
     /// Whether the tree mounts the runtime library: a compiled module or a package requires it.
     pub fn needs_runtime(&self) -> bool {
         self.scan.modules.iter().any(|m| self.compiled.get(&slashed(&m.file)).is_some_and(|c| c.runtime))

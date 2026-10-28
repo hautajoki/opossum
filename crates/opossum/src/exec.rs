@@ -59,7 +59,9 @@ pub fn exec(cfg: &Config, options: &Options, source: Source) -> Result<bool, Str
             _ => println!("{value}"),
         }
     }
-    Ok(print_error(&answer))
+    let ok = print_error(&answer);
+    print_stale(&answer);
+    Ok(ok)
 }
 
 /// Runs hexagon's in-engine runner (`mode` "test" or "bench") over every matching suite in the DataModel.
@@ -99,6 +101,7 @@ return HttpService:JSONDecode(require(script.cloud_runner).run({{ mode = \"{mode
     print_output(&answer);
     let Some(report) = report else {
         print_error(&answer);
+        print_stale(&answer);
         return Ok(false);
     };
     let labels = |case: &Value| {
@@ -139,6 +142,7 @@ return HttpService:JSONDecode(require(script.cloud_runner).run({{ mode = \"{mode
         answer["realm"].as_str().unwrap_or("?"),
         answer["gen"]
     );
+    print_stale(&answer);
     Ok(report["ok"].as_bool() == Some(true))
 }
 
@@ -162,6 +166,7 @@ pub fn play(cfg: &Config, options: &Options, run: bool) -> Result<bool, String> 
             "opossum: the play server holds an older build than the files (restart the playtest, or turn on hotReload)"
         );
     }
+    print_stale(&answer);
     Ok(true)
 }
 
@@ -207,6 +212,24 @@ fn print_output(answer: &Value) {
              the playtest{hint})"
         );
     }
+}
+
+/// One line naming the files whose source did not compile, so the build the DataModel holds has their last good
+/// output, or none: whatever ran there met older code of them than the files.
+fn print_stale(answer: &Value) {
+    const SHOWN: usize = 5;
+    let files: Vec<&str> = answer["stale"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    if files.is_empty() {
+        return;
+    }
+    let mut list = files[..files.len().min(SHOWN)].join(", ");
+    if files.len() > SHOWN {
+        list.push_str(&format!(" and {} more", files.len() - SHOWN));
+    }
+    let (n, s) = (files.len(), if files.len() == 1 { "" } else { "s" });
+    eprintln!(
+        "opossum: warning: {n} file{s} did not compile, so Studio holds their last good output (or none): {list}"
+    );
 }
 
 /// Prints the script's error and traceback, if it failed; returns whether it ran clean.
