@@ -527,8 +527,8 @@ impl Session {
     }
 
     /// `place/` changed at `path`: re-reads that entry, replacing the diagnostics of what it re-read (the properties
-    /// files among it) and every unresolved ref (a re-read reports those whole). None when `path` is no content; Some(true) when
-    /// all of `place/` was read again, which covers every other event of the burst.
+    /// files among it) and every unresolved ref (a re-read reports those whole). None when `path` is no content;
+    /// Some(true) when all of `place/` was read again, which covers every other event of the burst.
     pub fn place_changed(&mut self, path: &Path) -> Option<bool> {
         let dir = self.cfg.root.join("place");
         let place = self.place.as_mut()?;

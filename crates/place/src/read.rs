@@ -101,7 +101,8 @@ impl Place {
     }
 
     /// The directory entry an instance was read from (`boat.model.json`, `models`), None for anything else: services,
-    /// nested containers, what a properties file made and what is inside a model file. Siblings that are entries sort by it.
+    /// nested containers, what a properties file made and what is inside a model file. Siblings that are entries sort
+    /// by it.
     pub fn entry_name(&self, r: Ref) -> Option<&str> {
         self.entries.get(&r).map(String::as_str)
     }
@@ -191,8 +192,9 @@ impl Place {
     /// on its way that is new, gone or not a directory, together with every sibling entry that makes the same instance
     /// name (the first, by name, wins, as in a full read). An event on a service directory or `place/` itself reads
     /// everything again, and so does one on a properties file (rare: properties may make instances, which only a full
-    /// read orders) or a top-level meta file (whose error only a full read reports). Afterwards the properties files are read and applied again and every ref that pointed into the
-    /// re-read entries, or did not resolve, is resolved again.
+    /// read orders) or a top-level meta file (whose error only a full read reports). Afterwards the properties files
+    /// are read and applied again and every ref that pointed into the re-read entries, or did not resolve, is resolved
+    /// again.
     ///
     /// Returns the files and directories re-read, whose diagnostics the returned ones replace (the properties files
     /// among them), together with every `place.badRef`; None when `path` is no content.
@@ -462,7 +464,8 @@ impl Reader<'_> {
                 let rojo = crate::migrate::rojo_attributes(&json);
                 if rojo > 0 {
                     let message = format!(
-                        "{rojo} Rojo_Id / Rojo_Target_ attributes are Rojo refs, which set nothing; `opossum migrate` turns them into paths"
+                        "{rojo} Rojo_Id / Rojo_Target_ attributes are Rojo refs, which set nothing; \
+                         `opossum migrate` turns them into paths"
                     );
                     self.diags.push(Diag::error("place.rojoRef", path, message));
                 }
