@@ -154,7 +154,8 @@ fn build(cfg: Config, profile: Option<&str>, out: Option<PathBuf>, emit: Option<
     let mut session = Session::new(cfg, profile)?;
     let stats = session.build()?;
     let t = Instant::now();
-    let mut place = session.mount(false);
+    let tree = session.tree(false);
+    let mut place = tree.to_place();
     let mount = ms(t);
     let root = session.cfg.root.clone();
     let ok = report(&session.diagnostics(), &root);
@@ -168,7 +169,7 @@ fn build(cfg: Config, profile: Option<&str>, out: Option<PathBuf>, emit: Option<
     let packs = place::read_texture_packs(&root.join("place/texture-packs.json"))?;
     let file = std::fs::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     place::write_rbxl(&mut place, &packs, std::io::BufWriter::new(file))?;
-    editor::write_if_changed(&dir.join("sourcemap.json"), &place::sourcemap_json(&place, Some(&root)))?;
+    editor::write_if_changed(&dir.join("sourcemap.json"), &tree.sourcemap_json(Some(&root)))?;
     println!("wrote {}", path.display());
     let modules = session.scan.modules.len();
     println!(
@@ -183,7 +184,7 @@ fn check(cfg: Config, profile: Option<&str>, json: bool) -> Result<bool, String>
     let start = Instant::now();
     let mut session = Session::new(cfg, profile)?;
     let stats = session.build()?;
-    session.mount(false);
+    session.tree(false);
     let diags = session.diagnostics();
     let root = &session.cfg.root;
     if json {
@@ -199,10 +200,10 @@ fn check(cfg: Config, profile: Option<&str>, json: bool) -> Result<bool, String>
 fn sourcemap(cfg: Config) -> Result<bool, String> {
     let mut session = Session::new(cfg, None)?;
     session.shapes()?;
-    let place = session.mount(true);
+    let tree = session.tree(true);
     let root = &session.cfg.root;
     let path = editor::dir(root).join("sourcemap.json");
-    editor::write_if_changed(&path, &place::sourcemap_json(&place, Some(root)))?;
+    editor::write_if_changed(&path, &tree.sourcemap_json(Some(root)))?;
     println!("wrote {}", path.display());
     Ok(true)
 }

@@ -167,6 +167,7 @@ fn walk(dir: &Path, rel: &str, out: &mut Vec<place::PackageFile>) {
             && let Ok(source) = std::fs::read_to_string(&path)
         {
             let source = if source.contains(TS_GLOBAL) { source.replacen(TS_GLOBAL, TS_REQUIRE, 1) } else { source };
+            let source = place::Source::new(source.into());
             out.push(place::PackageFile { rel: format!("{rel}{name}"), source, file: path });
         }
     }

@@ -12,7 +12,7 @@ use std::path::Path;
 use rbx_dom_weak::types::{Content, Ref, Variant};
 use rbx_dom_weak::{Instance, ustr};
 
-use crate::tree::Place;
+use crate::read::Place;
 
 /// Pack key -> pack uri, as in `place/texture-packs.json`.
 pub type TexturePacks = HashMap<String, String>;
@@ -20,18 +20,9 @@ pub type TexturePacks = HashMap<String, String>;
 /// Each packed class's maps, its colour first. A Decal's colour is its Texture, and a Decal is PBR (so packed)
 /// only once it has more than a colour.
 const PACKED: &[(&str, [&str; 4])] = &[
-    (
-        "SurfaceAppearance",
-        ["ColorMap", "NormalMap", "RoughnessMap", "MetalnessMap"],
-    ),
-    (
-        "MaterialVariant",
-        ["ColorMap", "NormalMap", "RoughnessMap", "MetalnessMap"],
-    ),
-    (
-        "Decal",
-        ["Texture", "NormalMap", "RoughnessMap", "MetalnessMap"],
-    ),
+    ("SurfaceAppearance", ["ColorMap", "NormalMap", "RoughnessMap", "MetalnessMap"]),
+    ("MaterialVariant", ["ColorMap", "NormalMap", "RoughnessMap", "MetalnessMap"]),
+    ("Decal", ["Texture", "NormalMap", "RoughnessMap", "MetalnessMap"]),
 ];
 
 const PACK: &str = "TexturePackContent";
@@ -54,11 +45,7 @@ pub fn read_texture_packs(path: &Path) -> Result<TexturePacks, String> {
 }
 
 /// Writes the whole DataModel as a place, with texture packs set on everything that has none of its own.
-pub fn write_rbxl(
-    place: &mut Place,
-    packs: &TexturePacks,
-    out: impl Write,
-) -> Result<PackStats, String> {
+pub fn write_rbxl(place: &mut Place, packs: &TexturePacks, out: impl Write) -> Result<PackStats, String> {
     let (stats, set) = apply_packs(place, packs);
     let roots = place.dom.root().children().to_vec();
     let written = rbx_binary::to_writer(out, &place.dom, &roots).map_err(|e| e.to_string());
@@ -79,10 +66,7 @@ pub fn write_rbxm(place: &Place, roots: &[Ref], out: impl Write) -> Result<(), S
 }
 
 /// Sets packs from `packs` and returns what each touched instance held before, so the write can put it back.
-fn apply_packs(
-    place: &mut Place,
-    packs: &TexturePacks,
-) -> (PackStats, Vec<(Ref, Option<Variant>)>) {
+fn apply_packs(place: &mut Place, packs: &TexturePacks) -> (PackStats, Vec<(Ref, Option<Variant>)>) {
     let mut stats = PackStats::default();
     let mut set = Vec::new();
     let mut missing: HashMap<&str, usize> = HashMap::new();
@@ -109,19 +93,12 @@ fn apply_packs(
             None => *missing.entry(class).or_default() += 1,
         }
     }
-    stats.missing = missing
-        .into_iter()
-        .map(|(class, n)| (class.to_string(), n))
-        .collect();
+    stats.missing = missing.into_iter().map(|(class, n)| (class.to_string(), n)).collect();
     stats.missing.sort();
     let mut before = Vec::with_capacity(set.len());
     for (r, uri) in set {
         if let Some(inst) = place.dom.get_by_ref_mut(r) {
-            before.push((
-                r,
-                inst.properties
-                    .insert(ustr(PACK), Variant::Content(Content::from_uri(uri))),
-            ));
+            before.push((r, inst.properties.insert(ustr(PACK), Variant::Content(Content::from_uri(uri)))));
         }
     }
     (stats, before)
@@ -171,11 +148,7 @@ mod tests {
         // A colour alone is a plain decal, never packed.
         assert_eq!(decal(&[("Texture", "rbxassetid://1")]), None);
         assert_eq!(
-            decal(&[
-                ("Texture", "rbxassetid://1"),
-                ("NormalMap", "rbxassetid://2")
-            ])
-            .as_deref(),
+            decal(&[("Texture", "rbxassetid://1"), ("NormalMap", "rbxassetid://2")]).as_deref(),
             Some("Decal|rbxassetid://1|rbxassetid://2||")
         );
     }

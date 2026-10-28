@@ -20,13 +20,13 @@ use crate::inputs;
 use crate::packages::{self, Package};
 
 /// Where the runtime library and its Promise mount.
-const RUNTIME: &str = "ReplicatedStorage/rbxts";
+pub const RUNTIME: &str = "ReplicatedStorage/rbxts";
 const RUNTIME_LIB: &str = include_str!("../../../runtime/RuntimeLib.luau");
 const PROMISE: &str = include_str!("../../../runtime/Promise.luau");
 
 /// One compiled TypeScript module.
 pub struct Compiled {
-    pub source: Arc<str>,
+    pub source: place::Source,
     pub lines: Arc<LineMap>,
     /// It requires the runtime library.
     pub runtime: bool,
@@ -90,9 +90,17 @@ pub struct Session {
     global_diags: Vec<Diag>,
     route_diags: Vec<Diag>,
     pub place_diags: Vec<Diag>,
+    /// Problems mounting scripts and packages into the tree.
+    mount_diags: Vec<Diag>,
     pub packages: Vec<(Package, Vec<place::PackageFile>)>,
     /// Luau sources by file.
-    luau_sources: FxHashMap<PathBuf, String>,
+    luau_sources: FxHashMap<PathBuf, place::Source>,
+    /// What `place/` holds, read once and then entry by entry as files change.
+    place: Option<place::Place>,
+    /// RuntimeLib and Promise.
+    runtime: [place::Source; 2],
+    /// Modules rendered since `dev` last took them (program spelling).
+    pub rendered: Vec<String>,
 }
 
 /// `path` with forward slashes, as tsrs spells file names.
@@ -116,11 +124,19 @@ fn realm(r: route::Realm) -> lower::Realm {
     }
 }
 
-fn script_kind(class: route::Class) -> place::ScriptKind {
+pub fn script_kind(class: route::Class) -> place::ScriptKind {
     match class {
         route::Class::ModuleScript => place::ScriptKind::Module,
         route::Class::Server => place::ScriptKind::Server,
         route::Class::Client => place::ScriptKind::Client,
+    }
+}
+
+/// The class a script of `kind` mounts as.
+pub fn script_class(kind: place::ScriptKind) -> &'static str {
+    match kind {
+        place::ScriptKind::Module => "ModuleScript",
+        place::ScriptKind::Server | place::ScriptKind::Client => "Script",
     }
 }
 
@@ -168,8 +184,12 @@ impl Session {
             global_diags: Vec::new(),
             route_diags: Vec::new(),
             place_diags: Vec::new(),
+            mount_diags: Vec::new(),
             packages: Vec::new(),
             luau_sources: FxHashMap::default(),
+            place: None,
+            runtime: [RUNTIME_LIB, PROMISE].map(|text| place::Source::new(text.into())),
+            rendered: Vec::new(),
         })
     }
 
@@ -417,10 +437,10 @@ impl Session {
             let spans = l.spans.iter().map(|&(i, start, end)| (i, line(start), line(end))).collect();
             let compiled = Compiled {
                 runtime: runtime.is_some_and(|r| requires_runtime(ast, r)),
-                source: Arc::from(text),
+                source: place::Source::new(Arc::from(text)),
                 lines: Arc::new(LineMap { starts: lines, spans }),
             };
-            let gate = luau::gate::compile(&compiled.source, 2, 1).err();
+            let gate = luau::gate::compile(&compiled.source.text, 2, 1).err();
             Some((compiled, gate))
         });
         for (l, rendered) in lowered.iter().zip(rendered) {
@@ -454,6 +474,7 @@ impl Session {
             }
             if !diags.iter().any(Diag::is_error) {
                 self.compiled.insert(name.to_owned(), compiled);
+                self.rendered.push(name.to_owned());
             }
         }
         stats.time("render", t);
@@ -468,6 +489,7 @@ impl Session {
     pub fn diagnostics(&self) -> Vec<Diag> {
         let mut out: Vec<Diag> = self.route_diags.clone();
         out.extend(self.place_diags.iter().cloned());
+        out.extend(self.mount_diags.iter().cloned());
         let mut files: Vec<&String> = self.file_diags.keys().collect();
         files.sort();
         for f in files {
@@ -479,69 +501,98 @@ impl Session {
         out
     }
 
-    /// The DataModel: `place/` with the `[place]` properties, every routed module, the packages and the runtime.
-    /// With `shapes`, a TypeScript module with no output mounts empty (the sourcemap needs only the tree).
-    pub fn mount(&mut self, shapes: bool) -> place::Place {
-        let dir = self.cfg.root.join("place");
-        let (mut place, mut place_diags) = place::read_place(&dir, &self.cfg.place_props);
-        if !dir.exists() {
-            // no place/ is an empty place, not an error
-            place_diags.retain(|d| d.code != "place.io" || d.path != dir);
+    /// Reads a Luau module's source, from the session's cache when it has it.
+    fn luau(&mut self, file: &Path) -> Result<place::Source, String> {
+        if let Some(source) = self.luau_sources.get(file) {
+            return Ok(source.clone());
         }
-        let mut diags: Vec<Diag> = place_diags.iter().map(diag::from_place).collect();
-        let mut runtime = false;
-        for m in &self.scan.modules {
-            let source = match m.kind {
-                route::Kind::Luau => match self.luau_sources.get(&m.file) {
-                    Some(text) => text.clone(),
-                    None => match std::fs::read_to_string(&m.file) {
-                        Ok(text) => {
-                            self.luau_sources.insert(m.file.clone(), text.clone());
-                            text
-                        }
-                        Err(e) => {
-                            diags.push(Diag::new("place.io", Severity::Error, Some(&m.file), e.to_string()));
-                            continue;
-                        }
-                    },
-                },
-                _ => match self.compiled.get(&slashed(&m.file)) {
-                    Some(c) => {
-                        runtime |= c.runtime;
-                        c.source.to_string()
-                    }
-                    None if shapes => String::new(),
-                    None => continue,
-                },
+        let text = std::fs::read_to_string(file).map_err(|e| e.to_string())?;
+        let source = place::Source::new(text.into());
+        self.luau_sources.insert(file.to_path_buf(), source.clone());
+        Ok(source)
+    }
+
+    /// The source a routed module mounts with: its Luau, or its compiled output (None while it has none).
+    pub fn module_source(&mut self, m: &route::Module) -> Option<place::Source> {
+        match m.kind {
+            route::Kind::Luau => self.luau(&m.file).ok(),
+            _ => self.compiled.get(&slashed(&m.file)).map(|c| c.source.clone()),
+        }
+    }
+
+    /// `place/` changed at `path`: re-reads that entry, replacing the diagnostics of what it re-read, every `[place]`
+    /// one and every unresolved ref (a re-read reports those whole). False when `path` is no content.
+    pub fn place_changed(&mut self, path: &Path) -> bool {
+        let dir = self.cfg.root.join("place");
+        let Some(place) = &mut self.place else { return false };
+        let Some((scopes, diags)) = place.replace_entry(&dir, path, &self.cfg.place_props) else { return false };
+        self.place_diags.retain(|d| {
+            let file = d.file.as_deref();
+            let scoped = file.is_some_and(|f| scopes.iter().any(|s| f.starts_with(s)));
+            !scoped && d.code != "place.badRef" && file != Some(Path::new("opossum.toml"))
+        });
+        self.place_diags.extend(diags.iter().map(diag::from_place));
+        true
+    }
+
+    /// A fresh tree of the whole DataModel: `place/` with the `[place]` properties, every routed module, the packages
+    /// and the runtime. With `shapes`, a TypeScript module with no output mounts empty (the sourcemap needs only the
+    /// tree).
+    pub fn tree(&mut self, shapes: bool) -> place::Tree {
+        let dir = self.cfg.root.join("place");
+        if self.place.is_none() {
+            let (place, mut place_diags) = place::read_place(&dir, &self.cfg.place_props);
+            if !dir.exists() {
+                // no place/ is an empty place, not an error
+                place_diags.retain(|d| d.code != "place.io" || d.path != dir);
+            }
+            self.place_diags = place_diags.iter().map(diag::from_place).collect();
+            self.place = Some(place);
+        }
+        let mut tree = place::Tree::new();
+        tree.add_place(self.place.as_ref().expect("read above"));
+        let mut diags = Vec::new();
+        let runtime = self.needs_runtime();
+        let modules = std::mem::take(&mut self.scan.modules);
+        for m in &modules {
+            let source = match self.module_source(m) {
+                Some(source) => source,
+                None if m.kind == route::Kind::Luau => {
+                    diags.push(Diag::new("place.io", Severity::Error, Some(&m.file), "cannot read the file".into()));
+                    continue;
+                }
+                None if shapes => place::Source::new("".into()),
+                None => continue,
             };
-            match place.set_script(&m.instance.join("/"), script_kind(m.class), source, Some(m.file.clone())) {
-                Ok(r) if m.template => place.disable(r),
+            let file: Arc<Path> = Arc::from(m.file.as_path());
+            match tree.set_script(&m.instance.join("/"), script_kind(m.class), source, Some(file)) {
+                Ok(id) if m.template => tree.disable(id),
                 Ok(_) => {}
                 Err(d) => diags.push(diag::from_place(&d)),
             }
         }
+        self.scan.modules = modules;
         for (p, files) in &self.packages {
-            runtime |= files.iter().any(|f| f.source.contains(packages::TS_REQUIRE));
-            let files = files.iter().map(|f| place::PackageFile {
-                rel: f.rel.clone(),
-                source: f.source.clone(),
-                file: f.file.clone(),
-            });
-            if let Err(d) = place.mount_package(&p.scope, &p.name, files.collect()) {
+            if let Err(d) = tree.mount_package(&p.scope, &p.name, files) {
                 diags.push(diag::from_place(&d));
             }
         }
         if runtime || shapes {
-            for (name, source) in [("RuntimeLib", RUNTIME_LIB), ("Promise", PROMISE)] {
-                if let Err(d) =
-                    place.set_script(&format!("{RUNTIME}/{name}"), place::ScriptKind::Module, source.to_owned(), None)
-                {
+            for (name, source) in ["RuntimeLib", "Promise"].iter().zip(&self.runtime) {
+                let path = format!("{RUNTIME}/{name}");
+                if let Err(d) = tree.set_script(&path, place::ScriptKind::Module, source.clone(), None) {
                     diags.push(diag::from_place(&d));
                 }
             }
         }
-        self.place_diags = diags;
-        place
+        self.mount_diags = diags;
+        tree
+    }
+
+    /// Whether the tree mounts the runtime library: a compiled module or a package requires it.
+    pub fn needs_runtime(&self) -> bool {
+        self.scan.modules.iter().any(|m| self.compiled.get(&slashed(&m.file)).is_some_and(|c| c.runtime))
+            || self.packages.iter().any(|(_, files)| files.iter().any(|f| f.source.text.contains(packages::TS_REQUIRE)))
     }
 
     /// The Luau of every routed module (compiled or source), by instance path.
@@ -549,8 +600,8 @@ impl Session {
         let mut out = BTreeMap::new();
         for m in &self.scan.modules {
             let source = match m.kind {
-                route::Kind::Luau => self.luau_sources.get(&m.file).cloned(),
-                _ => self.compiled.get(&slashed(&m.file)).map(|c| c.source.to_string()),
+                route::Kind::Luau => self.luau_sources.get(&m.file).map(|s| s.text.to_string()),
+                _ => self.compiled.get(&slashed(&m.file)).map(|c| c.source.text.to_string()),
             };
             if let Some(source) = source {
                 out.insert(m.instance.join("/"), source);
