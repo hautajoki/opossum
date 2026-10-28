@@ -225,6 +225,15 @@ pub mod errors {
         at_node(node, new_ad_hoc_message(&text), Category::Error)
     }
 
+    /// `lower.nullableLuaTuple`: a call whose signature returns a `LuaTuple` or undefined is used as a value, which
+    /// packs its values into a table: never nil, so every undefined check on it is always false.
+    pub fn nullable_lua_tuple(node: P<Node>) -> P<Diagnostic> {
+        let text = "lower.nullableLuaTuple: this call returns a LuaTuple or undefined, but used as a value a LuaTuple \
+                    is a table of its values, never undefined\nSuggestion: return an array (`[A, B] | undefined`) \
+                    instead";
+        at_node(node, new_ad_hoc_message(text), Category::Error)
+    }
+
     /// `macro.unsupported`: a compile-time macro opossum does not lower yet.
     pub fn unsupported_macro(node: P<Node>, name: &str) -> P<Diagnostic> {
         at_node(node, new_ad_hoc_message(&format!("macro.unsupported: `{name}` is not supported yet")), Category::Error)

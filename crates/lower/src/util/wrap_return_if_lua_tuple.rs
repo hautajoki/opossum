@@ -2,9 +2,11 @@
 
 use luau::{Expr, create};
 use tsrs_ast::{Kind, Node};
+use tsrs_checker::{SignatureFlags, SignatureKind, TypeFlags};
 use tsrs_core::P;
 
 use crate::classes::transform_state::TransformState;
+use crate::shared::diagnostics::errors;
 use crate::util::array_binding_pattern_contains_hoists::{
     array_binding_pattern_contains_hoists, array_like_expression_contains_spread,
 };
@@ -52,11 +54,40 @@ fn should_wrap_lua_tuple(state: &mut TransformState<'_>, node: P<Node>, exp: &Ex
     }
 }
 
-/// `wrapReturnIfLuaTuple`: a call returning a `LuaTuple` used as a value is wrapped in `{ … }`.
+/// Whether the function `call` calls may return undefined besides its `LuaTuple`. The call's own type is no guide: an
+/// optional call (`a.f?.()`) adds the chain's undefined to it and to its resolved signature, so then the callee's own
+/// signature answers.
+fn returns_nullable(state: &mut TransformState<'_>, call: P<Node>) -> bool {
+    if call.kind() != Kind::CallExpression {
+        return false;
+    }
+    let mut signature = state.checker.get_resolved_signature_exported(call);
+    if signature.flags().intersects(SignatureFlags::CallChainFlags) {
+        let Some(callee) = call.expression() else { return false };
+        let t = state.get_type(callee);
+        let t = state.checker.get_non_nullable_type(t);
+        let declaration = signature.declaration();
+        let own = state.checker.get_signatures_of_type_exported(t, SignatureKind::Call);
+        match own.iter().find(|s| s.declaration() == declaration) {
+            Some(&s) => signature = s,
+            None => return false,
+        }
+    }
+    let returns = state.checker.get_return_type_of_signature_exported(signature);
+    let nullable = TypeFlags::Undefined | TypeFlags::Void | TypeFlags::Null;
+    returns.flags().intersects(TypeFlags::Union) && returns.types().iter().any(|m| m.flags().intersects(nullable))
+}
+
+/// `wrapReturnIfLuaTuple`: a call returning a `LuaTuple` used as a value is wrapped in `{ … }`. One that may return
+/// undefined instead is an error (`lower.nullableLuaTuple`): the table is never nil, so its undefined checks would
+/// compile to constants.
 pub fn wrap_return_if_lua_tuple(state: &mut TransformState<'_>, node: P<Node>, exp: Expr) -> Expr {
     let t = state.get_type(node);
     let non_nullable = state.checker.get_non_nullable_type(t);
     if is_lua_tuple_type(state, non_nullable) && should_wrap_lua_tuple(state, node, &exp) {
+        if returns_nullable(state, node) {
+            state.add_diagnostic(errors::nullable_lua_tuple(node));
+        }
         return create::array(vec![exp]);
     }
     exp
