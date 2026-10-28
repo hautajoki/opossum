@@ -424,11 +424,7 @@ fn send(cfg: &Config, options: &Options, path: &str, mut body: Value) -> Result<
     if let Some(timeout) = options.timeout {
         body["timeout"] = timeout.into();
     }
-    let file = editor::dir(&cfg.root).join("port");
-    let port: u16 = std::fs::read_to_string(&file)
-        .ok()
-        .and_then(|text| text.trim().parse().ok())
-        .ok_or_else(|| format!("opossum dev is not running here ({} is missing)", shown(&cfg.root, &file)))?;
+    let port = port(cfg)?;
     // dev bounds the wait itself: its fence, then the time limit and some slack
     let limit = Duration::from_secs_f64(options.timeout.unwrap_or(60.0) + 180.0);
     let (status, answer) = request(port, path, &body, limit)?;
@@ -436,6 +432,15 @@ fn send(cfg: &Config, options: &Options, path: &str, mut body: Value) -> Result<
         return Err(answer["error"].as_str().map_or_else(|| answer.to_string(), str::to_owned));
     }
     Ok(answer)
+}
+
+/// The port of this project's dev, as it wrote it to `.opossum/port`: the dev every command posts to.
+fn port(cfg: &Config) -> Result<u16, String> {
+    let file = editor::dir(&cfg.root).join("port");
+    std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .ok_or_else(|| format!("opossum dev is not running here ({} is missing)", shown(&cfg.root, &file)))
 }
 
 /// One `POST` of `body` to whatever listens on `port`: its status and JSON answer.
@@ -474,6 +479,17 @@ fn realms(dev: &Value) -> Vec<&str> {
     dev["connected"].as_array().into_iter().flatten().filter_map(|c| c["realm"].as_str()).collect()
 }
 
+fn port_of(dev: &Value) -> u16 {
+    dev["port"].as_u64().and_then(|p| u16::try_from(p).ok()).unwrap_or(0)
+}
+
+/// This project's dev among `devs`: the one on the port `.opossum/port` names, which exec, test, play and the rest
+/// post to. Another dev serving the same root (started later or earlier in the same place) is not it.
+fn here<'a>(cfg: &Config, devs: &'a [Value]) -> Option<&'a Value> {
+    let port = port(cfg).ok()?;
+    devs.iter().find(|d| port_of(d) == port && serves(d, &cfg.root))
+}
+
 /// Whether `dev` serves the project at `root`.
 fn serves(dev: &Value, root: &Path) -> bool {
     let same = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
@@ -484,14 +500,20 @@ fn serves(dev: &Value, root: &Path) -> bool {
 /// when Studio's edit DataModel syncs from this project's dev, 1 when it does not, 2 when this project has no dev.
 pub fn status(cfg: &Config, options: &Options) -> Result<bool, String> {
     let devs = devs();
-    let here = devs.iter().find(|d| serves(d, &cfg.root));
+    let here = here(cfg, &devs);
     let attached = here.is_some_and(|d| realms(d).contains(&"edit"));
     if options.json {
         let port = here.map_or(Value::Null, |d| d["port"].clone());
         println!("{}", json!({ "ok": attached, "here": port, "devs": devs }));
     } else {
+        let port = here.map(port_of);
         for dev in &devs {
-            let mark = if serves(dev, &cfg.root) { " (this project)" } else { "" };
+            let mark = match (Some(port_of(dev)) == port, serves(dev, &cfg.root)) {
+                (true, _) => " (this project)".to_owned(),
+                // the commands go to the dev .opossum/port names; attach moves Studio off this one
+                (false, true) => format!(" (this project too, but its commands go to port {})", port.unwrap_or(0)),
+                _ => String::new(),
+            };
             println!(
                 "port {}, pid {}: {} ({}), generation {}{mark}",
                 dev["port"],
@@ -529,9 +551,7 @@ pub fn attach(cfg: &Config, options: &Options, force: bool) -> Result<bool, Stri
     let json = options.json;
     let refused = |error| refused(json, error);
     let devs = devs();
-    let here = devs.iter().find(|d| serves(d, &cfg.root));
-    let here = here.ok_or_else(|| refused("opossum dev is not running here".to_owned()))?;
-    let port_of = |dev: &Value| dev["port"].as_u64().and_then(|p| u16::try_from(p).ok()).unwrap_or(0);
+    let here = here(cfg, &devs).ok_or_else(|| refused("opossum dev is not running here".to_owned()))?;
     let port = port_of(here);
     let project = here["project"].as_str().unwrap_or("?");
     if realms(here).contains(&"edit") {
@@ -542,7 +562,8 @@ pub fn attach(cfg: &Config, options: &Options, force: bool) -> Result<bool, Stri
         }
         return Ok(true);
     }
-    let holders: Vec<&Value> = devs.iter().filter(|d| !serves(d, &cfg.root) && !realms(d).is_empty()).collect();
+    // another dev of this project too: Studio moves off it to the one the other commands reach
+    let holders: Vec<&Value> = devs.iter().filter(|d| port_of(d) != port && !realms(d).is_empty()).collect();
     if holders.is_empty() {
         return Err(refused(
             "no opossum dev holds Studio (is the place open, with the opossum plugin installed?)".to_owned(),
