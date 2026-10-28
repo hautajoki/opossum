@@ -21,6 +21,8 @@ local ROLE: apply.Role = if RunService:IsEdit() then "edit" elseif RunService:Is
 apply.role = ROLE
 
 local socket: WebStreamClient? = nil
+-- The live socket's signal connections: a client with connected handlers is never collected, even closed.
+local links: { RBXScriptConnection } = {}
 local project = ""
 -- Bumped per socket, so an apply that outlives its socket never acks into the next one.
 local epoch = 0
@@ -47,9 +49,9 @@ local function work()
 			-- the rest of its generation is dropped too, so this verify is the generation's only answer
 			warn(`opossum: a frame failed to apply: {result}`)
 			apply.drop()
-			send(apply.verify())
+			send(apply.verify(apply.quiet))
 		elseif result == "dropped" then
-			send(apply.verify())
+			send(apply.verify(apply.quiet))
 		elseif result == "part" then
 			task.wait()
 		elseif result == "done" then
@@ -85,9 +87,18 @@ local function flush()
 	end
 end
 
+-- Closes `client` and disconnects its handlers, so it can be collected.
+local function release(client: WebStreamClient, connections: { RBXScriptConnection })
+	pcall(client.Close, client)
+	for _, connection in connections do
+		connection:Disconnect()
+	end
+end
+
 local function drop(client: WebStreamClient)
 	if socket == client then
-		pcall(client.Close, client)
+		release(client, links)
+		links = {}
 		socket = nil
 		epoch += 1
 		table.clear(queue)
@@ -105,7 +116,8 @@ local function connect(port: number): "live" | "next" | "busy"
 	local state: "pending" | "hello" | "bad" | "live" = "pending"
 	local closed = false
 	local server: Hello? = nil
-	client.MessageReceived:Connect(function(message)
+	local connections: { RBXScriptConnection } = {}
+	connections[1] = client.MessageReceived:Connect(function(message)
 		if state == "live" then
 			if socket ~= client then return end
 			table.insert(queue, message)
@@ -129,14 +141,14 @@ local function connect(port: number): "live" | "next" | "busy"
 			state = "bad"
 		end
 	end
-	client.Error:Connect(gone)
-	client.Closed:Connect(gone)
+	table.insert(connections, client.Error:Connect(gone))
+	table.insert(connections, client.Closed:Connect(gone))
 	local deadline = os.clock() + HELLO_TIMEOUT
 	while state == "pending" and os.clock() < deadline do
 		task.wait()
 	end
 	if state ~= "hello" or not server then
-		client:Close()
+		release(client, connections)
 		return "next"
 	end
 	epoch += 1
@@ -146,11 +158,12 @@ local function connect(port: number): "live" | "next" | "busy"
 		task.wait()
 	end
 	if closed then
-		pcall(client.Close, client)
+		release(client, connections)
 		return "next"
 	end
 	apply.reset()
 	socket = client
+	links = connections
 	project = server.project
 	state = "live"
 	send(hello(server))

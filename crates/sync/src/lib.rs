@@ -12,11 +12,11 @@ mod sub;
 mod ws;
 
 use std::io;
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use place::Tree;
 
@@ -129,7 +129,14 @@ fn bind(port: u16) -> io::Result<TcpListener> {
     }
     let mut last = None;
     for port in port..port.saturating_add(PORT_TRIES) {
-        match TcpListener::bind(("127.0.0.1", port)) {
+        // std binds with SO_REUSEADDR, which on macOS succeeds beside a wildcard listener (`*:port`) and would take
+        // its loopback traffic: a port is free only when nothing answers there
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
+            last = Some(io::Error::from(io::ErrorKind::AddrInUse));
+            continue;
+        }
+        match TcpListener::bind(addr) {
             Ok(listener) => return Ok(listener),
             Err(e) => last = Some(e),
         }

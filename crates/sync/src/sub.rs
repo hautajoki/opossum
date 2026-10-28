@@ -84,6 +84,8 @@ pub struct Sub {
     hello: Option<Vec<(String, String)>>,
     /// Throwaway ids for instances only removed (counting down from below NONE).
     temp: Id,
+    /// The last `verify` was quiet (an undo's): the frame that answers it carries [`frame::QUIET`].
+    quiet: bool,
 }
 
 #[derive(Default)]
@@ -108,6 +110,8 @@ struct Plan {
     absent: Vec<Id>,
     /// Known nodes kept as they are (parked).
     keep: Vec<Id>,
+    /// The frame answers a quiet verify.
+    quiet: bool,
 }
 
 impl Plan {
@@ -159,6 +163,7 @@ impl Sub {
             sent: None,
             hello: None,
             temp: NONE - 1,
+            quiet: false,
         }
     }
 
@@ -174,8 +179,9 @@ impl Sub {
     /// The plugin's `verify` (the Resync button, an undo over a sync, or a frame it dropped or could not apply), with
     /// its stamped paths: the wait for an ack ends. Edit verifies every root and removes the listed paths that are
     /// no longer roots. The play server, which never verifies, is sent again what the frame in flight carried; a
-    /// connect frame that never applied connects again.
-    pub fn resync(&mut self, cur: &Tree, roots: &[(String, String)]) {
+    /// connect frame that never applied connects again. A `quiet` verify (an undo's) is answered by a frame that
+    /// says so, unless that frame is a connect.
+    pub fn resync(&mut self, cur: &Tree, roots: &[(String, String)], quiet: bool) {
         let sent = self.sent.take();
         if self.hello.is_some() {
             return;
@@ -183,6 +189,7 @@ impl Sub {
         if let Some(hello) = sent.as_ref().and_then(|s| s.hello.clone()) {
             self.hello = Some(hello);
         }
+        self.quiet = quiet && self.hello.is_none();
         match self.role {
             Role::Edit => {
                 self.verify = cur.roots();
@@ -256,7 +263,7 @@ impl Sub {
     /// The frame parts that take the subscriber from what it holds to `cx.cur`, or None when nothing differs.
     pub fn frame(&mut self, cx: &Context, generation: u32) -> Option<Vec<Vec<u8>>> {
         let cur = cx.cur;
-        let mut plan = Plan::default();
+        let mut plan = Plan { quiet: std::mem::take(&mut self.quiet), ..Plan::default() };
         let hello = self.hello.take();
         let mut known = match &hello {
             Some(roots) => self.connect(cx, roots.clone(), &mut plan),
@@ -890,12 +897,13 @@ impl Sub {
         let mut out = Vec::with_capacity(count);
         for (i, (blob, children)) in blobs.iter().zip(&childrens).enumerate() {
             let (binds, hydrates) = if i == 0 { (&plan.binds, &plan.hydrates) } else { (&empty, &empty) };
+            let quiet = if plan.quiet { frame::QUIET } else { 0 };
             if i + 1 < count {
-                out.push(frame::assemble(generation, self.base, false, blob, &[binds, hydrates, children]));
+                out.push(frame::assemble(generation, self.base, quiet, blob, &[binds, hydrates, children]));
             } else {
                 let sections =
                     [binds, hydrates, children, &moves, &swaps, &props, &sources, &refs, &removes, &stamps, &reload];
-                out.push(frame::assemble(generation, self.base, true, blob, &sections));
+                out.push(frame::assemble(generation, self.base, frame::LAST | quiet, blob, &sections));
             }
         }
 

@@ -4,6 +4,7 @@
 use std::collections::VecDeque;
 use std::io::BufReader;
 use std::net::{Shutdown, TcpListener, TcpStream};
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
@@ -30,8 +31,8 @@ pub enum Event {
     /// The generation applied, and its failures.
     Ack(u32, Vec<(Id, u8, String)>),
     Lost(Vec<Id>),
-    /// The plugin's stamped roots, as in its hello.
-    Verify(Vec<(String, String)>),
+    /// The plugin's stamped roots, as in its hello, and whether an undo or redo asked (quiet).
+    Verify(Vec<(String, String)>, bool),
     Pong(Vec<u8>),
 }
 
@@ -151,9 +152,18 @@ fn socket(mut stream: TcpStream, shared: &Arc<Shared>) {
         shared.lock().inboxes.remove(&conn);
         return;
     }
-    let writer = stream.try_clone().ok().and_then(|out| {
+    let writer = stream.try_clone().ok().and_then(|mut out| {
         let shared = shared.clone();
-        thread::Builder::new().name("sync-writer".into()).spawn(move || write_loop(out, &shared, conn)).ok()
+        let run = move || {
+            // a panic says so and closes the socket, so the plugin reconnects instead of waiting on a dead writer
+            if let Err(panic) = panic::catch_unwind(AssertUnwindSafe(|| write_loop(&mut out, &shared, conn))) {
+                let text = panic.downcast_ref::<&str>().copied().or(panic.downcast_ref::<String>().map(String::as_str));
+                shared.say(LogKind::Error, format!("the sync writer failed: {}", text.unwrap_or("a panic")));
+            }
+            // unblocks the reader
+            let _ = out.shutdown(Shutdown::Both);
+        };
+        thread::Builder::new().name("sync-writer".into()).spawn(run).ok()
     });
     if writer.is_some() {
         read_loop(reader, shared, conn);
@@ -212,7 +222,9 @@ fn read_loop(mut reader: BufReader<TcpStream>, shared: &Shared, conn: u64) {
                         });
                         shared.push(conn, Event::Lost(ids));
                     }
-                    Some("verify") => shared.push(conn, Event::Verify(roots(&message))),
+                    Some("verify") => {
+                        shared.push(conn, Event::Verify(roots(&message), message["quiet"].as_bool().unwrap_or(false)));
+                    }
                     Some("log") => {
                         let Some(log) = &shared.log else { continue };
                         for line in message["lines"].as_array().into_iter().flatten() {
@@ -247,7 +259,8 @@ pub fn clean(text: &str) -> String {
     text.chars().filter(|&c| !c.is_control() || c == '\n' || c == '\t').collect()
 }
 
-fn write_loop(mut out: TcpStream, shared: &Shared, conn: u64) {
+/// Runs until the socket closes; the caller shuts the stream down after it returns.
+fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
     let mut sub = Sub::new();
     let mut seen = 0;
     loop {
@@ -259,8 +272,6 @@ fn write_loop(mut out: TcpStream, shared: &Shared, conn: u64) {
                 let generation = state.generation;
                 let Some(inbox) = state.inboxes.get_mut(&conn) else { return };
                 if inbox.closed {
-                    // unblocks the reader when the server closed the socket
-                    let _ = out.shutdown(Shutdown::Both);
                     return;
                 }
                 if ready && (!inbox.events.is_empty() || (sub.sent.is_none() && generation > seen)) {
@@ -282,9 +293,9 @@ fn write_loop(mut out: TcpStream, shared: &Shared, conn: u64) {
                     sub.ack(&cx, generation, &failed);
                 }
                 Event::Lost(ids) => sub.lost(&tree, &ids),
-                Event::Verify(roots) => sub.resync(&tree, &roots),
+                Event::Verify(roots, quiet) => sub.resync(&tree, &roots, quiet),
                 Event::Pong(payload) => {
-                    if ws::write(&mut out, ws::PONG, &payload).is_err() {
+                    if ws::write(out, ws::PONG, &payload).is_err() {
                         return;
                     }
                 }
@@ -296,8 +307,7 @@ fn write_loop(mut out: TcpStream, shared: &Shared, conn: u64) {
         seen = generation;
         let Some(parts) = sub.frame(&cx, generation.max(sub.base + 1)) else { continue };
         for part in parts {
-            if ws::write(&mut out, ws::BINARY, &part).is_err() {
-                let _ = out.shutdown(Shutdown::Both);
+            if ws::write(out, ws::BINARY, &part).is_err() {
                 return;
             }
         }

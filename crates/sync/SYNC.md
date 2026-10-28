@@ -10,7 +10,8 @@ in Studio 0.745 (2026-10-28).
 **Tree.** The dev session owns one long-lived `Tree`: a slab of immutable nodes indexed by `Id` (`u32`, never reused
 within a server session), `Arc<Node { parent, name, class, props, refs, source, children, hash }>`. It changes by
 deltas, never by a rebuild: a re-rendered module sets one node's source; a `place/` file event re-reads that entry with
-its same-named siblings (an event on a service directory re-reads the whole place), re-applies `[place]`, resolves
+its same-named siblings (an event on a service directory, on a nested container's own directory or under a service
+directory that went away re-reads the whole place; loose top-level files are never content), re-applies `[place]`, resolves
 again every ref that was unresolved or pointed into what was re-read, and pairs ids again (7–10 ms on a large project); entries
 sort by directory name, so a re-read orders and hashes exactly like a fresh read; a rescan adds and removes module nodes. Hashes are recomputed up the dirty
 ancestors only, and unchanged nodes keep their `Arc`, so two trees differ exactly where their pointers differ and a
@@ -72,20 +73,31 @@ deferred and run after the apply):
   `Extents*`). It fires synchronously for every property write (~0.33 µs per event) but not for attributes or tags,
   so someone else's attribute or tag edit is caught only by a Resync;
 - `ScriptEditorService.TextDocumentDidChange` for a script under the root, ignoring the plugin's own updates;
-- `ChangeHistoryService.OnRecordingFinished` (not the plugin's own recording) when the selection is under a root;
-- `OnUndo`/`OnRedo` of an opossum waypoint, or any undo after an unrecorded frame: every stamp, and a `verify`.
+- `ChangeHistoryService.OnRecordingFinished` (not the plugin's own recording) when the selection is under a root.
+  Studio's undo restores the selection, so it can leave synced roots selected for the next recording;
+- `OnUndo`/`OnRedo` of an opossum waypoint, any undo or redo that changed a clean root, or any step while unrecorded
+  writes are unverified: every stamp, and a `verify` (see Undo). Every step also clears each dirty root's stamp again,
+  since the step may have reverted the plugin's unrecorded clear.
+
+`ItemChanged` fires for every part a drag moves, so it returns early: once a frame has mapped the place, an unmapped
+instance is new (its root was dirtied by `DescendantAdded`), a kept stray or exempt, and an already dirty root stays
+dirty. The plugin's own-write check is constant time once every structural write it made has been drained.
 
 The listeners start with the plugin, not with the connection, so edits made while `opossum dev` is down are caught.
 The edit plugin watches the roots it inserts, adopts, pairs or moves in; a full scan of the frames runs only at start
 and at hello.
 
-A dirty root keeps `""`, so it is never re-stamped until a verify. Stamps travel into playtests (Play Solo copies the
+A dirty root keeps `""`, so it is never re-stamped until a verify, and the `hello` and `verify` list it as `""`
+whatever its attribute says (an undo may have put an old stamp back). Stamps travel into playtests (Play Solo copies the
 edit DataModel) and survive restarts. The server keeps its last 16 generations' trees, indexed by root hash.
 
 ## Transport
 
-One WebSocket per DataModel, `ws://127.0.0.1:<port>/`, port 34900 or the next free one of 16 (Rojo owns 34872). The
-plugin tries each port in turn, `Close()`ing every client that fails before the next. The server speaks first.
+One WebSocket per DataModel, `ws://127.0.0.1:<port>/`, port 34900 or the next free one of 16 (Rojo owns 34872). A port is
+free only when nothing answers on `127.0.0.1:port`: std binds with `SO_REUSEADDR`, which on macOS succeeds beside a
+wildcard listener and would take its loopback traffic. The plugin tries each port in turn, closing every client that
+fails before the next and disconnecting its handlers (a WebStreamClient with live connections is never collected,
+measured), so a plugin that loses a front proxy falls back to opossum's own port. The server speaks first.
 
 - Studio allows 5 `RequestAsync` in flight per process, shared by every plugin and DataModel, and the play client may
   not use it at all. Plugins get 4 WebStreamClients per DataModel and other plugins use some. So: no HTTP, one socket
@@ -97,7 +109,8 @@ plugin tries each port in turn, `Close()`ing every client that fails before the 
   Log text has control characters stripped before it is printed.
 - Threads: `publish` swaps an `Arc<Tree>` and notifies. Each socket has a reader and a writer thread; the writer builds
   its subscriber's frame when it is ready to send (after the previous frame's ack), diffing that subscriber's known
-  tree against the current one, so a backlog collapses into one frame and a stalled Studio never blocks a publish.
+  tree against the current one, so a backlog collapses into one frame and a stalled Studio never blocks a publish. A
+  writer that panics prints why and shuts the socket down, so the plugin reconnects instead of waiting on it.
 
 ### Up (JSON text)
 
@@ -105,7 +118,7 @@ plugin tries each port in turn, `Close()`ing every client that fails before the 
 {"t":"hello", "role":"edit"|"server"|"client", "place":<PlaceId>, "roots":{"<path>":"<stamp>", ...}}
 {"t":"ack", "gen":G, "failed":[[id,tag,"message"], ...]}
 {"t":"lost", "ids":[...]}            # mapped instances removed by someone else
-{"t":"verify", "roots":{...}}        # Resync, an undo over a sync, a dropped or failed frame
+{"t":"verify", "quiet":bool, "roots":{...}}   # Resync, an undo over a sync, a dropped or failed frame
 {"t":"log", "lines":[["output"|"warning"|"error","text"], ...]}
 ```
 
@@ -113,7 +126,8 @@ The `hello` lists every instance carrying an `opossum` attribute that sits direc
 container, by `/`-joined path from the DataModel, with its stamp; a path that appears twice goes out as `""`, so its
 root is verified and the duplicate removed. `verify` carries the same `roots`. Each generation gets exactly one `ack` or one
 `verify`; an ack for another generation than the one in flight is printed and otherwise ignored. The plugin `Close()`s
-every socket it drops.
+every socket it drops. A verify is `quiet` when an undo or redo asked for it, or when the frame that failed or was
+dropped was itself quiet.
 
 ### Down
 
@@ -129,7 +143,7 @@ each plugin checks the new hello; other changes keep them.
 Little-endian; a string is `u32 length, bytes`.
 
 ```
-u32 gen, u32 base_gen, u8 last
+u32 gen, u32 base_gen, u8 flags          bit 0: the generation's last part; bit 1: quiet
 u32 blob_len, blob_len bytes        rbxm (rbx_binary) or nothing
 u32 op_count, ops...
 ```
@@ -191,7 +205,7 @@ hold after the frame is held back, its root unstamped; refs from elsewhere into 
 sent again. Failures print in the dev terminal against the nearest ancestor's source file, with the instance path.
 
 **Big frames.** The server splits a frame above ~10k new instances or 16 MB into parts that share `gen` (only the last
-has `last = 1`). Leading parts carry only `bind`, `hydrate` and `children`; everything else rides the last part. An
+has the last bit). Leading parts carry only `bind`, `hydrate` and `children`; everything else rides the last part. An
 oversized subtree is split at depth: its shell first, then its children as further inserts. The worker yields one
 `task.wait()` between parts. A verify splits at root granularity: one root is never split, and a root over the limits
 gets a part of its own.
@@ -227,15 +241,28 @@ waypoint. A frame with async writes or strays records twice: the sync waypoint, 
 back, and stamps. A service the place lacks is created in its own "opossum: services" waypoint before the frame's
 recording opens (an unrecorded `GetService` would ride the frame's waypoint, and `SetEnabled(false)` wipes the user's
 history); undoing it leaves the service with a harmless "Parent is locked" warning. Measured: an empty recording
-leaves no waypoint, and Undo does not revert `.Source` writes. When `TryBeginRecording` returns nil (the play server,
+leaves no waypoint unless unrecorded writes are pending (they ride any recording that commits, and a step an undo or
+redo takes), and Undo does not revert `.Source` writes. When `TryBeginRecording` returns nil (the play server,
 or another recording is open) the frame applies unrecorded, strays are kept and their root stays unstamped. Every
 removed stray's path is printed in the dev terminal.
 
-A verify sent because of an undo or redo applies unrecorded and removes no strays, so it leaves no waypoint and the
-next Ctrl+Z continues to the user's waypoint below instead of landing on the verify it just caused. Its writes ride
-the next waypoint, so every later undo or redo verifies again (50–90 ms on a large project), and what the step removed is not
-reported lost. Unrecorded writes by anyone (Studio's lazily created services, other plugins) before opossum's first
-waypoint ride that one.
+A verify sent because of an undo or redo is quiet: the server sets the quiet bit on every part of the generation that
+answers it (never on a connect frame), and the plugin applies exactly those frames unrecorded and removes no strays,
+so they leave no waypoint and the next Ctrl+Z continues to the user's waypoint below instead of landing on the verify
+it just caused. A frame already in flight when the undo happened keeps recording as usual. What the step removed is
+not reported lost, since the verify pairs every root again.
+
+The quiet frame's writes ride the next waypoint anyone makes, however deep it ends up. The plugin therefore counts
+what an unrecorded generation changed (any content write but Source, a mesh or union only when its MeshId or fidelity
+differs, since geometry cannot be read back, and a root's stamp ending other than before) and remembers each root's
+stamp as it left it. An undo or redo then verifies (quietly) only when an opossum waypoint was stepped over, when
+unrecorded writes that changed something have not been verified since, or when the step itself changed a clean root:
+the watch signals fired during it, or a root's stamp came back other than the plugin left it. Opening its own
+"opossum: sync" recording settles the pending writes, since they ride that waypoint. So undoing a user's edit costs no
+verify; the undo right after a verify does verify again (36–54 ms server, 65–84 ms apply), because the verify
+rewrote the stamp the step reverted. Undoing "opossum: resync" verifies too: the strays coming back fire the signals.
+Strays stay until a Resync, including a duplicate a redo brings back, which `require` may then pick. Unrecorded
+writes by anyone (Studio's lazily created services, other plugins) before opossum's first waypoint ride that one.
 
 ### `copy`
 
@@ -346,7 +373,9 @@ from the play-server plugin (measured). A ref held elsewhere to a swapped instan
 | frame for one changed source | one `source` op, no blob | one `source` op and a `stamp` |
 | plugin apply of a leaf edit | < 1 ms, or one frame when the script is open in an editor | 0.4–0.6 ms; 16.6 ms open in an editor |
 | clean reconnect (every root stamped) | hydrate only, < 20 ms | 9.7 ms, 101 KB, no writes |
-| full verify | < 300 ms | 6.03 MB; 42 ms server, 53 ms apply, no content writes; first insert ~80 ms |
+| full verify | < 300 ms | 6.03 MB; 42–51 ms server, 53–84 ms apply, no content writes |
+| quiet verify (an undo's) | < 300 ms | 36–54 ms server, 65–84 ms apply |
+| first insert | — | 6.03 MB, 2,112 instances, ~109 ms apply |
 
 A file save reaches Studio in 50–250 ms, almost all of it the macOS file watcher; the sync itself takes about a
 millisecond.

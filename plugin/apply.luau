@@ -42,13 +42,20 @@ local M = {
 	found = {} :: { Instance },
 	-- True while a frame writes synchronously: every ItemChanged then is the plugin's own (it fires synchronously).
 	writing = false,
-	-- Set when an edit frame applied without a recording: its writes ride the next waypoint anyone makes, so an
-	-- undo may revert them.
+	-- Set when an edit generation applied without a recording and made a write an undo could leave inconsistent: a
+	-- content write (not Source, which Undo never reverts), or a root's stamp left other than it was before. Its
+	-- writes ride the next waypoint anyone makes, or the step an undo or redo takes, so undoing that one may revert
+	-- them. Cleared by the verify such a step sends, or by the plugin's next sync waypoint, which then carries them.
 	unrecorded = false,
-	-- Set when the plugin answers an undo or redo with a verify: the generation that answers it applies unrecorded,
-	-- so it leaves no waypoint for the user's next Ctrl+Z to land on again (a recorded one always would, since the
-	-- verify rewrites the stamps the step cleared).
+	-- Whether the frame applied last answers an undo's verify (the header's quiet bit): it applies unrecorded, so it
+	-- leaves no waypoint for the user's next Ctrl+Z to land on again. A verify sent because it failed is quiet too.
 	quiet = false,
+	-- The stamps an undo or redo over a sync cleared (watch.luau), so the verify that follows compares its stamps
+	-- with what the step left, not with "".
+	before = setmetatable({}, { __mode = "k" }) :: { [Instance]: string },
+	-- Each root's stamp as the plugin last left it (edit). Unrecorded writes ride a waypoint together with the
+	-- stamps they changed, so an undo or redo that puts another stamp back reverted synced writes (watch.luau).
+	left = setmetatable({}, { __mode = "k" }) :: { [Instance]: string },
 }
 
 -- The plugin's structural writes, by the token of the generation that made them, so the deferred Descendant*
@@ -56,6 +63,9 @@ local M = {
 -- `own_item` instances an async write (UpdateSourceAsync, ApplyMesh) changes after the synchronous apply.
 local own_tree = setmetatable({}, { __mode = "k" }) :: { [Instance]: number }
 local own_item = setmetatable({}, { __mode = "k" }) :: { [Instance]: number }
+-- The newest token own_tree holds and the newest one drained: owns() is false at once when nothing is held.
+local own_last = 0
+local own_drained = 0
 -- Play server: each root's stamp as the frames it applied left it ("" while one failed under it). It never writes
 -- the attribute, which still says what it inherited at Play; its hello lists these, so a reconnect hydrates from the
 -- tree it holds now.
@@ -69,6 +79,11 @@ local skip: number? = nil
 
 -- Per-generation state.
 local cleared: { [Instance]: true } = {}
+-- Each root's stamp before the generation first touched it, and whether a part of it applied without a recording
+-- (edit), and how many content writes it made: together they decide M.unrecorded.
+local was: { [Instance]: string } = {}
+local norec = false
+local writes = 0
 local bad_roots: { [Instance]: true } = {}
 local poisoned = false
 -- Ids whose `bind` found nothing: ops on them are skipped silently (the server re-inserts the subtree).
@@ -187,19 +202,22 @@ function M.listing(found: { { path: string, root: Instance } }?): string
 	local roots: { [string]: string } = {}
 	for _, r in found or M.roots() do
 		local path = M.clean(r.path)
-		local stamp = played[r.root] or r.root:GetAttribute("opossum")
+		-- a dirty root lists "" whatever its attribute says: an undo may have put an old stamp back
+		local stamp = if M.dirty[r.root] then "" else played[r.root] or r.root:GetAttribute("opossum")
 		roots[path] = if roots[path] == nil and type(stamp) == "string" then stamp else ""
 	end
 	return if next(roots) then HttpService:JSONEncode(roots) else "{}"
 end
 
--- The `verify` message: it lists the roots, so stamped instances that are no longer roots go too.
-function M.verify(): string
-	return `\{"t":"verify","roots":{M.listing()}}`
+-- The `verify` message: it lists the roots, so stamped instances that are no longer roots go too. A `quiet` one
+-- (an undo's) is answered by a frame that applies unrecorded.
+function M.verify(quiet: boolean?): string
+	return `\{"t":"verify","quiet":{if quiet then "true" else "false"},"roots":{M.listing()}}`
 end
 
 -- True when the plugin inserted, moved or removed `inst` or an ancestor of it in a generation not yet drained.
 function M.owns(inst: Instance): boolean
+	if own_last <= own_drained then return false end
 	local at: Instance? = inst
 	while at do
 		if own_tree[at] then return true end
@@ -211,6 +229,12 @@ end
 -- True when `inst` is the plugin's own write: an async one still running, or a structural one.
 function M.owns_item(inst: Instance): boolean
 	return own_item[inst] ~= nil or M.owns(inst)
+end
+
+-- Marks a structural write of the plugin's own, for the deferred Descendant* handlers.
+local function own(inst: Instance)
+	own_tree[inst] = token
+	own_last = token
 end
 
 local function map(id: number, inst: Instance)
@@ -238,6 +262,7 @@ local function drain()
 		for inst, t in own_tree do
 			if t <= upto then own_tree[inst] = nil end
 		end
+		own_drained = math.max(own_drained, upto)
 		for inst, t in own_item do
 			if t <= upto then own_item[inst] = nil end
 		end
@@ -251,11 +276,20 @@ local function commit()
 	end
 end
 
--- Forgets the generation in progress: its failures, pending stamps, strays, async writes and reloads.
+-- Forgets the generation in progress: its failures, pending stamps, strays, async writes and reloads. Writes it made
+-- without a recording that an undo could leave inconsistent set M.unrecorded, whether it finished or not.
 function M.abort()
 	M.writing = false
 	commit()
 	in_gen = false
+	if norec and writes > 0 then M.unrecorded = true end
+	for root in was do
+		local stamp = root:GetAttribute("opossum")
+		M.left[root] = if type(stamp) == "string" then stamp else nil
+	end
+	norec = false
+	writes = 0
+	table.clear(was)
 	table.clear(M.failed)
 	table.clear(cleared)
 	table.clear(bad_roots)
@@ -305,6 +339,8 @@ end
 -- Drops the id map and the generation in progress; the next frame starts a new session.
 function M.reset()
 	M.abort()
+	table.clear(M.before)
+	table.clear(M.left)
 	table.clear(M.by_id)
 	table.clear(M.id_of)
 	M.applied = 0
@@ -341,8 +377,11 @@ local function touch(inst: Instance)
 		cleared[root] = true
 		if M.role == "server" then
 			played[root] = ""
-		elseif root:GetAttribute("opossum") ~= "" then
-			root:SetAttribute("opossum", "")
+		else
+			local stamp = root:GetAttribute("opossum")
+			was[root] = M.before[root] or (if type(stamp) == "string" then stamp else "")
+			M.before[root] = nil
+			if stamp ~= "" then root:SetAttribute("opossum", "") end
 		end
 	end
 end
@@ -520,6 +559,7 @@ local function spawn_job(job: Job, work: () -> { string })
 			local root = if M.role == "edit" then M.root_of(job.at) else nil
 			if root then
 				M.dirty[root] = true
+				M.left[root] = ""
 				if root:GetAttribute("opossum") ~= "" then root:SetAttribute("opossum", "") end
 			end
 			return
@@ -562,22 +602,52 @@ local function get(carrier: Instance, kind: number, prop: string): unknown
 	return if kind == 1 then carrier:GetAttribute(prop) else (carrier :: any)[prop]
 end
 
+-- Whether `a` and `b` read alike in every one of `props`.
+local function same(a: Instance, b: Instance, ...: string): boolean
+	local ok, alike = pcall(function(...)
+		for _, prop in { ... } do
+			if (a :: any)[prop] ~= (b :: any)[prop] then return false end
+		end
+		return true
+	end, ...)
+	return ok and alike
+end
+
 -- Writes one property `name` from `carrier` onto `live`; see SYNC.md, "copy".
 local function write(live: Instance, carrier: Instance, kind: number, name: string, id: number)
+	-- every write that changes something counts but Source, which Undo keeps. Geometry cannot be read back, so a
+	-- mesh or union counts when its readable identity differs (an undo that reverted a synced mesh also reverted
+	-- its root's stamp, which counts on its own); a verify rewrites every one.
 	if name == "__mesh" then
-		(live :: MeshPart):ApplyMesh(carrier :: MeshPart)
+		local part, from = live :: MeshPart, carrier :: MeshPart
+		if not same(part, from, "MeshId", "CollisionFidelity", "RenderFidelity") then
+			writes += 1
+		end
+		part:ApplyMesh(from)
 	elseif name == "__csg" then
+		if not same(live, carrier, "CollisionFidelity", "RenderFidelity") then
+			writes += 1
+		end
 		(live :: PartOperation):SubstituteGeometry(carrier)
 	elseif name == "__pivot" then
 		local pivot = get(carrier, kind, "WorldPivot") :: CFrame
-		if (live :: Model).WorldPivot ~= pivot then (live :: Model).WorldPivot = pivot end
+		if (live :: Model).WorldPivot ~= pivot then
+			writes += 1
+			(live :: Model).WorldPivot = pivot
+		end
 	elseif name == "Scale" then
 		local scale = if kind == 1 then carrier:GetAttribute("Scale") :: number else (carrier :: Model):GetScale()
-		if (live :: Model):GetScale() ~= scale then (live :: Model):ScaleTo(scale) end
+		if (live :: Model):GetScale() ~= scale then
+			writes += 1
+			(live :: Model):ScaleTo(scale)
+		end
 	elseif name == "__materialColors" then
 		for material, color in carrier:GetAttributes() do
 			local item = Enum.Material:FromName(material)
-			if item and typeof(color) == "Color3" then (live :: Terrain):SetMaterialColor(item, color) end
+			if item and typeof(color) == "Color3" and (live :: Terrain):GetMaterialColor(item) ~= color then
+				writes += 1
+				(live :: Terrain):SetMaterialColor(item, color)
+			end
 		end
 	elseif name == "Source" then
 		set_source(live :: ModuleScript, get(carrier, kind, "Source") :: string, id, 4)
@@ -585,24 +655,39 @@ local function write(live: Instance, carrier: Instance, kind: number, name: stri
 		local from = if kind == 1 then carrier:FindFirstChild("Attributes") :: Instance else carrier
 		local want = from:GetAttributes()
 		for key, value in want do
-			if key ~= "opossum" and live:GetAttribute(key) ~= value then live:SetAttribute(key, value) end
+			if key ~= "opossum" and live:GetAttribute(key) ~= value then
+				writes += 1
+				live:SetAttribute(key, value)
+			end
 		end
 		for key in live:GetAttributes() do
-			if want[key] == nil and key ~= "opossum" then live:SetAttribute(key, nil) end
+			if want[key] == nil and key ~= "opossum" then
+				writes += 1
+				live:SetAttribute(key, nil)
+			end
 		end
 	elseif name == "Tags" then
 		local from = if kind == 1 then carrier:FindFirstChild("Attributes") :: Instance else carrier
 		local want: { [string]: true } = {}
 		for _, tag_name in from:GetTags() do
 			want[tag_name] = true
-			live:AddTag(tag_name)
+			if not live:HasTag(tag_name) then
+				writes += 1
+				live:AddTag(tag_name)
+			end
 		end
 		for _, tag_name in live:GetTags() do
-			if not want[tag_name] then live:RemoveTag(tag_name) end
+			if not want[tag_name] then
+				writes += 1
+				live:RemoveTag(tag_name)
+			end
 		end
 	else
 		local value = get(carrier, kind, name)
-		if (live :: any)[name] ~= value then (live :: any)[name] = value end
+		if (live :: any)[name] ~= value then
+			writes += 1
+			(live :: any)[name] = value
+		end
 	end
 end
 
@@ -671,7 +756,8 @@ local function insert(parent: Instance, inst: Instance, node: Node)
 		found(inst)
 	end
 	if M.role == "server" then table.insert(made, inst) end
-	own_tree[inst] = token
+	own(inst)
+	writes += 1
 	inst.Parent = parent
 end
 
@@ -720,6 +806,7 @@ function reconcile_children(parent: Instance, blobs: { Instance }, nodes: { Node
 		if frame then
 			if live:GetAttribute("opossum") == nil then
 				print(`opossum: adopting {live:GetFullName()}`)
+				writes += 1
 				live:SetAttribute("opossum", "")
 			end
 			M.dirty[live] = nil
@@ -727,6 +814,7 @@ function reconcile_children(parent: Instance, blobs: { Instance }, nodes: { Node
 			found(live)
 		elseif live:GetAttribute("opossum") ~= nil then
 			-- a root once (a move that left it nested kept the attribute): the files give it none
+			writes += 1
 			live:SetAttribute("opossum", nil)
 		end
 		reconcile(live, blob, nodes[i])
@@ -746,7 +834,8 @@ local function settle_strays(record: boolean)
 		if inst.Parent == nil then continue end
 		if record then
 			print(`opossum: removed {inst:GetFullName()}, which is no longer a root (without its opossum attribute it stays)`)
-			own_tree[inst] = token
+			own(inst)
+			writes += 1
 			inst.Parent = nil
 			M.unmap(inst)
 			for _, below in inst:GetDescendants() do
@@ -762,7 +851,8 @@ local function settle_strays(record: boolean)
 		if claimed[inst] or inst.Parent ~= stray.parent then continue end
 		if authoritative and record then
 			print(`opossum: removed {inst:GetFullName()}`)
-			own_tree[inst] = token
+			own(inst)
+			writes += 1
 			inst.Parent = nil
 			M.unmap(inst)
 			for _, below in inst:GetDescendants() do
@@ -970,12 +1060,13 @@ local function op_move()
 	M.structural = true
 	touch(live)
 	touch(parent)
-	own_tree[live] = token
+	own(live)
+	writes += 1
 	if M.role == "server" then table.insert(moved, live) end
 	local ok, err = pcall(function()
 		-- A parent that is still inside `live` (a parent/child swap) steps out first; its own move places it.
 		if parent:IsDescendantOf(live) then
-			own_tree[parent] = token
+			own(parent)
 			parent.Parent = nil
 		end
 		if live.Name ~= name then live.Name = name end
@@ -1002,7 +1093,10 @@ local function op_ref()
 	if not live or (target_id ~= NIL and not target) then return fail_unmapped(id, 7, if live then target_id else id, live) end
 	touch(live)
 	local ok, err = pcall(function()
-		if (live :: any)[prop] ~= target then (live :: any)[prop] = target end
+		if (live :: any)[prop] ~= target then
+			writes += 1
+			(live :: any)[prop] = target
+		end
 	end)
 	if not ok then fail(id, 7, `{prop}: {err}`, live) end
 end
@@ -1014,10 +1108,11 @@ local function op_remove()
 	M.structural = true
 	if orphans[id] then return table.insert(orphaned, live) end
 	touch(live)
-	own_tree[live] = token
+	own(live)
+	writes += 1
 	local gone = live:GetDescendants()
 	for _, inst in gone do
-		own_tree[inst] = token
+		own(inst)
 	end
 	local ok, err = pcall(live.Destroy, live)
 	if not ok then return fail(id, 8, tostring(err), live) end
@@ -1049,8 +1144,9 @@ local function op_swap()
 	M.structural = true
 	touch(old)
 	local ok, swap_err = pcall(function()
-		own_tree[old] = token
-		own_tree[new] = token
+		own(old)
+		own(new)
+		writes += 1
 		local parent = old.Parent
 		-- a swapped root stays a root
 		local stamp = old:GetAttribute("opossum")
@@ -1108,11 +1204,17 @@ local function reload(gen: number)
 	table.clear(reloads)
 end
 
--- In edit, opens the recording the next writes go under; nil (applied unrecorded) when another recording is open.
+-- In edit, opens the recording the next writes go under; nil (applied unrecorded) for a quiet frame or when another
+-- recording is open. Unrecorded writes still pending ride a sync waypoint even when the frame itself changes nothing
+-- (measured), and stepping over one verifies anyway, so they are settled.
 local function record(name: string): string?
 	if M.role ~= "edit" then return nil end
 	local id = if M.quiet then nil else ChangeHistoryService:TryBeginRecording(name)
-	if not id then M.unrecorded = true end
+	if not id then
+		norec = true
+	elseif name == SYNC then
+		M.unrecorded = false
+	end
 	return id
 end
 
@@ -1123,7 +1225,9 @@ local function write_stamps()
 		if M.role == "server" then
 			played[root] = stamp.hash
 		else
-			root:SetAttribute("opossum", stamp.hash)
+			local prev = root:GetAttribute("opossum")
+			if was[root] == nil then was[root] = if type(prev) == "string" then prev else "" end
+			if prev ~= stamp.hash then root:SetAttribute("opossum", stamp.hash) end
 		end
 	end
 end
@@ -1152,12 +1256,18 @@ local function finish(gen: number)
 		if root.Parent == nil then root:Destroy() end
 	end
 	if reload_due then reload(gen) end
+	-- a root's stamp left other than before the generation: undoing the waypoint this rides would put the old one
+	-- back over what the generation wrote (Source included, which Undo keeps)
+	for root, prev in was do
+		if root.Parent and root:GetAttribute("opossum") ~= prev then
+			writes += 1
+		end
+	end
 	local failed = M.failed
 	M.failed = {}
 	M.abort()
 	M.failed = failed
 	M.applied = gen
-	M.quiet = false
 end
 
 -- Applies one frame. "dropped": its base is not the last generation applied (answer with verify); "skipped": a
@@ -1166,7 +1276,8 @@ end
 function M.frame(data: string): "dropped" | "skipped" | "part" | "done"
 	buf = buffer.fromstring(data)
 	pos = 0
-	local gen, base, last = u32(), u32(), u8()
+	local gen, base, flags = u32(), u32(), u8()
+	M.quiet = bit32.btest(flags, 2)
 	if gen == skip then return "skipped" end
 	if M.applied ~= nil and base ~= M.applied then
 		gen_now = gen
@@ -1208,7 +1319,7 @@ function M.frame(data: string): "dropped" | "skipped" | "part" | "done"
 	for _, root in roots do
 		if root.Parent == nil and not held[root] then root:Destroy() end
 	end
-	if last == 0 then
+	if not bit32.btest(flags, 1) then
 		M.writing = false
 		commit()
 		return "part"

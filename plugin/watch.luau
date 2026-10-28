@@ -44,7 +44,19 @@ end
 local function dirty(root: Instance?)
 	if root then
 		apply.dirty[root] = true
+		apply.left[root] = ""
 		if root:GetAttribute("opossum") ~= "" then root:SetAttribute("opossum", "") end
+	end
+end
+
+-- Roots something dirtied since the last waypoint anyone recorded or the last undo or redo: dirtied during a step,
+-- they mean the step itself changed synced content (it fires the same signals), so the server verifies.
+local stirred = setmetatable({}, { __mode = "k" }) :: { [Instance]: true }
+
+local function stir(root: Instance?)
+	if root then
+		stirred[root] = true
+		dirty(root)
 	end
 end
 
@@ -74,11 +86,11 @@ end
 local function watch(root: Instance)
 	watched[root] = {
 		root.DescendantAdded:Connect(function(inst)
-			if not apply.owns(inst) then dirty(root) end
+			if not apply.owns(inst) then stir(root) end
 		end),
 		root.DescendantRemoving:Connect(function(inst)
 			if not apply.owns(inst) then
-				dirty(root)
+				stir(root)
 				lose(inst)
 			end
 		end),
@@ -115,6 +127,8 @@ function M.scan(roots: { { path: string, root: Instance } })
 	if not edit then return end
 	for _, r in roots do
 		table.insert(apply.found, r.root)
+		local stamp = r.root:GetAttribute("opossum")
+		apply.left[r.root] = if type(stamp) == "string" then stamp else nil
 	end
 	M.refresh()
 end
@@ -127,16 +141,20 @@ function M.start(role: apply.Role, sender: (message: string) -> ())
 	-- Fires synchronously for every property write, the plugin's own and the command bar's included (measured,
 	-- ~0.3 µs an event), so apply.writing covers the plugin's synchronous writes and whatever they derive (ScaleTo,
 	-- welded parts). Attribute and tag changes do not fire it. (Missing from the type definitions.)
+	-- It fires for every part a drag moves, so it bails out early: once a frame mapped the place, an unmapped
+	-- instance under a root is new (DescendantAdded dirtied its root), a kept stray (its root stays unstamped) or
+	-- exempt, and a dirty root stays dirty (stepped() puts back a clear an undo reverted).
 	((game :: any).ItemChanged :: RBXScriptSignal<Instance, string>):Connect(function(inst, prop)
-		if apply.writing or not is_edit(inst, prop) then return end
+		if apply.writing or (apply.applied ~= 0 and not apply.id_of[inst]) or not is_edit(inst, prop) then return end
 		local root = apply.root_of(inst)
-		if root and not apply.owns_item(inst) then dirty(root) end
+		if root and not apply.dirty[root] and not apply.owns_item(inst) then stir(root) end
 	end)
 	ScriptEditorService.TextDocumentDidChange:Connect(function(document)
 		local script = document:GetScript()
-		if script and not apply.owns_item(script) then dirty(apply.root_of(script)) end
+		if script and not apply.owns_item(script) then stir(apply.root_of(script)) end
 	end)
 	ChangeHistoryService.OnRecordingFinished:Connect(function(name)
+		table.clear(stirred)
 		if string.sub(name, 1, 8) ~= "opossum:" then
 			for _, inst in Selection:Get() do
 				dirty(apply.root_of(inst))
@@ -144,23 +162,40 @@ function M.start(role: apply.Role, sender: (message: string) -> ())
 		end
 	end)
 	-- Each frame is its own waypoint, so undoing someone's edit reverts only theirs, and the signals above see it.
-	-- Stepping over an opossum waypoint makes every root dirty: "opossum: resync" gives back the strays a verify
-	-- took (kept until the next Resync), "opossum: sync" reverts synced content, so the server verifies, as it
-	-- does after any step while a frame went unrecorded and rode someone else's waypoint. That verify applies
-	-- unrecorded (apply.quiet), so the next Ctrl+Z goes on to the waypoint below instead of undoing the verify.
+	-- A step may also revert the plugin's unrecorded clear of a dirty root's stamp (it rode that waypoint), so
+	-- every dirty root is cleared again. Stepping over an opossum waypoint makes every root dirty: "opossum:
+	-- resync" gives back the strays a verify took (kept until the next Resync), "opossum: sync" reverts synced
+	-- content, so the server verifies. So it does after a step that changed a clean root (unrecorded writes rode
+	-- that waypoint, however deep it was: the signals above saw it, or it put back another stamp than the plugin
+	-- left), or any step while the last unrecorded writes have not been verified since. That verify is quiet: the
+	-- frame answering it applies unrecorded, so the next Ctrl+Z goes on to the waypoint below instead of undoing
+	-- the verify.
 	local function stepped(name: string)
-		local sync = name == "opossum: sync" or apply.unrecorded
+		local reverted = next(stirred) ~= nil
+		table.clear(stirred)
+		for root in watched do
+			local left = apply.left[root]
+			if left ~= nil and not apply.dirty[root] and root:GetAttribute("opossum") ~= left then
+				reverted = true
+				break
+			end
+		end
+		for root in apply.dirty do
+			dirty(root)
+		end
+		local sync = name == "opossum: sync" or apply.unrecorded or reverted
 		if not sync and name ~= "opossum: resync" then return end
 		for root in watched do
+			local stamp = root:GetAttribute("opossum")
+			if sync and type(stamp) == "string" and stamp ~= "" then apply.before[root] = stamp end
 			dirty(root)
 		end
 		if sync then
 			apply.unrecorded = false
-			apply.quiet = true
-			-- the verify pairs every root again, so what the step removed is never reported lost: a lost the
-			-- server took before the verify would be answered by a frame of its own, which takes apply.quiet
+			-- the verify pairs every root again, so what the step removed is never reported lost (and a lost the
+			-- server took first would only be answered before the verify)
 			table.clear(lost)
-			send(apply.verify())
+			send(apply.verify(true))
 		end
 	end
 	ChangeHistoryService.OnUndo:Connect(stepped)

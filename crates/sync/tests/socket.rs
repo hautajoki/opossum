@@ -36,6 +36,7 @@ struct Frame {
     generation: u32,
     base: u32,
     last: bool,
+    quiet: bool,
     blob: Vec<String>,
     ops: Vec<(u8, Vec<Field>)>,
 }
@@ -86,7 +87,8 @@ impl Reader<'_> {
 
 fn decode(bytes: &[u8]) -> Frame {
     let mut r = Reader(bytes);
-    let (generation, base, last) = (r.u32(), r.u32(), r.u8() == 1);
+    let (generation, base, flags) = (r.u32(), r.u32(), r.u8());
+    let (last, quiet) = (flags & 1 != 0, flags & 2 != 0);
     let len = r.u32() as usize;
     let blob = r.take(len).to_vec();
     let blob = if blob.is_empty() {
@@ -129,7 +131,7 @@ fn decode(bytes: &[u8]) -> Frame {
         ops.push((tag, f));
     }
     assert!(r.0.is_empty(), "trailing bytes");
-    Frame { generation, base, last, blob, ops }
+    Frame { generation, base, last, quiet, blob, ops }
 }
 
 fn frame(socket: &mut Socket) -> Frame {
@@ -218,11 +220,13 @@ fn socket_session() {
     assert_eq!(tags(&repair), [sync::SOURCE, sync::STAMP]);
     assert_eq!(repair.ops[0].1, [Field::U(a), Field::S("return 2".into())]);
 
-    // Resync while the repair is still applying: the wait ends and the root is verified
-    send(&mut socket, serde_json::json!({"t": "verify"}));
+    // an undo's verify while the repair is still applying: the wait ends and the root is verified, and only the
+    // frame that answers it is quiet (the repair already in flight records as usual)
+    send(&mut socket, serde_json::json!({"t": "verify", "quiet": true}));
     let reverify = frame(&mut socket);
     assert_eq!(reverify.base, repair.generation);
     assert!(tags(&reverify).contains(&sync::CHILDREN));
+    assert!(!repair.quiet && reverify.quiet);
 
     // the repair's ack arrives late: it is not the verify's, which covers it, so it repairs nothing
     send(&mut socket, serde_json::json!({"t": "ack", "gen": repair.generation, "failed": [[a, sync::SOURCE, "late"]]}));
@@ -231,6 +235,7 @@ fn socket_session() {
     server.publish(cur.clone());
     let next = frame(&mut socket);
     assert_eq!(next.base, reverify.generation);
+    assert!(!next.quiet);
     assert_eq!(next.ops[0].1, [Field::U(a), Field::S("return 3".into())]);
     send(&mut socket, serde_json::json!({"t": "ack", "gen": next.generation, "failed": []}));
 

@@ -20,6 +20,10 @@ pub const STAMP: u8 = 9;
 pub const SWAP: u8 = 10;
 pub const RELOAD: u8 = 11;
 
+/// Frame header flags: the generation's last part, and a generation that answers a quiet `verify` (an undo's).
+pub const LAST: u8 = 1;
+pub const QUIET: u8 = 2;
+
 pub const RECONCILE: u8 = 1;
 pub const AUTHORITATIVE: u8 = 2;
 
@@ -47,13 +51,13 @@ pub fn str(out: &mut Vec<u8>, s: &str) {
     out.extend_from_slice(s.as_bytes());
 }
 
-/// Assembles one frame part: header, blob, then the sections in the order given.
-pub fn assemble(generation: u32, base: u32, last: bool, blob: &[u8], sections: &[&Section]) -> Vec<u8> {
+/// Assembles one frame part: header (`flags` of [`LAST`] and [`QUIET`]), blob, then the sections in the order given.
+pub fn assemble(generation: u32, base: u32, flags: u8, blob: &[u8], sections: &[&Section]) -> Vec<u8> {
     let size: usize = sections.iter().map(|s| s.bytes.len()).sum();
     let mut out = Vec::with_capacity(17 + blob.len() + size);
     u32(&mut out, generation);
     u32(&mut out, base);
-    out.push(u8::from(last));
+    out.push(flags);
     u32(&mut out, blob.len() as u32);
     out.extend_from_slice(blob);
     u32(&mut out, sections.iter().map(|s| s.count).sum());
