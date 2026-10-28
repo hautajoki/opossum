@@ -35,6 +35,8 @@ export type Request = {
 	start: number?,
 	-- bytes of returned values the answer may carry (ANSWER_LIMIT when nil): `opossum pull` returns a whole model
 	limit: number?,
+	-- runs at once beside the worker instead of queued behind frames and execs: dev's own snippets that need no build
+	now: boolean?,
 }
 
 -- Module bodies by the module's full name, with the Source each was compiled from.

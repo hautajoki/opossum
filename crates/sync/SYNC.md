@@ -152,7 +152,7 @@ The first message is JSON text: `{"t":"hello","project","place","unpublished","s
 the socket unless `place == game.PlaceId`, or `PlaceId == 0` and `unpublished`; otherwise it drops its id map and queue,
 waits for any apply in flight, and answers with its own `hello`. Every later server message is a binary **frame**, or an
 exec: four zero bytes (generation 0, which no frame has), then
-`{"t":"exec","id","name","source","modules","timeout","start","limit"}`, or the same way `{"t":"attach","port"}`
+`{"t":"exec","id","name","source","modules","timeout","start","limit","now"}`, or the same way `{"t":"attach","port"}`
 (Attach). The server sends no frame before its first publish, so
 a Studio that connects during the first build is never answered from an empty tree. A config change to `placeId`,
 `unpublished` or `hotReload` closes every socket, so each plugin checks the new hello; other changes keep them.
@@ -377,10 +377,10 @@ so the plugin has no message for them. Play runs in edit once it holds the newes
 `StudioTestService:ExecutePlayModeAsync("opossum")` (`ExecuteRunModeAsync` for `--run`), so the test starts after the
 exec's recording ends; the method yields until the test does, in its own thread, never the worker. Its argument cannot
 be nil ("Argument 1 missing or nil", measured). dev then waits for the server's hello (and the client's in Play Solo)
-and sends the play server an empty exec, whose answer says the build it holds. Stop runs
-`StudioTestService:EndTest("opossum")` in the play server, which ends any Studio test, not only one a plugin started
-(measured: Play Solo, Run, and one the Studio MCP started); its answer may be lost to the socket closing, and dev waits
-for both sockets to close. Their log lines all arrive before the close, so the tally dev keeps of the playtest's errors
+and sends the play server an empty exec, whose answer says the build it holds; the playtest runs whatever that answers.
+Stop runs `StudioTestService:EndTest("opossum")` in the play server, which ends any Studio test, not only one a plugin
+started (measured: Play Solo, Run, and one the Studio MCP started), as a `now` exec (Exec), so a long exec or frame
+there never holds it up; its answer may be lost to the socket closing, and dev waits for both sockets to close. Their log lines all arrive before the close, so the tally dev keeps of the playtest's errors
 and warnings (from the first of its DataModels connecting while none was) is whole by then. StudioTestService's
 multiplayer test is not offered. Measured in the blank place (2026-10-29): play returns 1.9 s after the request (0.7 s
 for Run), stop 0.3–0.5 s.
@@ -413,7 +413,9 @@ roots, counts the roots it lists), or 0 for none. So a playtest started while ed
 build before it, however late its plugin says hello. The answer is `fresh` when that is the newest build; an exec that
 asks for fresh code (`opossum test`) is refused instead of sent to a DataModel that is not. The plugin queues the exec
 behind the frames that arrived before it, and the frames after it wait for it: one worker, so no frame applies while
-the code runs. Its `result` goes back up the same socket.
+the code runs. Its `result` goes back up the same socket. An exec with `now`, only dev's own snippets that need no build
+(stop's EndTest), skips both waits: the writer sends it at once, saying the build the DataModel last acked, and the
+plugin runs it in a thread of its own beside the worker.
 
 **Giving up.** An exec may wait 30 s to start, in the writer and then in the plugin's queue; `start` tells the plugin
 how many seconds of that are left when it is sent. Until the writer hands it over, a waiter that gives up takes it

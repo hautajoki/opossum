@@ -174,7 +174,17 @@ local function connect(port: number): "live" | "next" | "busy"
 					return
 				end
 				if value.t ~= "exec" then return end
-				item.exec = value :: exec.Request
+				local request = value :: exec.Request
+				if request.now then
+					-- it needs no build (stop's EndTest): it runs at once beside the worker, whatever that is doing
+					local mine = epoch
+					task.spawn(function()
+						local ok, result = pcall(exec.run, request, item.at)
+						if epoch == mine then send(if ok then result else exec.failed(request, result)) end
+					end)
+					return
+				end
+				item.exec = request
 			end
 			table.insert(queue, item)
 			if not busy then task.spawn(work) end

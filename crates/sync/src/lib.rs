@@ -311,8 +311,9 @@ impl Server {
     }
 
     /// Sends `message` (the plugin's `exec`, its `id`, `timeout` and `start` filled in here) to the newest connected
-    /// DataModel of `realm` as soon as that DataModel holds the newest published tree (SYNC.md, Exec), and waits for
-    /// its result. With `fresh`, a DataModel holding older code (one that takes no frames) refuses it instead.
+    /// DataModel of `realm` as soon as that DataModel holds the newest published tree (SYNC.md, Exec), or at once when
+    /// the message sets `now`, and waits for its result. With `fresh`, a DataModel holding older code (one that takes
+    /// no frames) refuses it instead.
     ///
     /// An error means it never ran and never will: no such DataModel, it holds older code than allowed, or it could
     /// not start in time. When Studio had it but did not answer in time or disconnected, the result is the server's

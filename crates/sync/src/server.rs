@@ -380,6 +380,13 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
                         shared.hold(conn, held);
                     }
                 }
+                // one that needs no build (`now`: stop's EndTest) goes at once, whatever the DataModel holds
+                Event::Exec(id, message) if message["now"] == true => {
+                    let has = shared.lock().inboxes.get(&conn).map_or(0, |i| i.held);
+                    if !hand(out, shared, id, message, has, generation) {
+                        return;
+                    }
+                }
                 Event::Exec(id, message) => execs.push((id, message)),
                 Event::Adopt(path, hash) => sub.adopt(path, hash),
                 Event::Ack(number, failed, ms) => {
@@ -422,27 +429,33 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
             continue;
         }
         let takes = sub.role == Role::Edit || (sub.role == Role::Server && hot_reload);
-        let (has, fresh) = if takes { (generation, true) } else { (held, held == generation) };
-        for (id, mut message) in execs.drain(..) {
-            let start_by = {
-                let mut state = shared.lock();
-                // its waiter gave up: it never runs
-                let Some(waiter) = state.execs.get_mut(&id) else { continue };
-                if waiter.fresh && !fresh {
-                    let _ = waiter.tx.send(Reply::Stale { generation: has, published: generation });
-                    state.execs.remove(&id);
-                    continue;
-                }
-                waiter.sent = true;
-                let _ = waiter.tx.send(Reply::Started { generation: has, fresh });
-                waiter.start_by
-            };
-            message["start"] = start_by.saturating_duration_since(Instant::now()).as_secs_f64().into();
-            if ws::write(out, ws::BINARY, &self::message(&message)).is_err() {
+        let has = if takes { generation } else { held };
+        for (id, message) in execs.drain(..) {
+            if !hand(out, shared, id, message, has, generation) {
                 return;
             }
         }
     }
+}
+
+/// Hands exec `id` to the plugin, telling its waiter the DataModel holds build `has` of the `published` ones, unless
+/// the waiter gave up (it never runs) or asked for fresher code (it is refused). False when the socket failed.
+fn hand(out: &mut TcpStream, shared: &Shared, id: u64, mut message: Value, has: u32, published: u32) -> bool {
+    let fresh = has == published;
+    let start_by = {
+        let mut state = shared.lock();
+        let Some(waiter) = state.execs.get_mut(&id) else { return true };
+        if waiter.fresh && !fresh {
+            let _ = waiter.tx.send(Reply::Stale { generation: has, published });
+            state.execs.remove(&id);
+            return true;
+        }
+        waiter.sent = true;
+        let _ = waiter.tx.send(Reply::Started { generation: has, fresh });
+        waiter.start_by
+    };
+    message["start"] = start_by.saturating_duration_since(Instant::now()).as_secs_f64().into();
+    ws::write(out, ws::BINARY, &self::message(&message)).is_ok()
 }
 
 /// A JSON message down the socket: generation 0, which no frame has, then the JSON text.

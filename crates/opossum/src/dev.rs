@@ -578,7 +578,7 @@ impl Execs {
 if not StudioTestService.EditModeActive then error(\"a playtest is already running\", 0) end
 task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
         );
-        let started = self.studio(Realm::Edit, "play", &source)?;
+        let started = self.studio(Realm::Edit, "play", &source, false)?;
         if started["ok"] != true {
             let error = started["error"].as_str().unwrap_or("it did not start");
             let status = if error.contains("already running") { 409 } else { 503 };
@@ -599,12 +599,23 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
             return Ok(json!({ "ok": false, "realms": realms, "error": error }));
         }
         // an empty exec there answers once it holds the newest build: at once without hot reload (the build Play
-        // copied, maybe older), after it applied the newest with
+        // copied, maybe older), after it applied the newest with. The playtest runs whatever it answers, so a failure
+        // is ok false, never an error status saying it never started.
         let message = json!({ "t": "exec", "name": "play", "source": "return" });
-        let ran = self.server.exec(Realm::Server, message, limit, false).map_err(|e| (503, e))?;
-        let ms = start.elapsed().as_secs_f64() * 1000.0;
-        let (generation, fresh, stale) = (ran.generation, ran.fresh, self.stale(ran.generation));
-        Ok(json!({ "ok": true, "realms": realms, "gen": generation, "fresh": fresh, "stale": stale, "ms": ms }))
+        let ms = || start.elapsed().as_secs_f64() * 1000.0;
+        let error = match self.server.exec(Realm::Server, message, limit, false) {
+            Ok(ran) if ran.result["ok"] == true => {
+                let (generation, fresh, stale) = (ran.generation, ran.fresh, self.stale(ran.generation));
+                let ms = ms();
+                return Ok(
+                    json!({ "ok": true, "realms": realms, "gen": generation, "fresh": fresh, "stale": stale, "ms": ms }),
+                );
+            }
+            Ok(ran) => ran.result["error"].as_str().unwrap_or("it did not answer").to_owned(),
+            Err(e) => e,
+        };
+        let error = format!("the playtest is running, but its server did not say which build it holds: {error}");
+        Ok(json!({ "ok": false, "realms": realms, "error": error, "ms": ms() }))
     }
 
     /// `{root, timeout?}` (DESIGN.md, Play): ends the running playtest from its server and answers once its DataModels
@@ -623,9 +634,10 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
             };
             return Err((409, error.into()));
         }
-        // the play server may close its socket before it answers: that ended it too
+        // the play server may close its socket before it answers: that ended it too. It needs no build, so it goes
+        // at once, never behind frames or an exec running there
         let source = "game:GetService(\"StudioTestService\"):EndTest(\"opossum\")";
-        let ended = self.studio(Realm::Server, "stop", source)?;
+        let ended = self.studio(Realm::Server, "stop", source, true)?;
         if ended["ok"] != true && ended["lost"] != true {
             let error = ended["error"].as_str().unwrap_or("it did not end");
             return Err((503, format!("the playtest did not end: {error}")));
@@ -808,9 +820,10 @@ return at.ClassName, buffer.tostring(game:GetService(\"EncodingService\"):Base64
         self.stale.lock().unwrap_or_else(|e| e.into_inner()).of(generation)
     }
 
-    /// Runs one of play's and stop's own snippets in the newest DataModel of `realm` and returns the plugin's result.
-    fn studio(&self, realm: Realm, name: &str, source: &str) -> Result<Value, (u16, String)> {
-        let message = json!({ "t": "exec", "name": name, "source": source });
+    /// Runs one of play's and stop's own snippets in the newest DataModel of `realm` and returns the plugin's result:
+    /// once it holds the newest build, or with `now` at once, beside whatever it is doing.
+    fn studio(&self, realm: Realm, name: &str, source: &str, now: bool) -> Result<Value, (u16, String)> {
+        let message = json!({ "t": "exec", "name": name, "source": source, "now": now });
         let ran = self.server.exec(realm, message, Duration::from_secs(10), false).map_err(|e| (503, e))?;
         Ok(ran.result)
     }
