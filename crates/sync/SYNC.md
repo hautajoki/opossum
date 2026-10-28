@@ -443,9 +443,12 @@ later require of a module that failed rethrows its error, as Studio's does. A sy
 say only "Requested module experienced an error while loading" (measured): compiling the source again with
 `loadstring` says what (plugins have it; `debug.loadmodule` is not enabled).
 
-Measured on a test project in the blank place: 20 of 20 "write a module's return value, immediately exec a require of
-it" runs saw the new value, for a `.luau` module and for a TypeScript one, 61–71 ms per run end to end; new files 85–94
-ms; the play server with hot reload 5 of 5. `opossum test` over a large project's 1,203 cases: 13.8 s in edit.
+Measured on a test project in the blank place (2026-10-28): 20 of 20 "write a module's return value, immediately exec a
+require of it" runs saw the new value, for a `.luau` module and for a TypeScript one, about 65 ms per run end to end
+(46 ms median with nothing saved, the fence's wait); new files 85–94 ms; the play server with hot reload 20 of 20. 20
+of 20 "write a module and a spec expecting its value, immediately `opossum test` it" runs passed, 155 ms each in edit
+(1.26 s while every run compiled every module afresh). `opossum test` over a large project's 1,203 cases: 13.7 s in edit, steady
+over 15 runs in a row, 24 s in the play server; the 176 suites hexagon also runs locally hold the same 1,107 cases.
 
 ## Budgets
 
