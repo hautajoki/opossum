@@ -22,7 +22,7 @@ pub use resources::{BadgeChange, Image, MAX_THUMBNAILS, NewBadge, Sale};
 use std::fmt;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use ureq::http;
@@ -273,7 +273,8 @@ impl Client {
         };
         let request_id =
             ["x-request-id", "roblox-request-id", "x-correlation-id"].into_iter().map(&header).find(|v| !v.is_empty());
-        let retry_after = retry_after(&header("retry-after"), SystemTime::now());
+        // in seconds; an HTTP date, like anything else unreadable, leaves the wait to the backoff
+        let retry_after = header("retry-after").parse().ok().map(Duration::from_secs);
         let (code, message) = if (300..400).contains(&status) {
             (String::new(), format!("redirected to {:?}, which opossum never follows", header("location")))
         } else {
@@ -458,35 +459,6 @@ pub(crate) fn code(v: &Value) -> String {
 pub(crate) fn id(v: &Value) -> Option<u64> {
     let id = v.as_u64().or_else(|| v.as_str()?.trim().parse().ok())?;
     (id > 0).then_some(id)
-}
-
-/// `Retry-After` as seconds or an HTTP date; unparseable is absent.
-fn retry_after(value: &str, now: SystemTime) -> Option<Duration> {
-    if let Ok(secs) = value.parse::<u64>() {
-        return Some(Duration::from_secs(secs));
-    }
-    let at = http_date(value)?;
-    let now = now.duration_since(UNIX_EPOCH).ok()?.as_secs();
-    Some(Duration::from_secs(at.saturating_sub(now)))
-}
-
-/// An IMF-fixdate (`Sun, 06 Nov 1994 08:49:37 GMT`, the only form RFC 9110 lets servers send) as unix seconds.
-fn http_date(s: &str) -> Option<u64> {
-    let [_, day, month, year, time, "GMT"] = s.split_ascii_whitespace().collect::<Vec<_>>()[..] else { return None };
-    let month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        .iter()
-        .position(|m| *m == month)? as i64
-        + 1;
-    let (day, year): (i64, i64) = (day.parse().ok()?, year.parse().ok()?);
-    let mut hms = time.split(':').map(|n| n.parse::<i64>().ok());
-    let (h, m, sec) = (hms.next()??, hms.next()??, hms.next()??);
-    // days from the civil date (Howard Hinnant's algorithm)
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let doy = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
-    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
-    u64::try_from(days * 86_400 + h * 3600 + m * 60 + sec).ok()
 }
 
 /// One form-data part: a text field when `filename` is empty, else a file with its MIME.
@@ -692,12 +664,5 @@ mod tests {
         }
         assert!(Client::new(" \n", ROBLOX, Clock::Real).is_err());
         assert!(Client::new("a\r\nX: y", ROBLOX, Clock::Real).is_err());
-    }
-
-    #[test]
-    fn http_dates_are_unix_seconds() {
-        assert_eq!(http_date("Sun, 06 Nov 1994 08:49:37 GMT"), Some(784_111_777));
-        let at = UNIX_EPOCH + Duration::from_secs(784_111_770);
-        assert_eq!(retry_after("Sun, 06 Nov 1994 08:49:37 GMT", at), Some(Duration::from_secs(7)));
     }
 }
