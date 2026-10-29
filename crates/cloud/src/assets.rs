@@ -27,11 +27,13 @@ pub enum Creator {
     Group(u64),
 }
 
-/// One file to upload. `name` is the display name before Roblox's rules (at most 50 characters, `asset` if blank);
-/// `ext` is the output's extension with its dot (`.png` for a processed SVG), which names the file part `asset<ext>`.
+/// One file to upload. `ext` is the output's extension with its dot (`.png` for a processed SVG), which names the file part `asset<ext>`.
 pub struct Upload<'a> {
     pub kind: AssetKind,
+    /// Its display name on Roblox, cut to fit by [`display_name`].
     pub name: &'a str,
+    /// Its description on Roblox.
+    pub description: &'a str,
     pub creator: Creator,
     pub ext: &'static str,
     pub mime: &'static str,
@@ -88,7 +90,7 @@ impl Client {
         let request = json!({
             "assetType": u.kind.name(),
             "displayName": display_name(u.name),
-            "description": "Uploaded by opossum",
+            "description": u.description,
             "creationContext": {"creator": creator(u.creator), "expectedPrice": 0},
         });
         self.upload(CREATE, "POST", "assets/v1/assets".into(), &request, u)
@@ -228,10 +230,12 @@ fn creator(c: Creator) -> Value {
     }
 }
 
-/// The file stem as Roblox takes it: at most 50 characters, `asset` if blank.
-fn display_name(name: &str) -> String {
-    let name: String = name.trim().chars().take(50).collect();
-    if name.trim().is_empty() { "asset".into() } else { name }
+/// A name as Roblox takes it: its last 50 characters, so a long path keeps the part that tells it apart, `asset` if
+/// blank.
+pub fn display_name(name: &str) -> String {
+    let chars: Vec<char> = name.trim().chars().collect();
+    let name: String = chars[chars.len().saturating_sub(50)..].iter().collect();
+    if name.trim().is_empty() { "asset".into() } else { name.trim().into() }
 }
 
 /// `operations/<id>`: one segment with no query, fragment or whitespace.
@@ -258,7 +262,8 @@ mod tests {
 
     const PNG: Upload = Upload {
         kind: AssetKind::Image,
-        name: "icon",
+        name: "ui/icon",
+        description: "assets/ui/icon.png",
         creator: Creator::Group(7654321),
         ext: ".png",
         mime: "image/png",
@@ -278,7 +283,7 @@ mod tests {
         let boundary = mime.strip_prefix("multipart/form-data; boundary=opossum-").unwrap();
         assert!(boundary.len() == 32 && boundary.bytes().all(|b| b.is_ascii_hexdigit()));
         let b = format!("opossum-{boundary}");
-        let request = r#"{"assetType":"Image","displayName":"icon","description":"Uploaded by opossum","creationContext":{"creator":{"groupId":"7654321"},"expectedPrice":0}}"#;
+        let request = r#"{"assetType":"Image","displayName":"ui/icon","description":"assets/ui/icon.png","creationContext":{"creator":{"groupId":"7654321"},"expectedPrice":0}}"#;
         let want = format!(
             "--{b}\r\nContent-Disposition: form-data; name=\"request\"\r\n\r\n{request}\r\n--{b}\r\nContent-Disposition: form-data; name=\"fileContent\"; filename=\"asset.png\"\r\nContent-Type: image/png\r\n\r\nPNG bytes\r\n--{b}--\r\n"
         );
@@ -287,6 +292,14 @@ mod tests {
         assert_eq!(r.header("transfer-encoding"), None);
         assert_eq!(r.header("x-api-key"), Some("test-key"));
         assert_eq!(r.header("accept"), Some("application/json"));
+    }
+
+    /// many files may be named color.png: a name cut to Roblox's 50 characters keeps the end, which tells them apart
+    #[test]
+    fn a_long_display_name_keeps_its_end() {
+        let key = format!("decals/{}/color", "x".repeat(60));
+        assert_eq!(display_name(&key), format!("{}/color", "x".repeat(44)));
+        assert_eq!(display_name("  "), "asset");
     }
 
     #[test]

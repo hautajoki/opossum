@@ -345,6 +345,7 @@ mod tests {
         let png = Upload {
             kind: AssetKind::Image,
             name: "a",
+            description: "a.png",
             creator: Creator::User(1),
             ext: ".png",
             mime: "image/png",

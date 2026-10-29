@@ -14,7 +14,7 @@ pub mod mock;
 mod places;
 mod resources;
 
-pub use assets::{AssetKind, Creator, MAX_ASSET, OPERATION_DEADLINE, Operation, Upload};
+pub use assets::{AssetKind, Creator, MAX_ASSET, OPERATION_DEADLINE, Operation, Upload, display_name};
 pub use execution::{MAX_TASK_TIMEOUT, Task};
 pub use places::MAX_PLACE;
 pub use resources::{BadgeChange, Image, MAX_THUMBNAILS, NewBadge, Sale};

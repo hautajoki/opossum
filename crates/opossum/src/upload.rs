@@ -41,8 +41,9 @@ struct Group {
 }
 
 enum Job {
-    /// Upload the compiled file, or put it into the FBX asset `update` in place.
-    Send { compiled: Compiled, name: String, update: Option<u64> },
+    /// Upload the compiled file, named after its set key and described by its file, or put it into the FBX asset
+    /// `update` in place.
+    Send { compiled: Compiled, key: String, file: String, update: Option<u64> },
     /// Wait on the operation of an upload an earlier run started.
     Resume(String),
 }
@@ -164,9 +165,8 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
                 Some(op) => Job::Resume(op),
                 None => {
                     let (a, compiled) = (&found[members[0]], compiled.remove(&members[0]).expect("checked"));
-                    let name = a.key.rsplit('/').next().unwrap_or(&a.key).to_owned();
                     let update = in_place(&lock, a, &compiled, members.len());
-                    Job::Send { compiled, name, update }
+                    Job::Send { compiled, key: a.key.clone(), file: a.file.clone(), update }
                 }
             };
             Group { hash, members, job }
@@ -356,13 +356,14 @@ fn progress(g: &Group, found: &[File]) {
 fn work(client: &Client, creator: cloud::Creator, g: &Group, audio: bool, stop: &AtomicBool, send: &dyn Fn(Event)) {
     let op = match &g.job {
         Job::Resume(op) => op.clone(),
-        Job::Send { compiled, name, update } => {
+        Job::Send { compiled, key, file, update } => {
             if stop.load(Ordering::SeqCst) {
                 return send(Event::NotSent);
             }
             let upload = Upload {
                 kind: compiled.kind,
-                name,
+                name: key,
+                description: file,
                 creator,
                 ext: compiled.ext,
                 mime: compiled.mime,
@@ -413,6 +414,8 @@ fn finished(op: Operation, audio: bool) -> Event {
 /// Records what a worker said on every member of its group, and whether the run sends nothing new after it.
 fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut Report) -> Option<Halt> {
     let files = || g.members.iter().map(|&m| found[m].file.as_str());
+    // the key its upload was named after
+    let sent_as = &found[g.members[0]].key;
     match event {
         Event::Created(op) => {
             for file in files() {
@@ -429,7 +432,7 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
         Event::Failed(e) => {
             for file in files() {
                 lock.assets.entry(file.to_owned()).or_default().op = None;
-                report.ambiguous.push((file.into(), format!("{e}; {}", plan::settle(file))));
+                report.ambiguous.push((file.into(), format!("{e}; {}", plan::settle(file, sent_as))));
             }
             return Some(Halt::Lost);
         }
@@ -456,7 +459,9 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
             let op = lock.assets.get(&found[g.members[0]].file).and_then(|r| r.op.clone()).unwrap_or_default();
             for file in files() {
                 forget(lock, file, false);
-                report.ambiguous.push((file.into(), format!("operation {op} expired; {}", plan::settle(file))));
+                report
+                    .ambiguous
+                    .push((file.into(), format!("operation {op} expired; {}", plan::settle(file, sent_as))));
             }
         }
         Event::Waiting(e) => {
@@ -472,7 +477,7 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
                     true => report.pending.push(file.into()),
                     false => report
                         .ambiguous
-                        .push((file.into(), format!("opossum failed mid-upload; {}", plan::settle(file)))),
+                        .push((file.into(), format!("opossum failed mid-upload; {}", plan::settle(file, sent_as)))),
                 }
             }
         }

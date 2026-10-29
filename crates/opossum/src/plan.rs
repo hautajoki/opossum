@@ -105,7 +105,7 @@ pub fn classify(root: &Path, lock: &mut Lock, found: &[assets::Asset], hashes: &
         }
         // a create in flight decides over the id it would replace
         let class = match lock.assets.get(&a.file) {
-            Some(Asset { next: Some(_), op: None, .. }) => Class::Ambiguous(settle(&a.file)),
+            Some(Asset { next: Some(_), op: None, .. }) => Class::Ambiguous(settle(&a.file, &a.key)),
             Some(Asset { next: Some(_), .. }) => Class::Pending,
             Some(Asset { rejected: Some(r), .. }) if r == hash => Class::Rejected,
             Some(Asset { id: Some(_), hash: Some(h), .. }) if h == hash => Class::Current,
@@ -316,9 +316,13 @@ pub fn unsettled(lock: &Lock) -> HashMap<String, String> {
         .collect()
 }
 
-/// What settles a file whose upload may or may not have happened.
-pub fn settle(file: &str) -> String {
-    format!("an upload may have happened: `opossum adopt asset {file} <id>` if it exists on Roblox, else `--none`")
+/// What settles a file whose upload may or may not have happened, `key` the set key it went up named after.
+pub fn settle(file: &str, key: &str) -> String {
+    format!(
+        "an upload may have happened: if Roblox has an asset named \"{}\" from then, `opossum adopt asset {file} <its \
+         id>`, else `--none`",
+        cloud::display_name(key)
+    )
 }
 
 /// Why a command stops at `n` such files.
