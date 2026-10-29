@@ -364,7 +364,7 @@ pub fn survey(cfg: &Config, done: &str) -> Result<(Lock, Vec<assets::Asset>, Vec
     for d in &errors {
         eprintln!("{}", d.human(root));
     }
-    let error = format!("{} errors in opossum.lock or the asset roots, so nothing was {done}", errors.len());
+    let error = format!("{} in opossum.lock or the asset roots, so nothing was {done}", counted(errors.len(), "error"));
     Err(Outcome::refused(&first.code, error))
 }
 

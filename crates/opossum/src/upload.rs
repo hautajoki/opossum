@@ -192,7 +192,8 @@ impl Prepared {
             eprintln!("{file}: {how}");
         }
         if let Some((_, _, code)) = r.failed.first() {
-            let error = format!("{} asset files fail their checks, so nothing was sent", count(r.failed.len()));
+            let error =
+                format!("{} failed the checks, so nothing was sent", plan::counted(r.failed.len(), "asset file"));
             return Some(Outcome::refused(code, error));
         }
         let n = r.ambiguous.len();

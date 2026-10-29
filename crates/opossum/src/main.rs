@@ -504,7 +504,12 @@ fn report(diags: &[Diag], root: &Path) -> bool {
     }
     if !codes.is_empty() {
         let counts: Vec<String> = codes.iter().map(|(code, n)| format!("{n} {code}")).collect();
-        println!("{} diagnostics ({errors} errors): {}", diags.len(), counts.join(", "));
+        println!(
+            "{} ({}): {}",
+            plan::counted(diags.len(), "diagnostic"),
+            plan::counted(errors, "error"),
+            counts.join(", ")
+        );
     }
     errors == 0
 }
@@ -569,7 +574,7 @@ fn check(cfg: Config, profile: Option<&str>, environment: Option<&str>, json: bo
         return Ok(!diags.iter().any(Diag::is_error));
     }
     let ok = report(&diags, root);
-    println!("checked {} files in {}", stats.checked, times(&stats, &[], start));
+    println!("checked {} in {}", plan::counted(stats.checked, "file"), times(&stats, &[], start));
     Ok(ok)
 }
 

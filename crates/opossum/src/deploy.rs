@@ -13,7 +13,7 @@ use crate::build::{Changed, Session};
 use crate::cloud_exec::{self, Failure, Placed};
 use crate::config::{self, Config};
 use crate::guard::{Cache, RemoteGuard};
-use crate::plan::count;
+use crate::plan::{count, counted};
 use crate::{Outcome, editor, resources, upload};
 
 /// Place saves in flight at once.
@@ -127,8 +127,12 @@ pub fn deploy(
     let (tally, fail) = resources::apply(&target, &mut lock, &wants, &ops, &images, stop);
     let provision = resources::outcome(env, &ops, &tally, fail);
     json["provision"] = provision.json.clone();
-    let mut text =
-        format!("{}: {} assets uploaded, {} resources applied\n", env.name, count(uploaded), count(tally.applied));
+    let mut text = format!(
+        "{}: {} uploaded, {} applied\n",
+        env.name,
+        counted(uploaded, "asset"),
+        counted(tally.applied, "resource")
+    );
     if provision.exit != 0 {
         let _ = writeln!(text, "failed: {}\nno place was saved", provision.json["error"].as_str().unwrap_or(""));
         let (code, error) = (provision.json["code"].clone(), provision.json["error"].clone());
@@ -351,7 +355,7 @@ mod tests {
             .collect();
         assert_eq!(places, ["\"b\" 41", "\"c\" 42", "\"d\" 43", "\"e\" \"cloud.studioOpen\"", "\"main\" 40"]);
         assert!(out.text.contains("dev/e failed: open cloud save place") && out.text.contains("open in Studio"));
-        assert!(out.text.starts_with("dev: 1 assets uploaded, 1 resources applied\ndev/b v41 published\n"));
+        assert!(out.text.starts_with("dev: 1 asset uploaded, 1 resource applied\ndev/b v41 published\n"));
         assert_eq!(mock.peak(), 4);
 
         // the upload and the pass went first, and every place got the one build that holds their ids
