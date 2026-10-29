@@ -29,6 +29,14 @@ use crate::tessera::{self, Lit, Value};
 const CONFIG: &str = "tessera.config.ts";
 const LOCK: &str = "tessera.lock";
 const HEXAGON: &str = "@hautajoki/hexagon";
+const TSCONFIG: &str = "tsconfig.json";
+/// What the project's tsconfig.json extends, and all it holds once migrated.
+const EXTENDS: &str = "./.opossum/tsconfig.json";
+/// compilerOptions opossum sets itself (or that only shaped tsc's output), dropped without a note; `strict` is always on.
+const OWNED: &str = "module moduleResolution moduleDetection target lib noLib jsx jsxFactory jsxFragmentFactory \
+    experimentalDecorators resolveJsonModule allowSyntheticDefaultImports forceConsistentCasingInFileNames skipLibCheck \
+    noEmit paths baseUrl rootDir rootDirs outDir typeRoots types plugins incremental tsBuildInfoFile composite \
+    declaration sourceMap";
 /// What a refusal of something tessera did and opossum does not take over says to do instead.
 const BY_HAND: &str = "finish or remove it with tessera first, or move it by hand";
 
@@ -38,6 +46,8 @@ struct Plan {
     place: Vec<place::Write>,
     /// opossum.toml's new text, when it changes.
     toml: Option<String>,
+    /// tsconfig.json's new text, when it does not only extend opossum's yet.
+    tsconfig: Option<String>,
     /// The lock with tessera's records in it, the line saying what came over, and whether its text changes.
     lock: Option<(Lock, String, bool)>,
     /// Source files with their imports rewritten, and how many imports that is.
@@ -96,6 +106,12 @@ pub fn run(file: &Path) -> Result<bool, String> {
         fs::write(&path, text).map_err(|e| io(&path, e))?;
         println!("wrote {}", config::FILE);
     }
+    if let Some(text) = &plan.tsconfig {
+        did = true;
+        let path = root.join(TSCONFIG);
+        fs::write(&path, text).map_err(|e| io(&path, e))?;
+        println!("wrote {TSCONFIG}");
+    }
     for (path, text) in &plan.sources {
         fs::write(path, text).map_err(|e| io(path, e))?;
     }
@@ -134,6 +150,7 @@ fn plan(file: &Path) -> Result<Plan, String> {
         root: root.clone(),
         place: Vec::new(),
         toml: None,
+        tsconfig: None,
         lock: None,
         sources: Vec::new(),
         imports: 0,
@@ -173,6 +190,7 @@ fn plan(file: &Path) -> Result<Plan, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(format!("{}: {e}", ts.display())),
     };
+    tsconfig(&mut plan, &mut toml);
     let cfg = config::parse(&toml, root.clone());
     if let (Some(_), Err(e)) = (&tessera, &cfg) {
         let message = format!("the opossum.toml it migrates to does not load: {e}");
@@ -943,6 +961,102 @@ fn rewrite_sources(plan: &mut Plan, generated: &str, modules: &[(String, String)
     }
 }
 
+/// A tsconfig.json that does not only extend opossum's becomes `{ "extends": "./.opossum/tsconfig.json" }`, its
+/// strictness flags moving into `[ts]` (unless opossum.toml has one already), so the editor resolves `opossum/*` and
+/// the checks the project ran keep running. A flag opossum has no place for is named in a note; a file that does not
+/// read as JSON with comments is left for the user.
+fn tsconfig(plan: &mut Plan, toml: &mut String) {
+    let Ok(text) = fs::read_to_string(plan.root.join(TSCONFIG)) else { return };
+    let json = match jsonc(&text) {
+        Ok(json) if json["extends"] == EXTENDS => return,
+        Ok(json) => json,
+        Err(e) => {
+            plan.notes.push(format!(
+                "{TSCONFIG} does not read as JSON ({e}): make it {{ \"extends\": \"{EXTENDS}\" }} and move its strictness \
+                 flags into [ts]"
+            ));
+            return;
+        }
+    };
+    let (mut ts, mut left) = (String::new(), Vec::new());
+    for (k, v) in json["compilerOptions"].as_object().into_iter().flatten() {
+        match v.as_bool() {
+            Some(b) if lower::program::compiler_options("", &[(k.clone(), b)]).is_ok() => {
+                let _ = writeln!(ts, "{k} = {b}");
+            }
+            _ if k == "strict" && v == true || OWNED.split_whitespace().any(|o| o == k) => {}
+            _ => left.push(format!("{k} = {v}")),
+        }
+    }
+    if !ts.is_empty() {
+        match toml.parse::<toml::Table>().is_ok_and(|t| t.contains_key("ts")) {
+            true => plan.notes.push(format!(
+                "{} has [ts] already; {TSCONFIG} also set {}",
+                config::FILE,
+                ts.trim().replace('\n', ", ")
+            )),
+            false => {
+                let gap = if toml.ends_with('\n') { "\n" } else { "\n\n" };
+                *toml = format!("{toml}{gap}[ts]\n{ts}");
+                plan.toml = Some(toml.clone());
+            }
+        }
+    }
+    if !left.is_empty() {
+        plan.notes.push(format!("dropped what {TSCONFIG} set that opossum has no place for: {}", left.join(", ")));
+    }
+    plan.tsconfig = Some(format!("{{ \"extends\": \"{EXTENDS}\" }}\n"));
+}
+
+/// JSON with comments and trailing commas, as tsconfig.json is written: the comments go, then the trailing commas,
+/// each only outside strings.
+fn jsonc(text: &str) -> Result<serde_json::Value, serde_json::Error> {
+    let mut bare = Vec::with_capacity(text.len());
+    let (b, mut i, mut string) = (text.as_bytes(), 0, false);
+    while i < b.len() {
+        let rest = &b[i..];
+        let skip = match rest {
+            [b'\\', ..] if string => 2,
+            [b'"', ..] => {
+                string = !string;
+                1
+            }
+            [b'/', b'/', ..] if !string => {
+                i += rest.iter().position(|&c| c == b'\n').unwrap_or(rest.len());
+                continue;
+            }
+            [b'/', b'*', ..] if !string => {
+                i += rest.windows(2).position(|w| w == b"*/").map_or(rest.len(), |p| p + 2);
+                continue;
+            }
+            _ => 1,
+        };
+        bare.extend_from_slice(&rest[..skip.min(rest.len())]);
+        i += skip;
+    }
+    let mut out = Vec::with_capacity(bare.len());
+    let (mut i, mut string) = (0, false);
+    while i < bare.len() {
+        let rest = &bare[i..];
+        let take = match rest {
+            [b'\\', ..] if string => 2,
+            [b'"', ..] => {
+                string = !string;
+                1
+            }
+            [b',', after @ ..]
+                if !string && matches!(after.iter().find(|c| !c.is_ascii_whitespace()), Some(b'}' | b']')) =>
+            {
+                0
+            }
+            _ => 1,
+        };
+        out.extend_from_slice(&rest[..take.min(rest.len())]);
+        i += take.max(1);
+    }
+    serde_json::from_slice(&out)
+}
+
 /// The byte range inside the quotes and the text of every module specifier in a TS file: imports, exports from,
 /// `import()`, `import x = require()` and `import("…")` types. A specifier written with escapes is left alone.
 fn specifiers(text: &str, path: &Path) -> Vec<(usize, usize, String)> {
@@ -1097,6 +1211,34 @@ mod tests {
 
     fn codes(plan: &Plan) -> Vec<&str> {
         plan.diags.iter().map(|d| d.code.as_str()).collect()
+    }
+
+    /// The editor resolves `opossum/*` only through opossum's tsconfig, and the strictness flags must keep checking.
+    #[test]
+    fn tsconfig_becomes_one_extends_line_and_its_strict_flags_move_to_ts() {
+        let tsconfig = r#"{
+	// the rbxts-era config
+	"compilerOptions": {
+		"baseUrl": "src", /* opossum's */
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"allowUnreachableCode": false,
+		"downlevelIteration": true,
+		"outDir": "a//b",
+	},
+}"#;
+        let root = project("tsconfig", &[("opossum.toml", TOML.as_bytes()), ("tsconfig.json", tsconfig.as_bytes())]);
+        let plan = plan(&root.join(config::FILE)).unwrap();
+        assert_eq!(plan.tsconfig.as_deref(), Some("{ \"extends\": \"./.opossum/tsconfig.json\" }\n"));
+        let toml = plan.toml.as_deref().unwrap();
+        assert!(toml.ends_with("\n[ts]\nnoUncheckedIndexedAccess = true\nallowUnreachableCode = false\n"), "{toml}");
+        assert_eq!(
+            plan.notes,
+            ["dropped what tsconfig.json set that opossum has no place for: downlevelIteration = true"]
+        );
+        fs::write(root.join("tsconfig.json"), plan.tsconfig.unwrap()).unwrap();
+        assert!(self::plan(&root.join(config::FILE)).unwrap().tsconfig.is_none());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
