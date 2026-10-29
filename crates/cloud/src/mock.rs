@@ -151,8 +151,11 @@ fn connection(mut stream: TcpStream, shared: &Shared) {
     let Some(request) = read(&stream) else { return };
     if request.method == "GET" && request.path == "_mock/requests" {
         let seen = shared.requests.lock().unwrap();
-        let seen: Vec<Value> =
-            seen.iter().map(|r| json!({"method": r.method, "path": r.path, "query": r.query})).collect();
+        let seen = seen.iter().map(|r| {
+            let body = blake3::hash(&r.body).to_hex().to_string();
+            json!({"method": r.method, "path": r.path, "query": r.query, "bytes": r.body.len(), "blake3": body})
+        });
+        let seen: Vec<Value> = seen.collect();
         return answer(&mut stream, Reply::json(200, &Value::Array(seen)), &request);
     }
     shared.requests.lock().unwrap().push(request.clone());
@@ -219,10 +222,13 @@ fn not_found(r: &Request) -> Reply {
     Reply::json(404, &json!({"error": {"code": "NOT_FOUND", "message": message}}))
 }
 
-/// Serves [`auto`] on `127.0.0.1:port` until the process ends, printing its base URL on stdout. `GET
-/// <base>/_mock/requests` lists every request it saw, so a check can count what a command sent.
-pub fn serve(port: u16) -> Result<(), String> {
-    let mock = Mock::bind(port, Some(auto()))?;
+/// Serves [`auto`] on `127.0.0.1:port` until the process ends, printing its base URL on stdout, every task completing
+/// with `results` (what a script returned, so a canned spec report checks `test --cloud`). `GET <base>/_mock/requests`
+/// lists every request it saw with its body's length and BLAKE3, so a check can count what a command sent and see
+/// which bytes a place save carried.
+pub fn serve(port: u16, results: Vec<Value>) -> Result<(), String> {
+    let state = Mutex::new(Auto { results, ..Auto::default() });
+    let mock = Mock::bind(port, Some(Box::new(move |r| state.lock().unwrap().reply(r))))?;
     println!("{}", mock.base);
     loop {
         thread::park();
@@ -246,6 +252,8 @@ struct Auto {
     operations: HashMap<String, u64>,
     /// `universe/place` → its last version.
     versions: HashMap<String, u64>,
+    /// What every task returns.
+    results: Vec<Value>,
 }
 
 impl Auto {
@@ -290,7 +298,7 @@ impl Auto {
             }
             ("GET", ["cloud", "v2", "universes", .., "tasks", _]) => Reply::json(
                 200,
-                &json!({"path": &r.path["cloud/v2/".len()..], "state": "COMPLETE", "output": {"results": []}}),
+                &json!({"path": &r.path["cloud/v2/".len()..], "state": "COMPLETE", "output": {"results": self.results}}),
             ),
             ("GET", ["cloud", "v2", "universes", .., "logs"]) => {
                 Reply::json(200, &json!({"luauExecutionSessionTaskLogs": [], "nextPageToken": ""}))
