@@ -1,8 +1,12 @@
-//! A fake Open Cloud on loopback, std only, for tests: a listener on `127.0.0.1:0` and one thread per connection, every
-//! answer with `Connection: close` (a kept-alive connection would hold its thread). A test queues [`Reply`]s per method
-//! and path prefix; each request takes the first queued reply it matches, and is recorded with its method, path, raw
-//! query, headers and body. An in-flight gauge keeps its peak, so tests can pin concurrency limits.
+//! A fake Open Cloud on loopback, std only: a listener on `127.0.0.1` and one thread per connection, every answer with
+//! `Connection: close` (a kept-alive connection would hold its thread). A test queues [`Reply`]s per method and path
+//! prefix; each request takes the first queued reply it matches, and is recorded with its method, path, raw query,
+//! headers and body. An in-flight gauge keeps its peak, so tests can pin concurrency limits.
+//!
+//! [`serve`] runs it as a server for end-to-end checks of the real CLI (`examples/mock.rs`), answering with [`auto`]:
+//! a stateful stand-in for every endpoint opossum calls.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -36,6 +40,9 @@ pub enum Reply {
     Run(Box<dyn FnOnce(&Request) -> Reply + Send>),
 }
 
+/// What answers a request nothing was queued for.
+pub type Fallback = Box<dyn Fn(&Request) -> Reply + Send + Sync>;
+
 struct Shared {
     /// Method, path prefix and reply, in the order queued.
     queue: Mutex<Vec<(String, String, Reply)>>,
@@ -43,6 +50,8 @@ struct Shared {
     flight: AtomicUsize,
     peak: AtomicUsize,
     stop: AtomicBool,
+    /// Without one, an unqueued request is a 404.
+    fallback: Option<Fallback>,
 }
 
 pub struct Mock {
@@ -54,14 +63,21 @@ pub struct Mock {
 
 impl Mock {
     pub fn start() -> Mock {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("mock open cloud: bind 127.0.0.1:0");
-        let addr = listener.local_addr().expect("mock open cloud: local address");
+        Mock::bind(0, None).expect("mock open cloud")
+    }
+
+    /// Listens on `127.0.0.1:port` (0 picks one), answering what nothing queued with `fallback`.
+    pub fn bind(port: u16, fallback: Option<Fallback>) -> Result<Mock, String> {
+        let listen = |e| format!("mock open cloud: cannot listen on 127.0.0.1:{port}: {e}");
+        let listener = TcpListener::bind(("127.0.0.1", port)).map_err(listen)?;
+        let addr = listener.local_addr().map_err(listen)?;
         let shared = Arc::new(Shared {
             queue: Mutex::new(Vec::new()),
             requests: Mutex::new(Vec::new()),
             flight: AtomicUsize::new(0),
             peak: AtomicUsize::new(0),
             stop: AtomicBool::new(false),
+            fallback,
         });
         let accept = shared.clone();
         thread::spawn(move || {
@@ -75,7 +91,7 @@ impl Mock {
                 }
             }
         });
-        Mock { base: format!("http://{addr}"), addr, shared }
+        Ok(Mock { base: format!("http://{addr}"), addr, shared })
     }
 
     /// Queues `reply` for the next `method` request whose path starts with `prefix`.
@@ -133,6 +149,12 @@ impl Request {
 
 fn connection(mut stream: TcpStream, shared: &Shared) {
     let Some(request) = read(&stream) else { return };
+    if request.method == "GET" && request.path == "_mock/requests" {
+        let seen = shared.requests.lock().unwrap();
+        let seen: Vec<Value> =
+            seen.iter().map(|r| json!({"method": r.method, "path": r.path, "query": r.query})).collect();
+        return answer(&mut stream, Reply::json(200, &Value::Array(seen)), &request);
+    }
     shared.requests.lock().unwrap().push(request.clone());
     let flight = shared.flight.fetch_add(1, Ordering::SeqCst) + 1;
     shared.peak.fetch_max(flight, Ordering::SeqCst);
@@ -141,10 +163,11 @@ fn connection(mut stream: TcpStream, shared: &Shared) {
         let at = queue.iter().position(|(m, p, _)| *m == request.method && request.path.starts_with(p.as_str()));
         at.map(|i| queue.remove(i).2)
     };
-    let reply = reply.unwrap_or_else(|| {
-        let message = format!("mock: nothing queued for {} {}", request.method, request.path);
-        Reply::json(404, &json!({"error": {"code": "NOT_FOUND", "message": message}}))
-    });
+    let reply = match (reply, &shared.fallback) {
+        (Some(reply), _) => reply,
+        (None, Some(fallback)) => fallback(&request),
+        (None, None) => not_found(&request),
+    };
     answer(&mut stream, reply, &request);
     shared.flight.fetch_sub(1, Ordering::SeqCst);
 }
@@ -189,4 +212,131 @@ fn read(stream: &TcpStream) -> Option<Request> {
     let mut body = vec![0; len];
     reader.read_exact(&mut body).ok()?;
     Some(Request { method, path, query, headers, body })
+}
+
+fn not_found(r: &Request) -> Reply {
+    let message = format!("mock: nothing answers {} {}", r.method, r.path);
+    Reply::json(404, &json!({"error": {"code": "NOT_FOUND", "message": message}}))
+}
+
+/// Serves [`auto`] on `127.0.0.1:port` until the process ends, printing its base URL on stdout. `GET
+/// <base>/_mock/requests` lists every request it saw, so a check can count what a command sent.
+pub fn serve(port: u16) -> Result<(), String> {
+    let mock = Mock::bind(port, Some(auto()))?;
+    println!("{}", mock.base);
+    loop {
+        thread::park();
+    }
+}
+
+/// A stateful stand-in for the endpoints opossum calls. Asset creates and FBX updates answer with an operation that
+/// is done at its first poll (new ids count up from 1000001); place saves count versions up per place; tasks run at
+/// the version asked for, or the place's last saved one, and complete at their first poll with no results and no logs.
+pub fn auto() -> Fallback {
+    let state = Mutex::new(Auto::default());
+    Box::new(move |r| state.lock().unwrap().reply(r))
+}
+
+#[derive(Default)]
+struct Auto {
+    next: u64,
+    /// Operation path → the asset id it finishes with.
+    operations: HashMap<String, u64>,
+    /// `universe/place` → its last version.
+    versions: HashMap<String, u64>,
+}
+
+impl Auto {
+    fn reply(&mut self, r: &Request) -> Reply {
+        let segments: Vec<&str> = r.path.split('/').collect();
+        match (r.method.as_str(), &segments[..]) {
+            ("POST", ["assets", "v1", "assets"]) => {
+                self.next += 1;
+                self.operation(1_000_000 + self.next)
+            }
+            ("PATCH", ["assets", "v1", "assets", id]) => match id.parse() {
+                Ok(id) => self.operation(id),
+                Err(_) => not_found(r),
+            },
+            ("GET", ["assets", "v1", "operations", _]) => match self.operations.get(&r.path["assets/v1/".len()..]) {
+                Some(id) => Reply::json(
+                    200,
+                    &json!({"path": &r.path["assets/v1/".len()..], "done": true, "response": {
+                        "assetId": id.to_string(), "moderationResult": {"moderationState": "Approved"}}}),
+                ),
+                None => not_found(r),
+            },
+            ("POST", ["universes", "v1", universe, "places", place, "versions"]) => {
+                let version = self.versions.entry(format!("{universe}/{place}")).or_insert(0);
+                *version += 1;
+                Reply::json(200, &json!({"versionNumber": *version}))
+            }
+            (
+                "POST",
+                ["cloud", "v2", "universes", universe, "places", place, rest @ .., "luau-execution-session-tasks"],
+            ) => {
+                let version = match rest {
+                    ["versions", v] => v.to_string(),
+                    _ => self.versions.get(&format!("{universe}/{place}")).copied().unwrap_or(1).to_string(),
+                };
+                self.next += 1;
+                let n = self.next;
+                let path = format!(
+                    "universes/{universe}/places/{place}/versions/{version}/luau-execution-sessions/{n}/tasks/{n}"
+                );
+                Reply::json(200, &json!({"path": path, "state": "QUEUED"}))
+            }
+            ("GET", ["cloud", "v2", "universes", .., "tasks", _]) => Reply::json(
+                200,
+                &json!({"path": &r.path["cloud/v2/".len()..], "state": "COMPLETE", "output": {"results": []}}),
+            ),
+            ("GET", ["cloud", "v2", "universes", .., "logs"]) => {
+                Reply::json(200, &json!({"luauExecutionSessionTaskLogs": [], "nextPageToken": ""}))
+            }
+            _ => not_found(r),
+        }
+    }
+
+    fn operation(&mut self, asset: u64) -> Reply {
+        self.next += 1;
+        let path = format!("operations/{}", self.next);
+        self.operations.insert(path.clone(), asset);
+        Reply::json(200, &json!({"path": path, "done": false}))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AssetKind, Call, Client, Clock, Creator, Upload};
+    use std::time::Duration;
+
+    #[test]
+    fn the_server_answers_a_whole_upload_save_and_run() {
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        let c = Client::new("test-key", &mock.base, Clock::Real).unwrap();
+        let png = Upload {
+            kind: AssetKind::Image,
+            name: "a",
+            creator: Creator::User(1),
+            ext: ".png",
+            mime: "image/png",
+            bytes: b"x",
+        };
+        let op = c.create_asset(&png).unwrap();
+        let op = c.wait_operation(&op.path, c.now()).unwrap();
+        assert_eq!((op.done, op.asset_id), (true, Some(1_000_001)));
+        assert_eq!(c.save_place(12, 34, b"rbxl", false).unwrap(), 1);
+        assert_eq!(c.save_place(12, 34, b"rbxl", false).unwrap(), 2);
+        let task = c.start_task(12, 34, None, "return 1", Duration::from_secs(1)).unwrap();
+        let task = c.wait_task(&task.path, c.now() + Duration::from_secs(5), &mut |_| {}).unwrap();
+        assert_eq!((task.state.as_str(), task.version), ("COMPLETE", 2));
+        assert!(c.task_logs(&task.path, c.now()).unwrap().is_empty());
+
+        let call =
+            Call { op: "list", method: "GET", path: "_mock/requests".into(), body: None, create: false, long: false };
+        let seen = c.json(&call).unwrap();
+        assert_eq!(seen.as_array().unwrap().len(), 7);
+        assert_eq!(seen[2]["path"], "universes/v1/12/places/34/versions");
+    }
 }
