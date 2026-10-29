@@ -540,8 +540,8 @@ pub fn save(lock: &mut Lock, root: &Path, _guard: &RemoteGuard) -> Result<Option
     let io = |e: std::io::Error| fail("lock.io", e.to_string());
     let now = fs::metadata(&path).ok().map(|m| (m.len(), m.modified().ok()));
     if now != lock.disk.as_ref().map(|d| (d.len, d.mtime)) {
-        let dir = crate::editor::dir(root);
-        fs::create_dir_all(&dir).and_then(|_| fs::write(dir.join(RECOVERED), &text)).map_err(io)?;
+        let dir = crate::editor::create(root).map_err(|e| fail("lock.io", e))?;
+        fs::write(dir.join(RECOVERED), &text).map_err(io)?;
         let message = format!(
             "opossum.lock changed while opossum was writing it (git?), so nothing was overwritten: this run's ids are \
              in .opossum/{RECOVERED}, and no command writes the lock until they are folded back (lock.recovered)"

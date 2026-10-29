@@ -133,8 +133,7 @@ pub fn run(start: &Path, json: bool, environment: Option<&str>) -> Result<bool, 
     let result = config::find(start).and_then(|file| config::load(&file)).and_then(|cfg| {
         out.root = cfg.root.clone();
         cfg.build_environment(environment)?;
-        let dir = editor::dir(&cfg.root);
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        editor::create(&cfg.root)?;
         session(cfg, &out, environment)
     });
     if let Err(message) = &result

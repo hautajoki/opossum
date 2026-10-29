@@ -13,6 +13,18 @@ pub fn dir(root: &Path) -> PathBuf {
     root.join(DIR)
 }
 
+/// Makes `.opossum/`, which ignores itself (a `.gitignore` of `*`), so nothing in it is ever committed whatever the
+/// project's own `.gitignore` says.
+pub fn create(root: &Path) -> Result<PathBuf, String> {
+    let dir = dir(root);
+    let ignore = dir.join(".gitignore");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    if !ignore.exists() {
+        std::fs::write(&ignore, "*\n").map_err(|e| format!("{}: {e}", ignore.display()))?;
+    }
+    Ok(dir)
+}
+
 /// A virtual module `opossum/<name>`: its types and, unless it is types only, its Luau source.
 pub struct Module {
     pub name: String,
@@ -40,7 +52,7 @@ pub fn overlay(root: &str, modules: &[Module]) -> Vec<(String, String)> {
 /// Writes `tsconfig.json`, the injected declarations and `modules`, leaving files whose text is already right alone,
 /// and removes what `modules/` holds of a module the project no longer has.
 pub fn write(root: &Path, flags: &[(String, bool)], modules: &[Module]) -> Result<(), String> {
-    let dir = dir(root);
+    let dir = create(root)?;
     let modules_dir = dir.join("modules");
     std::fs::create_dir_all(&modules_dir).map_err(|e| format!("{}: {e}", modules_dir.display()))?;
     let overlay = overlay(&root.to_string_lossy(), modules);
