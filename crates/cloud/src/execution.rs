@@ -68,7 +68,15 @@ impl Client {
             return Err(self.error(&call, ErrorKind::Local, message));
         }
         let v = self.json(&call)?;
-        self.task(&call, &v, None)
+        let task = self.task(&call, &v, None)?;
+        // a task on another place or version would run, and be mapped as, a build it is not
+        if !task.path.starts_with(&format!("universes/{universe}/places/{place}/"))
+            || version.is_some_and(|v| v != task.version)
+        {
+            let message = format!("asked for place {place} at {version:?} and Roblox started {}", task.path);
+            return Err(self.error(&call, ErrorKind::Decode, message));
+        }
+        Ok(task)
     }
 
     /// Polls a task every 250 ms doubling to 500 ms, back to 250 ms whenever its state changes (a short body is seen
@@ -258,6 +266,8 @@ mod tests {
         assert_eq!(r[0].json(), json!({"script": "return 1", "timeout": "1.500s"}));
         assert_eq!(r[1].json(), json!({"script": "return 1", "timeout": "300s"}));
         assert_eq!(r[0].header("content-type"), Some("application/json"));
+        mock.on("POST", "cloud/v2/universes/12/places/34/", Reply::json(200, &queued));
+        assert_eq!(c.start_task(12, 34, Some(57), "return 1", MAX_TASK_TIMEOUT).unwrap_err().kind, ErrorKind::Decode);
     }
 
     #[test]
