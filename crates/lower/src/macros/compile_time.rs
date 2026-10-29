@@ -73,7 +73,8 @@ pub fn fold(state: &mut TransformState<'_>, name: &'static str, base: P<Node>, c
     (value, used)
 }
 
-/// Reports `macro.<name>: message` at `node`; the value of a failed macro.
+/// Reports `macro.<name>: message` at `node` (`name` is the macro, or a code of its own: `secretEnv`); the value of a
+/// failed macro.
 fn error(state: &mut TransformState<'_>, node: P<Node>, name: &str, message: &str) -> Expr {
     let (file, range) = node_range(node);
     let text = format!("macro.{}: {message}", name.trim_start_matches('$'));
@@ -115,6 +116,9 @@ fn first_argument(item: &ChainItem) -> Option<P<Node>> {
     }
 }
 
+/// The variable opossum reads its Open Cloud key from, which `$env` refuses, set or not.
+const API_KEY: &str = "ROBLOX_OPEN_CLOUD_API_KEY";
+
 /// `$env("NAME")`, `$env("NAME", "fallback")`, `$env.NAME`, `$env["NAME"]`: the variable's value, the fallback or nil.
 fn env(state: &mut TransformState<'_>, item: &ChainItem) -> Expr {
     let (name, fallback) = match item.kind {
@@ -140,6 +144,10 @@ fn env(state: &mut TransformState<'_>, item: &ChainItem) -> Expr {
         },
         _ => return misuse(state, item.node, "$env"),
     };
+    if name == API_KEY {
+        let message = format!("{API_KEY} is opossum's Open Cloud key; $env would inline it into the place");
+        return error(state, item.node, "secretEnv", &message);
+    }
     record(state, Input::Env(name.to_owned()));
     match state.options.env.get(name).map(String::as_str).or(fallback) {
         Some(value) => create_string_from_value(value),

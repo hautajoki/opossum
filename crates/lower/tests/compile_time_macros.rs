@@ -13,7 +13,7 @@ type Extract<T, U> = T extends U ? T : never;
 ";
 
 /// Lowers `source` as `src/main.ts` of a project named `name` holding `files` (relative path, text): the rendered
-/// Luau, the macro inputs and every diagnostic's text.
+/// Luau (empty after an error), the macro inputs and every diagnostic's text.
 fn lower_one(
     name: &str,
     source: &str,
@@ -49,7 +49,12 @@ fn lower_one(
             let mut lowered = lower::lower_files(&project, &locator, &options, &sources);
             let lowered = lowered.pop().unwrap();
             diagnostics.extend(lowered.diagnostics.iter().map(|d| d.localize()));
-            (luau::render(lowered.ast.as_deref().unwrap_or_default(), &module), lowered.inputs, diagnostics)
+            // a failed macro leaves a hole that only a build without errors would render
+            let luau = match diagnostics.is_empty() {
+                true => luau::render(lowered.ast.as_deref().unwrap_or_default(), &module),
+                false => String::new(),
+            };
+            (luau, lowered.inputs, diagnostics)
         })
         .unwrap()
         .join()
@@ -92,6 +97,21 @@ fn env_falls_back_only_when_the_variable_is_unset() {
     assert!(luau.contains("const b = \"yes\""), "{luau}");
     assert!(luau.contains("const c = nil"), "{luau}");
     assert_eq!(inputs, [Input::Env("SET".into()), Input::Env("UNSET".into())]);
+}
+
+#[test]
+fn env_never_inlines_the_open_cloud_key() {
+    let mut options = lower::Options { native_types: false, ..lower::Options::default() };
+    options.env.insert("ROBLOX_OPEN_CLOUD_API_KEY".into(), "secret".into());
+    let (_, inputs, diagnostics) = lower_one(
+        "env_secret",
+        "export const a = $env(\"ROBLOX_OPEN_CLOUD_API_KEY\", \"none\");\nexport const b = $env.ROBLOX_OPEN_CLOUD_API_KEY;\n",
+        &[],
+        options,
+    );
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    assert!(diagnostics.iter().all(|d| d.starts_with("macro.secretEnv: ")), "{diagnostics:?}");
+    assert_eq!(inputs, []);
 }
 
 #[test]
