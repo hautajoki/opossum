@@ -16,6 +16,7 @@ use tsrs_core::P;
 
 use crate::config::Config;
 use crate::diag::{self, Diag, Severity};
+use crate::editor;
 use crate::inputs;
 use crate::packages::{self, Package};
 
@@ -261,7 +262,7 @@ impl Session {
         let checkers = std::thread::available_parallelism().map_or(4, usize::from);
         let root = slashed(&self.cfg.root);
         let options = LoadOptions {
-            overlay: lower::program::declarations(&root),
+            overlay: editor::overlay(&root, &editor::modules()),
             root,
             files: self.root_files(),
             checkers,
