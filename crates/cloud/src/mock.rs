@@ -260,6 +260,8 @@ struct Auto {
     versions: HashMap<String, u64>,
     /// A created glb's id → its JSON chunk.
     models: HashMap<u64, Value>,
+    /// The mesh and map ids [`import`] made up, by glb id and what they stand for.
+    made: HashMap<(u64, Made), u64>,
     /// What every task returns.
     results: Vec<Value>,
 }
@@ -287,7 +289,7 @@ impl Auto {
             {
                 Some((id, gltf)) => {
                     let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-                    gz.write_all(import(id, gltf).as_bytes()).expect("gzip into memory");
+                    gz.write_all(import(id, gltf, &mut self.made).as_bytes()).expect("gzip into memory");
                     Reply::bytes(200, gz.finish().expect("gzip into memory"))
                 }
                 None => not_found(r),
@@ -382,9 +384,10 @@ fn glb_json(bytes: &[u8]) -> Option<Value> {
 /// The rbxmx Roblox's import makes of the glb whose JSON is `gltf`, uploaded as asset `id`, in the shape of a real one
 /// (a real one, loaded in Studio): a Model holding the node tree as `<name>_Node` Models, a mesh node's own MeshPart
 /// named after it inside its `_Node`, with `MeshContent`, `InitialSize` (the POSITION extent times the node's scale)
-/// and, when its material has textures, a SurfaceAppearance with a map per channel. Ids are made up from `id`: meshes
-/// `id + 10^12 + node`, maps `id + 2·10^12 + 4·material + channel`, so parts sharing a material share maps as they do.
-fn import(id: u64, gltf: &Value) -> String {
+/// and, when its material has textures, a SurfaceAppearance with a map per channel. Mesh and map ids count up from
+/// 3000001 in `made`, one per node's mesh and per material's channel, so every upload's are its own, a read again gives
+/// the same, and parts sharing a material share maps as they do.
+fn import(id: u64, gltf: &Value, made: &mut HashMap<(u64, Made), u64>) -> String {
     let nodes = gltf["nodes"].as_array().map_or(&[][..], Vec::as_slice);
     let scene = &gltf["scenes"][gltf["scene"].as_u64().unwrap_or(0) as usize]["nodes"];
     let roots: Vec<usize> = match scene.as_array() {
@@ -400,13 +403,24 @@ fn import(id: u64, gltf: &Value) -> String {
     open(&mut xml, &mut refs, "Model", "Model");
     xml += "</Properties>\n";
     for root in roots {
-        node(&mut xml, &mut refs, id, gltf, root);
+        node(&mut xml, &mut refs, id, gltf, made, root);
     }
     xml += "</Item>\n</roblox>\n";
     xml
 }
 
-fn node(xml: &mut String, refs: &mut usize, id: u64, gltf: &Value, i: usize) {
+/// What an import's made-up id stands for: a node's mesh, or a material's channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Made {
+    Mesh(usize),
+    Map(u64, usize),
+}
+
+fn node(xml: &mut String, refs: &mut usize, id: u64, gltf: &Value, made: &mut HashMap<(u64, Made), u64>, i: usize) {
+    let mut id_of = |what: Made| {
+        let next = 3_000_001 + made.len() as u64;
+        *made.entry((id, what)).or_insert(next)
+    };
     let n = &gltf["nodes"][i];
     let name = n["name"].as_str().unwrap_or("Node");
     open(xml, refs, "Model", &format!("{name}_Node"));
@@ -419,7 +433,7 @@ fn node(xml: &mut String, refs: &mut usize, id: u64, gltf: &Value, i: usize) {
             ((at(&position["max"]) - at(&position["min"])) * n["scale"][k].as_f64().unwrap_or(1.0).abs()) as f32
         };
         open(xml, refs, "MeshPart", name);
-        let mesh = id + 1_000_000_000_000 + i as u64;
+        let mesh = id_of(Made::Mesh(i));
         let _ = writeln!(xml, "<Content name=\"MeshContent\"><uri>rbxassetid://{mesh}</uri></Content>");
         let (x, y, z) = (axis(0), axis(1), axis(2));
         let _ = writeln!(xml, "<Vector3 name=\"InitialSize\"><X>{x}</X><Y>{y}</Y><Z>{z}</Z></Vector3>\n</Properties>");
@@ -435,7 +449,7 @@ fn node(xml: &mut String, refs: &mut usize, id: u64, gltf: &Value, i: usize) {
             if maps.iter().any(|(_, t)| !t.is_null()) {
                 open(xml, refs, "SurfaceAppearance", "SurfaceAppearance");
                 for (channel, (property, _)) in maps.iter().enumerate().filter(|(_, (_, t))| !t.is_null()) {
-                    let map = id + 2_000_000_000_000 + 4 * material + channel as u64;
+                    let map = id_of(Made::Map(material, channel));
                     let _ = writeln!(xml, "<Content name=\"{property}\"><uri>rbxassetid://{map}</uri></Content>");
                 }
                 *xml += "</Properties>\n</Item>\n";
@@ -444,7 +458,7 @@ fn node(xml: &mut String, refs: &mut usize, id: u64, gltf: &Value, i: usize) {
         *xml += "</Item>\n";
     }
     for child in n["children"].as_array().into_iter().flatten().filter_map(Value::as_u64) {
-        node(xml, refs, id, gltf, child as usize);
+        node(xml, refs, id, gltf, made, child as usize);
     }
     *xml += "</Item>\n";
 }
@@ -534,14 +548,24 @@ mod tests {
             mime: "model/gltf-binary",
             bytes: &bytes,
         };
-        let op = c.create_asset(&model).unwrap();
-        let id = c.wait_operation(&op.path, c.now(), &std::sync::atomic::AtomicBool::new(false)).unwrap().asset_id;
-        let xml = String::from_utf8(c.asset_content(id.unwrap()).unwrap()).unwrap();
+        let upload = || {
+            let op = c.create_asset(&model).unwrap();
+            let id = c.wait_operation(&op.path, c.now(), &std::sync::atomic::AtomicBool::new(false)).unwrap().asset_id;
+            id.unwrap()
+        };
+        let read = |id| String::from_utf8(c.asset_content(id).unwrap()).unwrap();
+        let ids = |xml: &str| -> Vec<String> {
+            xml.split("rbxassetid://").skip(1).map(|s| s[..s.find('<').unwrap()].to_owned()).collect()
+        };
+        let id = upload();
+        let xml = read(id);
 
         // Lens_Node sits in hull_Node after hull's MeshPart, and the two parts share their one material's four maps
-        let ids: Vec<&str> = xml.split("rbxassetid://").skip(1).map(|s| &s[..s.find('<').unwrap()]).collect();
-        let maps = ["2000001000001", "2000001000002", "2000001000003", "2000001000004"];
-        assert_eq!(ids, [&["1000001000001"][..], &maps, &["1000001000002"], &maps].concat());
+        let maps = ["3000002", "3000003", "3000004", "3000005"];
+        assert_eq!(ids(&xml), [&["3000001"][..], &maps, &["3000006"], &maps].concat());
+        // a read again is the same import, and another upload's ids are its own
+        assert_eq!(read(id), xml);
+        assert!(ids(&read(upload())).iter().all(|other| !ids(&xml).contains(other)));
         let at = |s: &str| xml.find(s).unwrap();
         assert!(at("hull_Node") < at(">hull<") && at(">hull<") < at("Lens_Node") && at("Lens_Node") < at(">Lens<"));
         assert_eq!(xml.matches("class=\"MeshPart\"").count(), 2);
