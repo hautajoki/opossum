@@ -17,6 +17,8 @@ mod inputs;
 #[allow(dead_code)] // until the asset commands use it
 mod lock;
 mod packages;
+#[allow(dead_code)] // until the asset commands use it
+mod signals;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
