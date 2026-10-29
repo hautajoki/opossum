@@ -91,6 +91,28 @@ pub fn is_reserved_identifier(id: &str) -> bool {
     RESERVED_IDENTIFIERS.contains(&id)
 }
 
+/// `text` as a double-quoted string literal that Luau and TypeScript both read back as `text`: `"` and `\` escaped,
+/// `\n`, `\r`, `\t`, and every other control character as `\u{X}`.
+pub fn luau_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{{{:X}}}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// True when `text` is a Luau number literal: decimal (with `.`, exponent), `0x` hex or `0b` binary, underscores
 /// allowed as in Luau.
 pub fn is_valid_number_literal(text: &str) -> bool {

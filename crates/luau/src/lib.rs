@@ -11,7 +11,8 @@
 //! - passes over a finished tree: [`mark_const_locals`] (`const` for never-assigned locals) and
 //!   [`native::mark_native_functions`] (`@native` on every function).
 //! - name and number rules: [`is_valid_identifier`], [`is_metamethod`], [`is_reserved_identifier`],
-//!   [`is_valid_number_literal`], and JavaScript's number conversions ([`js_number_to_string`]).
+//!   [`is_valid_number_literal`], JavaScript's number conversions ([`js_number_to_string`]), and [`luau_string`], the
+//!   string literal escaper for Luau and TypeScript text opossum generates.
 //!
 //! **Lists.** `luau.List` (a linked list, for O(1) push, unshift and splice) is a `Vec` here. roblox-ts mostly
 //! builds lists by `push` / `pushList` (some 250 uses against 13 `unshift` / `unshiftList`), and prepending to a
@@ -48,7 +49,7 @@ pub use types::{
 pub use util::{
     LUAU_METAMETHODS, LUAU_RESERVED_CLASS_FIELDS, LUAU_RESERVED_KEYWORDS, RESERVED_IDENTIFIERS, is_js_whitespace,
     is_metamethod, is_reserved_class_field, is_reserved_identifier, is_valid_identifier, is_valid_number_literal,
-    js_number_to_string, js_string_to_number,
+    js_number_to_string, js_string_to_number, luau_string,
 };
 
 #[cfg(test)]

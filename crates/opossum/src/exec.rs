@@ -13,6 +13,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use luau::luau_string;
 use serde_json::{Map, Value, json};
 
 use crate::build::Session;
@@ -676,21 +677,4 @@ fn failed(json: bool, error: String) -> Result<bool, String> {
 
 fn shown(root: &Path, file: &Path) -> String {
     file.strip_prefix(root).unwrap_or(file).display().to_string()
-}
-
-/// `text` as a Luau string literal.
-pub fn luau_string(text: &str) -> String {
-    let mut out = String::from("\"");
-    for c in text.chars() {
-        match c {
-            '"' | '\\' => {
-                out.push('\\');
-                out.push(c);
-            }
-            c if c.is_control() => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }

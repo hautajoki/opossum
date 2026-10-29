@@ -31,6 +31,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
+use luau::luau_string;
 use notify::{RecursiveMode, Watcher};
 use place::Tree;
 use rustc_hash::FxHashMap;
@@ -41,7 +42,6 @@ use crate::build::{LineMap, RUNTIME, Session, script_class, script_kind, slashed
 use crate::config::{self, Config};
 use crate::diag::Severity;
 use crate::event::{Event, Out};
-use crate::exec::luau_string;
 use crate::{canonical_prefix, editor, project_path};
 
 const QUIET: Duration = Duration::from_millis(30);
