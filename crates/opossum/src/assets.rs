@@ -237,7 +237,7 @@ pub fn compile(path: &Path, ext: &str, image: ImageOptions, bytes: Vec<u8>) -> R
     };
     let size = |n: usize| match n {
         0 => Err(fail("asset.tooLarge", "the file is empty; Roblox takes no empty asset".into())),
-        n if n > media::MAX_BYTES => {
+        n if n > cloud::MAX_ASSET => {
             Err(fail("asset.tooLarge", format!("{n} bytes is over Roblox's 20 MB limit for an asset")))
         }
         _ => Ok(()),

@@ -7,9 +7,6 @@ mod image;
 pub use audio::{Audio, inspect_audio};
 pub use image::{Fit, IMAGE_VERSION, Image, ImageOptions, MAX_SIDE, Preset, fit, pipeline, process};
 
-/// Open Cloud takes no asset over 20 MB (decimal); the caller reports a larger file as too large.
-pub const MAX_BYTES: usize = 20_000_000;
-
 /// The upload `Content-Type` of a file with this extension (lowercase, with its dot) when its own bytes are uploaded;
 /// `None` for one opossum cannot upload. An `Image::Png` output is always `image/png`, so an SVG maps to that.
 pub fn mime(ext: &str) -> Option<&'static str> {

@@ -22,12 +22,9 @@ struct Info {
     channels: u64,
 }
 
-/// Inspects audio by extension (`.ogg`, `.mp3`, `.wav`, `.flac`) and checks it against Roblox's limits: under 20 MB,
-/// at most 7 minutes, a sample rate of at most 48 kHz, and mono, stereo, 3.0 or 5.1.
+/// Inspects audio by extension (`.ogg`, `.mp3`, `.wav`, `.flac`) and checks it against Roblox's limits: at most 7
+/// minutes, a sample rate of at most 48 kHz, and mono, stereo, 3.0 or 5.1.
 pub fn inspect_audio(ext: &str, bytes: &[u8]) -> Result<Audio, String> {
-    if bytes.len() >= crate::MAX_BYTES {
-        return Err(format!("audio is {} bytes; Roblox audio must be smaller than 20 MB", bytes.len()));
-    }
     let a = match ext {
         ".ogg" => ogg(bytes),
         ".mp3" => mp3(bytes),
@@ -506,8 +503,6 @@ mod tests {
         assert_eq!(err(".flac", &flac(48_000, 2, 421)), "duration 7m1s exceeds Roblox's 7-minute limit");
         assert!(err(".flac", &flac(96_000, 2, 1)).contains("48 kHz limit"));
         assert!(err(".flac", &flac(48_000, 4, 1)).contains("channel count 4"));
-        // Audio must be strictly under 20 MB.
-        assert!(err(".wav", &vec![0; crate::MAX_BYTES]).contains("smaller than 20 MB"));
         assert!(err(".mp3", b"not an mp3").contains("contains no MPEG Layer III frames"));
     }
 
