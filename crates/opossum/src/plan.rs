@@ -96,11 +96,7 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
                 State::Ambiguous if let Some(other) = copy => {
                     writeln!(lines, "ambiguous {} ({})", a.file, copy_of(other))
                 }
-                State::Ambiguous => writeln!(
-                    lines,
-                    "ambiguous {0} (an upload may have happened: opossum adopt asset {0} <id>, or --none)",
-                    a.file
-                ),
+                State::Ambiguous => writeln!(lines, "ambiguous {} ({})", a.file, settle(&a.file)),
                 State::Rejected => writeln!(lines, "rejected  {} ({})", a.file, refused(&a.file)),
                 _ => writeln!(lines, "{:<9} {}", state.name(), a.file),
             };
@@ -142,9 +138,7 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
         json["resources"] = resources::ops_json(&ops);
     }
     let error = if ambiguous > 0 {
-        let error =
-            format!("uploads of {ambiguous} files may or may not have happened; `opossum adopt asset` settles each");
-        ("asset.ambiguous", error)
+        ("asset.ambiguous", self::ambiguous(ambiguous))
     } else if rejected > 0 {
         let error = format!("Roblox refused the content of {rejected} files; change them or forget the refusal");
         ("asset.rejected", error)
@@ -176,6 +170,16 @@ pub fn unsettled(lock: &Lock) -> HashMap<String, String> {
             _ => None,
         })
         .collect()
+}
+
+/// What settles a file whose upload may or may not have happened.
+pub fn settle(file: &str) -> String {
+    format!("an upload may have happened: `opossum adopt asset {file} <id>` if it exists on Roblox, else `--none`")
+}
+
+/// Why a command stops at `n` such files.
+pub fn ambiguous(n: usize) -> String {
+    format!("uploads of {} files may or may not have happened; `opossum adopt asset` settles each", count(n))
 }
 
 /// What settles a file holding the content of `other`'s upload that may or may not have happened.

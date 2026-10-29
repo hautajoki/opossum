@@ -95,9 +95,8 @@ pub fn upload(cfg: &Config, client: &Client, guard: &RemoteGuard, stop: &AtomicB
 
 /// An upload with no `[assets]`: nothing to do.
 pub fn idle() -> Outcome {
-    let json = json!({ "ok": true, "uploaded": 0, "reused": 0, "unchanged": 0, "dropped": 0, "pending": [],
-                        "ambiguous": [], "failed": [] });
-    Outcome { exit: 0, json, text: "nothing to upload: opossum.toml declares no [assets]\n".into() }
+    let text = "nothing to upload: opossum.toml declares no [assets]\n".into();
+    Outcome { text, ..outcome(Report::default(), None, false, false) }
 }
 
 /// Everything an upload does before its first request: hash and classify every file against the lock, bind content
@@ -138,7 +137,7 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
                 continue;
             }
             State::Ambiguous => {
-                report.ambiguous.push((a.file.clone(), settle(&a.file)));
+                report.ambiguous.push((a.file.clone(), plan::settle(&a.file)));
                 continue;
             }
             State::Rejected => {
@@ -220,9 +219,7 @@ impl Prepared {
             return Some(Outcome::refused(code, error));
         }
         let n = r.ambiguous.len();
-        let error =
-            format!("uploads of {} files may or may not have happened; `opossum adopt asset` settles each", count(n));
-        (n > 0).then(|| Outcome::refused("asset.ambiguous", error))
+        (n > 0).then(|| Outcome::refused("asset.ambiguous", plan::ambiguous(n)))
     }
 }
 
@@ -301,11 +298,6 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
     report.dropped = before - lock.assets.len();
     save(&mut lock, root, guard, &mut broken);
     outcome(report, broken, auth, stopped)
-}
-
-/// The settling advice for an upload that may or may not have happened.
-fn settle(file: &str) -> String {
-    format!("an upload may have happened: `opossum adopt asset {file} <id>` if it exists on Roblox, else `--none`")
 }
 
 /// The bytes a file's upload sends, read again and checked against the hash its group was formed by.
@@ -469,7 +461,7 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
         Event::Failed(e) => {
             for file in files() {
                 lock.assets.entry(file.to_owned()).or_default().op = None;
-                report.ambiguous.push((file.into(), format!("{e}; {}", settle(file))));
+                report.ambiguous.push((file.into(), format!("{e}; {}", plan::settle(file))));
             }
         }
         Event::Done(id, reviewing) => {
@@ -495,7 +487,7 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
             let op = lock.assets.get(&found[g.members[0]].file).and_then(|r| r.op.clone()).unwrap_or_default();
             for file in files() {
                 forget(lock, file, false);
-                report.ambiguous.push((file.into(), format!("operation {op} expired; {}", settle(file))));
+                report.ambiguous.push((file.into(), format!("operation {op} expired; {}", plan::settle(file))));
             }
         }
         Event::Waiting(e) => {
@@ -509,9 +501,9 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
             for file in files() {
                 match lock.assets.get(file).is_some_and(|r| r.op.is_some()) {
                     true => report.pending.push(file.into()),
-                    false => {
-                        report.ambiguous.push((file.into(), format!("opossum failed mid-upload; {}", settle(file))))
-                    }
+                    false => report
+                        .ambiguous
+                        .push((file.into(), format!("opossum failed mid-upload; {}", plan::settle(file)))),
                 }
             }
         }
@@ -559,7 +551,7 @@ fn outcome(r: Report, broken: Option<Diag>, auth: bool, stopped: bool) -> Outcom
     } else if let Some((_, _, code)) = r.failed.first() {
         (code.clone(), format!("{} files failed", count(r.failed.len())))
     } else if !r.ambiguous.is_empty() {
-        ("asset.ambiguous".into(), "uploads that may or may not have happened need `opossum adopt asset`".into())
+        ("asset.ambiguous".into(), plan::ambiguous(r.ambiguous.len()))
     } else if !r.pending.is_empty() {
         ("asset.pending".into(), "uploads are still running; `opossum upload` asks again".into())
     } else {
