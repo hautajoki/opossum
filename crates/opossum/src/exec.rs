@@ -1,20 +1,22 @@
-//! `opossum exec`, `test` and `bench`: Luau run in a Studio DataModel through the running `opossum dev`, one
-//! `POST /exec` on the port it wrote to `.opossum/port` (DESIGN.md, Exec). The exit status is 0 when it ran clean, 1
-//! for a script error, a failed test or an answer that never came, 2 when it never ran (dev or the DataModel cannot be
-//! reached, or holds older code than a test allows). `opossum play` and `stop` start and end a playtest the same way
-//! (`POST /play`, `/stop`; DESIGN.md, Play), and `opossum pull` writes an instance from Studio into the files
-//! (`POST /pull`; DESIGN.md, Pull). `opossum status` and `attach` ask every dev on the sync ports what it holds and
-//! move Studio between them (`POST /status`, `/release`; DESIGN.md, Attach). `opossum test --cloud` runs the specs on
-//! Open Cloud through tessera instead, with no dev or Studio involved (DESIGN.md, Cloud tests).
+//! `opossum exec`, `test` and `bench`: Luau run where a [`Target`] says. In Studio it runs in a DataModel through the
+//! running `opossum dev`, one `POST /exec` on the port it wrote to `.opossum/port` (DESIGN.md, Exec); `test --local`
+//! runs the local suites in fresh in-process VMs, with no dev or Studio (DESIGN.md, Tests); `test --cloud` runs the specs on Open Cloud
+//! through tessera (DESIGN.md, Cloud tests). Every target runs the same spec runtime (`spec`) and prints its report
+//! the same way. The exit status is 0 when it ran clean, 1 for a script error, a failed or empty test run or an
+//! answer that never came, 2 when it never ran (dev or the DataModel cannot be reached, or holds older code than a
+//! test allows). `opossum play` and `stop` start and end a playtest the same way (`POST /play`, `/stop`; DESIGN.md,
+//! Play), and `opossum pull` writes an instance from Studio into the files (`POST /pull`; DESIGN.md, Pull).
+//! `opossum status` and `attach` ask every dev on the sync ports what it holds and move Studio between them
+//! (`POST /status`, `/release`; DESIGN.md, Attach).
 
-use std::io::{BufRead, Read, Write};
+use std::io::{BufRead, IsTerminal, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use luau::luau_string;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
+use spec::{Host, Mode};
 
 use crate::build::Session;
 use crate::config::Config;
@@ -23,6 +25,8 @@ use crate::{dev, editor};
 
 /// The longest a run on Open Cloud may take, in seconds (tessera's and Open Cloud's limit).
 const CLOUD_TIMEOUT: f64 = 300.0;
+/// How long one file of a local test run may take by default, in seconds; a local bench run has no limit by default.
+const LOCAL_TEST_TIMEOUT: f64 = 300.0;
 
 pub enum Source {
     File(String),
@@ -31,13 +35,39 @@ pub enum Source {
 }
 
 pub struct Options {
-    pub realm: Option<String>,
     pub json: bool,
     pub timeout: Option<f64>,
 }
 
-pub fn exec(cfg: &Config, options: &Options, source: Source) -> Result<bool, String> {
-    let (name, code) = match source {
+/// Where `exec`, `test` and `bench` run. Each target holds only its own flags, so a stray combination never parses.
+pub enum Target {
+    /// A DataModel `opossum dev` is connected to: `realm`, or dev's default.
+    Studio { realm: Option<String> },
+    /// Fresh Luau VMs in this process, no DataModel (test and bench only); `interpreted` turns native code off.
+    Local { interpreted: bool },
+    /// Open Cloud through tessera (test and bench only): its logical place and environment, its defaults when None.
+    Cloud { place: Option<String>, environment: Option<String> },
+}
+
+/// What a `test` or `bench` run runs, wherever it runs.
+pub struct Tests {
+    pub mode: Mode,
+    /// Selects cases by a case-insensitive substring of their labels joined by ` / `.
+    pub filter: Option<String>,
+    /// A run focused by `.only` passes instead of exiting 1.
+    pub allow_focused: bool,
+}
+
+/// Runs Luau in the DataModel of `realm` (dev's default when None) and prints what it printed and returned.
+pub fn exec(cfg: &Config, options: &Options, realm: &Option<String>, source: Source) -> Result<bool, String> {
+    let (name, code) = read(source)?;
+    let answer = post(cfg, options, "/exec", with_realm(json!({ "name": name, "source": code }), realm))?;
+    Ok(print_answer(options, &answer))
+}
+
+/// The code to run: the name its errors give it, and its text.
+fn read(source: Source) -> Result<(String, String), String> {
+    match source {
         Source::File(path) => {
             let code = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
             // Luau cuts long chunk names in errors: an absolute path is shown from the working directory, or by name
@@ -48,85 +78,114 @@ pub fn exec(cfg: &Config, options: &Options, source: Source) -> Result<bool, Str
                 _ if file.is_absolute() => file.file_name().map_or(path.clone(), |n| n.to_string_lossy().into_owned()),
                 _ => path.clone(),
             };
-            (name, code)
+            Ok((name, code))
         }
-        Source::Code(code) => ("exec".to_owned(), code),
+        Source::Code(code) => Ok(("exec".to_owned(), code)),
         Source::Stdin => {
             let mut code = String::new();
             std::io::stdin().read_to_string(&mut code).map_err(|e| format!("stdin: {e}"))?;
-            ("stdin".to_owned(), code)
+            Ok(("stdin".to_owned(), code))
         }
-    };
-    let answer = post(cfg, options, "/exec", json!({ "name": name, "source": code }))?;
+    }
+}
+
+/// Prints an exec's answer: the object with `--json`, else what it printed, then what it returned (strings as they
+/// are, other values as JSON), then its error. Returns whether it ran clean.
+fn print_answer(options: &Options, answer: &Value) -> bool {
     if options.json {
         println!("{answer}");
-        return Ok(answer["ok"].as_bool() == Some(true));
+        return answer["ok"].as_bool() == Some(true);
     }
-    print_output(&answer);
+    print_output(answer);
     for value in answer["values"].as_array().into_iter().flatten() {
         match value {
             Value::String(text) => println!("{text}"),
             _ => println!("{value}"),
         }
     }
-    let ok = print_error(&answer);
-    print_stale(&answer);
-    Ok(ok)
+    let ok = print_error(answer);
+    print_stale(answer);
+    ok
 }
 
-/// Runs hexagon's in-engine runner (`mode` "test" or "bench") over every matching suite in the DataModel.
-pub fn test(cfg: &Config, options: &Options, mode: &str, filter: Option<&str>) -> Result<bool, String> {
-    let modules: Map<String, Value> =
-        runtime(&cfg.root)?.into_iter().map(|(name, source)| (name, source.into())).collect();
-    // the report as a table: dev maps its strings (messages, traces) like log lines
-    let source = format!(
-        "local HttpService = game:GetService(\"HttpService\")
-return HttpService:JSONDecode(require(script.cloud_runner).run({}))",
-        run_request(mode, filter)
-    );
-    // specs must never pass against older code than the files: a playtest DataModel holding it refuses
-    let body = json!({ "name": "hexagon", "source": source, "modules": modules, "map": true, "fresh": true });
-    let mut answer = post(cfg, options, "/exec", body)?;
-    let report = Some(answer["values"][0].clone()).filter(Value::is_object);
-    if options.json {
-        if let Some(object) = answer.as_object_mut() {
-            object.remove("values");
-            object.insert("report".into(), report.clone().unwrap_or(Value::Null));
+/// Runs the project's local suites (`*.local.spec.luau`, bench: `*.local.bench.luau`) in fresh VMs, one per file,
+/// and prints the report: what each file printed after its name.
+pub fn test_local(root: &Path, options: &Options, interpreted: bool, tests: &Tests) -> Result<bool, String> {
+    let default = (tests.mode == Mode::Test).then_some(LOCAL_TEST_TIMEOUT);
+    let local = spec::LocalOptions {
+        mode: tests.mode,
+        filter: tests.filter.clone(),
+        timeout: options.timeout.or(default).map(Duration::from_secs_f64),
+        codegen: !interpreted,
+    };
+    let (report, outputs) = spec::run_local(root, &local).map_err(|e| refused(options.json, e))?;
+    let output = outputs.into_iter().map(|(file, text)| json!({ "kind": "output", "file": file, "text": text }));
+    let run = Run {
+        target: "local",
+        ran: if interpreted { "local, interpreted" } else { "local" }.to_owned(),
+        about: json!({ "interpreted": interpreted }),
+        output: output.collect(),
+        report,
+    };
+    Ok(finish(options, tests, run, &spec::local::project_frame))
+}
+
+/// The spec runtime in the DataModel dev holds, over the suites the files route there: the report comes back mapped
+/// to the files by dev. Specs never pass against older code than the files: a playtest DataModel holding it refuses.
+pub fn test_studio(cfg: &Config, options: &Options, realm: &Option<String>, tests: &Tests) -> Result<bool, String> {
+    let routes = route::Routes::new(cfg.routes.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .map_err(|e| refused(options.json, e))?;
+    let suites = suites(&route::scan(&cfg.src(), &routes), &cfg.root, tests.mode);
+    let request = spec::Request { suites: &suites, mode: tests.mode, filter: tests.filter.as_deref(), focus: None };
+    let source = spec::bundle(Host::Roblox, &request);
+    let body = json!({ "name": "spec", "source": source, "report": true, "fresh": true });
+    let mut answer = post(cfg, options, "/exec", with_realm(body, realm))?;
+    let Some(report) = Some(answer["values"][0].take()).filter(Value::is_object) else {
+        if options.json {
+            if let Some(object) = answer.as_object_mut() {
+                object.remove("values");
+                object.insert("report".into(), Value::Null);
+            }
+            println!("{answer}");
+        } else {
+            print_output(&answer);
+            print_error(&answer);
+            print_stale(&answer);
         }
-        println!("{answer}");
-        return Ok(report.is_some_and(|r| r["ok"].as_bool() == Some(true)));
-    }
-    print_output(&answer);
-    let Some(report) = report else {
-        print_error(&answer);
-        print_stale(&answer);
         return Ok(false);
     };
-    let ran = format!("{}, generation {}", answer["realm"].as_str().unwrap_or("?"), answer["gen"]);
-    // the frames that are not the runner's own
-    let shown = |line: &str| !["hexagon", "[C]", "user_opossum"].iter().any(|p| line.starts_with(p));
-    print_report(&report, mode, &ran, shown);
-    print_stale(&answer);
-    Ok(report["ok"].as_bool() == Some(true))
-}
-
-/// Where `opossum test --cloud` runs: tessera's logical place and environment (its defaults when None).
-pub struct Cloud {
-    pub place: Option<String>,
-    pub environment: Option<String>,
+    let realm = answer["realm"].as_str().unwrap_or("?");
+    let run = Run {
+        target: "studio",
+        ran: format!("{realm}, generation {}", answer["gen"]),
+        about: json!({ "realm": realm, "gen": answer["gen"], "stale": answer["stale"], "ms": answer["ms"] }),
+        output: answer["output"].as_array().cloned().unwrap_or_default(),
+        report,
+    };
+    let ok = finish(options, tests, run, &|line| project_line(&cfg.root, line));
+    if !options.json {
+        print_stale(&answer);
+    }
+    Ok(ok)
 }
 
 /// Runs the specs on Roblox's Open Cloud Luau execution instead of Studio: `tessera run --fresh` builds the place
 /// with its configured build command, saves it as a place version (or reuses an identical saved one) and runs one
-/// script holding hexagon's runtime there. The project is built here too, first: a build with errors never reaches
-/// Roblox, and its log index maps the report like `test`'s.
-pub fn cloud(cfg: Config, options: &Options, cloud: &Cloud, mode: &str, filter: Option<&str>) -> Result<bool, String> {
+/// script holding the spec runtime and this build's suites there. The project is built here too, first: a build
+/// with errors never reaches Roblox, and its log index maps the report like Studio's. A suite the place tessera built
+/// does not hold fails to load.
+pub fn test_cloud(
+    cfg: Config,
+    options: &Options,
+    place: Option<&str>,
+    environment: Option<&str>,
+    tests: &Tests,
+) -> Result<bool, String> {
     let json = options.json;
     let refused = |error| refused(json, error);
     if options.timeout.is_some_and(|t| t > CLOUD_TIMEOUT) {
         return Err(refused(format!("--timeout with --cloud is at most {CLOUD_TIMEOUT} s, Open Cloud's limit")));
     }
-    let runtime = runtime(&cfg.root).map_err(refused)?;
     editor::write(&cfg.root, &cfg.ts).map_err(refused)?;
     let mut session = Session::new(cfg, None).map_err(refused)?;
     session.build().map_err(refused)?;
@@ -140,18 +199,20 @@ pub fn cloud(cfg: Config, options: &Options, cloud: &Cloud, mode: &str, filter: 
         return Err(refused("the project does not compile, so nothing was sent to Open Cloud".to_owned()));
     }
     let index = dev::log_index(&session);
-    let script = editor::dir(&root).join("hexagon.luau");
-    std::fs::write(&script, bundle(&runtime, &run_request(mode, filter)))
+    let suites = suites(&session.scan, &root, tests.mode);
+    let request = spec::Request { suites: &suites, mode: tests.mode, filter: tests.filter.as_deref(), focus: None };
+    let script = editor::dir(&root).join("spec.luau");
+    std::fs::write(&script, spec::bundle(Host::Roblox, &request))
         .map_err(|e| refused(format!("{}: {e}", script.display())))?;
     let mut tessera = Command::new("tessera");
     tessera.current_dir(&root).args(["run", "--json", "--logs", "--script"]).arg(&script);
     if let Some(timeout) = options.timeout {
         tessera.arg("--timeout").arg(format!("{timeout}s"));
     }
-    if let Some(environment) = &cloud.environment {
+    if let Some(environment) = environment {
         tessera.args(["--environment", environment]);
     }
-    tessera.args(["--fresh", cloud.place.as_deref().unwrap_or("main")]);
+    tessera.args(["--fresh", place.unwrap_or("main")]);
     // its progress and errors are shown as they come, mapped: a failed run's logs and error are only ever there
     let mut child = tessera
         .stdout(Stdio::piped())
@@ -178,140 +239,82 @@ pub fn cloud(cfg: Config, options: &Options, cloud: &Cloud, mode: &str, filter: 
     };
     let report = result["results"][0].as_str().and_then(|text| serde_json::from_str::<Value>(text).ok());
     let Some(mut report) = report.filter(Value::is_object) else {
-        return failed("the run returned no hexagon report".to_owned());
+        return failed("the run returned no report".to_owned());
     };
-    // tessera built the place with its own build command: one that left out the suites this build has passes nothing
-    let suffix = if mode == "bench" { ".bench" } else { ".spec" };
-    let suites = session.scan.modules.iter().filter(|m| m.class == route::Class::ModuleScript);
-    let suites = suites.filter(|m| m.instance.last().is_some_and(|name| name.ends_with(suffix))).count();
-    if report["discovered"] == 0 && suites > 0 {
-        return failed(format!(
-            "the place tessera uploaded holds no {suffix} module, and this build has {suites}: does \
-             tessera.config.ts build this project with them (opossum build, without a profile that excludes them)?"
-        ));
-    }
     dev::map_strings(&mut report, &index);
     let logs = result["logs"].as_array().into_iter().flatten().filter_map(Value::as_str);
-    let output: Vec<String> = logs.map(|line| dev::map_log(line, &index).0).collect();
-    let ok = report["ok"].as_bool() == Some(true);
-    if json {
-        let output: Vec<Value> = output.iter().map(|text| json!({ "kind": "output", "text": text })).collect();
-        let answer = json!({
-            "ok": true, "realm": "cloud", "environment": result["environment"], "place": result["place"],
-            "placeId": result["placeId"], "version": result["version"], "output": output, "report": report,
-        });
-        println!("{answer}");
-        return Ok(ok);
-    }
-    for line in &output {
-        println!("{line}");
-    }
-    let ran = format!(
-        "{}/{} v{}",
-        result["environment"].as_str().unwrap_or("?"),
-        result["place"].as_str().unwrap_or("?"),
-        result["version"]
-    );
+    let output = logs.map(|line| json!({ "kind": "output", "text": dev::map_log(line, &index).0 }));
+    let (environment, place, version) = (&result["environment"], &result["place"], &result["version"]);
+    let run = Run {
+        target: "cloud",
+        ran: format!("{}/{} v{version}", environment.as_str().unwrap_or("?"), place.as_str().unwrap_or("?")),
+        about: json!({ "environment": environment, "place": place, "placeId": result["placeId"], "version": version }),
+        output: output.collect(),
+        report,
+    };
     // the script's own chunk has a name of Open Cloud's choosing: the frames shown are the project's files
-    let files: Vec<&str> = index.values().map(|(file, _)| file.as_str()).collect();
-    let shown = |line: &str| files.iter().any(|file| line.strip_prefix(file).is_some_and(|rest| rest.starts_with(':')));
-    print_report(&report, mode, &ran, shown);
-    Ok(ok)
+    Ok(finish(options, tests, run, &|line| project_line(&root, line)))
 }
 
-/// hexagon's in-engine runtime from the project's `node_modules`, by module name: sent along as the exec's modules
-/// in Studio, bundled into one script on Open Cloud.
-fn runtime(root: &Path) -> Result<Vec<(String, String)>, String> {
-    let dir = root.join("node_modules/@hautajoki/hexagon/runtime");
-    let entries = std::fs::read_dir(&dir)
-        .map_err(|_| format!("this project has no hexagon runtime ({} is missing)", dir.display()))?;
-    let mut modules = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".luau")) else {
-            continue;
-        };
-        if name != "local_runner" {
-            let source = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            modules.push((name.to_owned(), source));
+/// The suites of a scan for `mode`: every ModuleScript named `*.spec` (`*.bench`), labelled by its source file and
+/// found by its instance path, in file order.
+fn suites(scan: &route::Scan, root: &Path, mode: Mode) -> Vec<spec::Suite> {
+    let suffix = match mode {
+        Mode::Test => ".spec",
+        Mode::Bench => ".bench",
+    };
+    let suites = scan.modules.iter().filter(|m| m.class == route::Class::ModuleScript);
+    let suites = suites.filter(|m| m.instance.last().is_some_and(|name| name.ends_with(suffix)));
+    let mut suites: Vec<spec::Suite> =
+        suites.map(|m| spec::Suite { label: shown(root, &m.file), path: m.instance.clone() }).collect();
+    suites.sort_by(|a, b| a.label.cmp(&b.label));
+    suites
+}
+
+/// Whether a trace line, mapped, is a frame of one of the project's files (`src/x.ts:12 function f`).
+fn project_line(root: &Path, line: &str) -> bool {
+    line.split_once(':').is_some_and(|(file, _)| !file.is_empty() && root.join(file).is_file())
+}
+
+/// A finished run, whatever its target: `ran` says where for the text (`edit, generation 12`), `about` for JSON.
+struct Run {
+    target: &'static str,
+    ran: String,
+    about: Value,
+    /// What it printed, `{kind, text}` and for a local file's whole output `{kind, file, text}`.
+    output: Vec<Value>,
+    report: Value,
+}
+
+/// Prints what the run printed and its report, `project` keeping a trace's project frames, and judges it by the policy
+/// every target shares: false when it selected nothing, was focused without `--allow-focused`, or a case failed.
+fn finish(options: &Options, tests: &Tests, run: Run, project: &dyn Fn(&str) -> bool) -> bool {
+    let verdict = spec::policy(&run.report, tests.allow_focused);
+    if options.json {
+        let mut answer = json!({
+            "ok": verdict.is_none(), "target": run.target, "ran": run.about, "output": run.output, "report": run.report,
+        });
+        if let Some((code, error)) = &verdict {
+            answer["code"] = (*code).into();
+            answer["error"] = error.as_str().into();
+        }
+        println!("{answer}");
+        return verdict.is_none();
+    }
+    for line in &run.output {
+        let text = line["text"].as_str().unwrap_or("");
+        match (line["file"].as_str(), line["kind"].as_str()) {
+            (Some(file), _) => text.lines().for_each(|text| println!("{file}: {text}")),
+            (None, Some("warning")) => println!("warning: {text}"),
+            _ => println!("{text}"),
         }
     }
-    modules.sort();
-    Ok(modules)
-}
-
-/// The argument of hexagon's `cloud_runner.run`.
-fn run_request(mode: &str, filter: Option<&str>) -> String {
-    format!("{{ mode = \"{mode}\", filter = {} }}", filter.map_or_else(|| "nil".to_owned(), luau_string))
-}
-
-/// One script holding hexagon's runtime and a run of it (`tessera run --script`), returning the report as JSON
-/// text. Each module is a function of the `require` its string requires (`./name`) go through; anything else, a
-/// spec's instance, is required as usual.
-fn bundle(runtime: &[(String, String)], request: &str) -> String {
-    let mut out = String::from(
-        "-- hexagon's runtime and one run of it, written by `opossum test --cloud` for `tessera run --script`\n\
-         local modules: { [string]: (any) -> any } = {}\n",
-    );
-    for (name, source) in runtime {
-        out.push_str(&format!("modules[{}] = function(require)\n{source}\nend\n", luau_string(name)));
+    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    print!("{}", spec::print(&run.report, &run.ran, project, color));
+    if let Some(("test.focused", message)) = verdict.as_ref().map(|(code, message)| (*code, message)) {
+        eprintln!("opossum: {message}");
     }
-    out.push_str(&format!(
-        "local loaded: {{ [string]: any }} = {{}}
-local outer = require
-local function load(name: string): any
-\tif loaded[name] == nil then
-\t\tlocal body = modules[name] or error(`hexagon's runtime has no module {{name}}`)
-\t\tloaded[name] = body(function(target: any): any
-\t\t\tif type(target) == \"string\" then return load((string.gsub(target, \"^%./\", \"\"))) end
-\t\t\treturn outer(target)
-\t\tend)
-\tend
-\treturn loaded[name]
-end
-return load(\"cloud_runner\").run({request})
-"
-    ));
-    out
-}
-
-/// Prints a hexagon report: each benchmark, each failure with its place and the first frames of its trace that are
-/// `shown`, then the counts and where it `ran`.
-fn print_report(report: &Value, mode: &str, ran: &str, shown: impl Fn(&str) -> bool) {
-    let labels = |case: &Value| {
-        let names: Vec<&str> = case["labels"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-        names.join(" / ")
-    };
-    for bench in report["benchmarks"].as_array().into_iter().flatten() {
-        let us = |key: &str| bench[key].as_f64().unwrap_or(0.0) * 1e6;
-        println!(
-            "{}: mean {:.3} µs, median {:.3} µs, p95 {:.3} µs (±{:.1}%, {} iterations)",
-            labels(bench),
-            us("mean_seconds"),
-            us("median_seconds"),
-            us("p95_seconds"),
-            bench["margin_percent"].as_f64().unwrap_or(0.0),
-            bench["iterations"]
-        );
-    }
-    for failure in report["failures"].as_array().into_iter().flatten() {
-        let line = failure["line"].as_u64().map_or("?".to_owned(), |l| l.to_string());
-        println!("FAIL {} ({}:{line})", labels(failure), failure["source"].as_str().unwrap_or("?"));
-        println!("  {}", failure["message"].as_str().unwrap_or("").replace('\n', "\n  "));
-        for line in failure["trace"].as_str().unwrap_or("").lines().filter(|l| shown(l)).take(3) {
-            println!("    {line}");
-        }
-    }
-    let count = |key: &str| report[key].as_u64().unwrap_or(0);
-    let (pass, fail, skip) = if mode == "bench" {
-        (count("bench_pass"), count("bench_fail"), count("bench_skip"))
-    } else {
-        (count("test_pass"), count("test_fail"), count("test_skip"))
-    };
-    println!(
-        "{pass} passed, {fail} failed, {skip} skipped in {:.2} s ({ran})",
-        report["duration_seconds"].as_f64().unwrap_or(0.0)
-    );
+    verdict.is_none()
 }
 
 /// Starts a playtest (Play Solo, or with `run` Run) and returns once its DataModels connected.
@@ -406,6 +409,14 @@ fn print_output(answer: &Value) {
     }
 }
 
+/// `body` asking for `realm`, when one is named.
+fn with_realm(mut body: Value, realm: &Option<String>) -> Value {
+    if let Some(realm) = realm {
+        body["realm"] = realm.as_str().into();
+    }
+    body
+}
+
 /// One line naming the files whose source did not compile, so the build the DataModel holds has their last good
 /// output, or none: whatever ran there met older code of them than the files.
 fn print_stale(answer: &Value) {
@@ -444,9 +455,6 @@ fn post(cfg: &Config, options: &Options, path: &str, body: Value) -> Result<Valu
 
 fn send(cfg: &Config, options: &Options, path: &str, mut body: Value) -> Result<Value, String> {
     body["root"] = cfg.root.to_string_lossy().into();
-    if let Some(realm) = &options.realm {
-        body["realm"] = realm.as_str().into();
-    }
     if let Some(timeout) = options.timeout {
         body["timeout"] = timeout.into();
     }

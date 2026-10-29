@@ -38,9 +38,11 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
   dev [--json]                                               watch, rebuild and sync to Studio
   exec [--realm <r>] [--timeout <s>] [--json] (<file.luau> | -e <code> | -)
                                                              run Luau in Studio through opossum dev
-  test [--realm <r>] [--timeout <s>] [--json] [<filter>]     run hexagon specs in Studio (bench: benchmarks)
-  test --cloud [--place <p>] [--environment <e>] [--timeout <s>] [--json] [<filter>]
-                                                             run them on Open Cloud through tessera (saves a
+  test [<target>] [--timeout <s>] [--allow-focused] [--json] [<filter>]
+                                                             run the specs (bench: the benchmarks)
+    <target>: [--realm <r>]                                  in Studio through opossum dev (the default)
+              --local [--interpreted]                        in fresh Luau VMs here, src/**/*.local.spec.luau
+              --cloud [--place <p>] [--environment <e>]      on Open Cloud through tessera (saves a
                                                              place version to Roblox)
   play [--run] [--timeout <s>] [--json]                      start a Studio playtest through opossum dev
   stop [--timeout <s>] [--json]                              end it and sum up what it logged
@@ -57,9 +59,8 @@ enum Command {
     Build { profile: Option<String>, out: Option<PathBuf>, emit: Option<PathBuf> },
     Check { profile: Option<String>, json: bool },
     Dev { json: bool },
-    Exec(exec::Options, exec::Source),
-    Test(exec::Options, &'static str, Option<String>),
-    Cloud(exec::Options, exec::Cloud, &'static str, Option<String>),
+    Exec(exec::Options, exec::Target, exec::Source),
+    Test(exec::Options, exec::Target, exec::Tests),
     Play(exec::Options, bool),
     Stop(exec::Options),
     Pull(exec::Options, String, Option<PathBuf>),
@@ -83,7 +84,8 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     }
     let (mut profile, mut out, mut emit, mut json) = (None, None, None, false);
     let (mut realm, mut timeout, mut code, mut run) = (None, None, None, false);
-    let (mut cloud, mut place, mut environment, mut force) = (false, None, None, false);
+    let (mut local, mut interpreted, mut cloud, mut place, mut environment) = (false, false, false, None, None);
+    let (mut force, mut allow_focused) = (false, false);
     let mut positional: Vec<&str> = Vec::new();
     let mut it = rest.iter().copied().skip(1);
     while let Some(arg) = it.next() {
@@ -101,63 +103,73 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
             }
             "-e" => code = Some(value()?),
             "--run" => run = true,
+            "--local" => local = true,
+            "--interpreted" => interpreted = true,
             "--cloud" => cloud = true,
             "--place" => place = Some(value()?),
             "--environment" => environment = Some(value()?),
             "--force" => force = true,
+            "--allow-focused" => allow_focused = true,
             "-" => positional.push(arg),
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}")),
             _ => positional.push(arg),
         }
     }
     let verb = rest.first().copied();
-    let studio = matches!(verb, Some("exec" | "test" | "bench"));
-    let timed = studio || matches!(verb, Some("play" | "stop" | "pull" | "attach"));
-    let stray = realm.is_some() && !studio || timeout.is_some() && !timed;
-    let tessera = place.is_some() || environment.is_some();
+    let tests = matches!(verb, Some("test" | "bench"));
+    let runs = tests || verb == Some("exec");
+    // where exec, test and bench run: each target takes only its own flags
+    let target = match (local, cloud) {
+        (false, false) if !interpreted && place.is_none() && environment.is_none() => {
+            Some(exec::Target::Studio { realm: realm.clone() })
+        }
+        (true, false) if tests && realm.is_none() && place.is_none() && environment.is_none() => {
+            Some(exec::Target::Local { interpreted })
+        }
+        (false, true) if tests && !interpreted && realm.is_none() => {
+            Some(exec::Target::Cloud { place: place.clone(), environment: environment.clone() })
+        }
+        _ => None,
+    };
+    let timed = runs || matches!(verb, Some("play" | "stop" | "pull" | "attach"));
+    let targeted = realm.is_some() || local || interpreted || cloud || place.is_some() || environment.is_some();
+    let stray = targeted && !runs || timeout.is_some() && !timed || allow_focused && !tests;
     if stray || code.is_some() && verb != Some("exec") || run && verb != Some("play") || force && verb != Some("attach")
     {
         return Err(USAGE.to_owned());
     }
-    if (cloud || tessera) && !matches!(verb, Some("test" | "bench")) || tessera && !cloud || cloud && realm.is_some() {
-        return Err(USAGE.to_owned());
-    }
-    let options = || exec::Options { realm: realm.clone(), json, timeout };
-    let command = match (verb, positional.as_slice()) {
-        (Some("build"), []) if !json => Command::Build { profile, out, emit },
-        (Some("check"), []) if out.is_none() && emit.is_none() => Command::Check { profile, json },
-        (Some("dev"), []) if profile.is_none() && out.is_none() && emit.is_none() => Command::Dev { json },
-        (Some("exec"), []) if code.is_some() => {
-            Command::Exec(options(), exec::Source::Code(code.clone().unwrap_or_default()))
+    let options = || exec::Options { json, timeout };
+    let built = profile.is_some() || out.is_some() || emit.is_some();
+    let command = match (verb, positional.as_slice(), target) {
+        (Some("build"), [], _) if !json => Command::Build { profile, out, emit },
+        (Some("check"), [], _) if out.is_none() && emit.is_none() => Command::Check { profile, json },
+        (Some("dev"), [], _) if !built => Command::Dev { json },
+        (Some("exec"), [], Some(target)) if code.is_some() && !built => {
+            Command::Exec(options(), target, exec::Source::Code(code.clone().unwrap_or_default()))
         }
-        (Some("exec"), ["-"]) if code.is_none() => Command::Exec(options(), exec::Source::Stdin),
-        (Some("exec"), [file]) if code.is_none() => Command::Exec(options(), exec::Source::File((*file).to_owned())),
-        (Some(mode @ ("test" | "bench")), filter)
-            if filter.len() <= 1 && profile.is_none() && out.is_none() && emit.is_none() =>
-        {
-            let mode = if mode == "test" { "test" } else { "bench" };
+        (Some("exec"), ["-"], Some(target)) if code.is_none() && !built => {
+            Command::Exec(options(), target, exec::Source::Stdin)
+        }
+        (Some("exec"), [file], Some(target)) if code.is_none() && !built => {
+            Command::Exec(options(), target, exec::Source::File((*file).to_owned()))
+        }
+        (Some(verb @ ("test" | "bench")), filter, Some(target)) if filter.len() <= 1 && !built => {
+            let mode = if verb == "test" { spec::Mode::Test } else { spec::Mode::Bench };
             let filter = filter.first().map(|f| (*f).to_owned());
-            match cloud {
-                true => Command::Cloud(options(), exec::Cloud { place, environment }, mode, filter),
-                false => Command::Test(options(), mode, filter),
-            }
+            Command::Test(options(), target, exec::Tests { mode, filter, allow_focused })
         }
-        (Some("play"), []) if profile.is_none() && out.is_none() && emit.is_none() => Command::Play(options(), run),
-        (Some("stop"), []) if profile.is_none() && out.is_none() && emit.is_none() => Command::Stop(options()),
-        (Some("pull"), [path, file @ ..])
-            if file.len() <= 1 && profile.is_none() && out.is_none() && emit.is_none() =>
-        {
+        (Some("play"), [], _) if !built => Command::Play(options(), run),
+        (Some("stop"), [], _) if !built => Command::Stop(options()),
+        (Some("pull"), [path, file @ ..], _) if file.len() <= 1 && !built => {
             Command::Pull(options(), (*path).to_owned(), file.first().map(PathBuf::from))
         }
-        (Some("status"), []) if profile.is_none() && out.is_none() && emit.is_none() => Command::Status(options()),
-        (Some("attach"), []) if profile.is_none() && out.is_none() && emit.is_none() => {
-            Command::Attach(options(), force)
-        }
-        (Some("where"), [target]) => Command::Where((*target).to_owned()),
-        (Some("sourcemap"), []) => Command::Sourcemap,
-        (Some("plugin"), ["install"]) => Command::Plugin(None),
-        (Some("plugin"), ["install", path]) => Command::Plugin(Some(PathBuf::from(path))),
-        (Some("migrate"), []) if profile.is_none() && out.is_none() && emit.is_none() && !json => Command::Migrate,
+        (Some("status"), [], _) if !built => Command::Status(options()),
+        (Some("attach"), [], _) if !built => Command::Attach(options(), force),
+        (Some("where"), [target], _) => Command::Where((*target).to_owned()),
+        (Some("sourcemap"), [], _) => Command::Sourcemap,
+        (Some("plugin"), ["install"], _) => Command::Plugin(None),
+        (Some("plugin"), ["install", path], _) => Command::Plugin(Some(PathBuf::from(path))),
+        (Some("migrate"), [], _) if !built && !json => Command::Migrate,
         _ => return Err(USAGE.to_owned()),
     };
     Ok((dir, command))
@@ -207,20 +219,30 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Command::Dev { json } => return dev::run(&start, json),
         _ => {}
     }
-    let cfg = config::load(&config::find(&start)?)?;
+    let file = config::find(&start)?;
+    // local runs read nothing of the config: the project is the directory holding it
+    let root = || std::fs::canonicalize(file.parent().unwrap_or(Path::new("."))).map_err(|e| e.to_string());
+    if let Command::Test(options, exec::Target::Local { interpreted }, tests) = &command {
+        return exec::test_local(&root()?, options, *interpreted, tests);
+    }
+    let cfg = config::load(&file)?;
     // dev wrote what the editor reads; these only talk to it
     match command {
-        Command::Exec(options, source) => return exec::exec(&cfg, &options, source),
-        Command::Test(options, mode, filter) => return exec::test(&cfg, &options, mode, filter.as_deref()),
+        Command::Exec(options, exec::Target::Studio { realm }, source) => {
+            return exec::exec(&cfg, &options, &realm, source);
+        }
+        Command::Test(options, exec::Target::Studio { realm }, tests) => {
+            return exec::test_studio(&cfg, &options, &realm, &tests);
+        }
+        // builds itself, for the log index
+        Command::Test(options, exec::Target::Cloud { place, environment }, tests) => {
+            return exec::test_cloud(cfg, &options, place.as_deref(), environment.as_deref(), &tests);
+        }
         Command::Play(options, run) => return exec::play(&cfg, &options, run),
         Command::Stop(options) => return exec::stop(&cfg, &options),
         Command::Pull(options, path, file) => return exec::pull(&cfg, &options, &path, file.as_deref()),
         Command::Status(options) => return exec::status(&cfg, &options),
         Command::Attach(options, force) => return exec::attach(&cfg, &options, force),
-        // builds itself, for the log index
-        Command::Cloud(options, cloud, mode, filter) => {
-            return exec::cloud(cfg, &options, &cloud, mode, filter.as_deref());
-        }
         _ => {}
     }
     editor::write(&cfg.root, &cfg.ts)?;
@@ -234,7 +256,6 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         | Command::Dev { .. }
         | Command::Exec(..)
         | Command::Test(..)
-        | Command::Cloud(..)
         | Command::Play(..)
         | Command::Stop(..)
         | Command::Pull(..)

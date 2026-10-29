@@ -57,6 +57,8 @@ const STALE_KEPT: usize = 64;
 const RELEASE_WAIT: Duration = Duration::from_secs(10);
 /// Bytes of base64 a pull's answer may carry: an 18 MB model, within the 32 MB a message up the socket may hold.
 const PULL_LIMIT: usize = 24 << 20;
+/// Bytes of a spec report's JSON text a test's answer may carry, far past any run's, within what a message up holds.
+const REPORT_LIMIT: usize = 8 << 20;
 
 /// Instance full name (`ServerScriptService.server.app`) → its file relative to the root, and for a compiled
 /// module the map from output lines to TypeScript lines.
@@ -494,7 +496,7 @@ impl Execs {
         Ok(request)
     }
 
-    /// `{root, realm?, name, source, modules?, timeout?, map?, fresh?}` (DESIGN.md, Exec).
+    /// `{root, realm?, name, source, modules?, timeout?, report?, fresh?}` (DESIGN.md, Exec).
     fn exec(&self, request: &Value) -> Result<Value, (u16, String)> {
         let connected = self.server.realms();
         let realm = match request["realm"].as_str() {
@@ -513,12 +515,16 @@ impl Execs {
         self.fence().map_err(|e| (503, e))?;
         let timeout = timeout(request);
         let name = request["name"].as_str().unwrap_or("exec");
-        let message = json!({
+        let report = request["report"] == true;
+        let mut message = json!({
             "t": "exec",
             "name": name,
             "source": request["source"],
             "modules": request["modules"],
         });
+        if report {
+            message["limit"] = REPORT_LIMIT.into();
+        }
         let fresh = request["fresh"].as_bool() == Some(true);
         let ran = self.server.exec(realm, message, timeout, fresh).map_err(|e| (503, e))?;
         let index = self.index.lock().unwrap_or_else(|e| e.into_inner());
@@ -531,8 +537,12 @@ impl Execs {
             .map(|line| json!({ "kind": line[0], "text": map(&line[1]) }))
             .collect();
         let mut values = result["values"].clone();
-        if request["map"].as_bool() == Some(true) {
-            map_strings(&mut values, &index);
+        // a spec run returns its report as JSON text: decoded, with its places mapped to the files
+        if report
+            && let Some(mut decoded) = values[0].as_str().and_then(|text| serde_json::from_str::<Value>(text).ok())
+        {
+            map_strings(&mut decoded, &index);
+            values[0] = decoded;
         }
         let (error, trace) = (map(&result["error"]), map(&result["trace"]));
         drop(index);
@@ -1091,10 +1101,9 @@ fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, playtest: &P
     }
 }
 
-/// Maps every string inside `value` like a log line (`opossum test`'s report). In a hexagon case the suite (its first
-/// label, the spec's instance name) becomes its file, and a failure's `source` and `line` the project file and line it
-/// failed at: its own when that is one, else the first project frame of its trace (hexagon's `expect` names itself), else
-/// the place its message names (a suite that failed to load).
+/// Maps every string inside `value` like a log line (a spec report). A failure's `source` and `line` become the project
+/// file and line it failed at: its own when that is one, else the first project frame of its trace, else the place its
+/// message names (a suite that failed to load).
 pub fn map_strings(value: &mut Value, index: &LogIndex) {
     match value {
         Value::String(text) => *text = map_log(text, index).0,
@@ -1107,11 +1116,6 @@ pub fn map_strings(value: &mut Value, index: &LogIndex) {
                     .or_else(|| map_log(fields.get("message")?.as_str()?, index).1)
             });
             fields.values_mut().for_each(|v| map_strings(v, index));
-            if let Some(Value::String(suite)) = fields.get_mut("labels").and_then(|l| l.get_mut(0))
-                && let Some((file, _)) = index.get(suite.as_str())
-            {
-                *suite = file.clone();
-            }
             if let Some((file, line)) = at {
                 fields.insert("source".into(), file.into());
                 fields.insert("line".into(), line.into());
@@ -1187,12 +1191,12 @@ mod tests {
         let stack = "Script 'ReplicatedStorage.shared.m', Line 7 - function f";
         assert_eq!(map_log(stack, &index).0, "Script 'src/m.luau', Line 7 - function f");
 
-        // a hexagon failure names its suite by instance, and its place as a bare source and a Luau line: expect's own
-        // when it failed an assertion, so the trace's first project frame says where
-        let trace = "hexagon.expect:69\nReplicatedStorage.shared.m:7";
-        let mut failure = json!({"labels": ["ReplicatedStorage.shared.m", "adds"], "source": "hexagon.expect", "line": 69, "trace": trace});
+        // a failure that names no project place of its own (a case of a suite that failed to load, say) takes the
+        // trace's first project frame
+        let trace = "spec:69\nReplicatedStorage.shared.m:7";
+        let mut failure = json!({"labels": ["src/m.luau", "adds"], "source": "unknown", "line": 0, "trace": trace});
         map_strings(&mut failure, &index);
-        let mapped = json!({"labels": ["src/m.luau", "adds"], "source": "src/m.luau", "line": 7, "trace": "hexagon.expect:69\nsrc/m.luau:7"});
+        let mapped = json!({"labels": ["src/m.luau", "adds"], "source": "src/m.luau", "line": 7, "trace": "spec:69\nsrc/m.luau:7"});
         assert_eq!(failure, mapped);
     }
 
