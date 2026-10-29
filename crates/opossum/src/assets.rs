@@ -4,7 +4,6 @@
 
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cloud::AssetKind;
 use media::{Image, ImageOptions};
@@ -173,33 +172,13 @@ pub fn hash(ext: &str, image: ImageOptions, bytes: &[u8]) -> String {
     h.finalize().as_bytes()[..16].iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Every asset's input hash, read and hashed on all cores, in `assets` order; a file that cannot be read is an error
+/// Every asset's input hash, read and hashed in parallel, in `assets` order; a file that cannot be read is an error
 /// in its slot.
 pub fn hash_all(root: &Path, sets: &[AssetSet], assets: &[Asset]) -> Vec<Result<String, String>> {
-    let next = AtomicUsize::new(0);
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(assets.len());
-    let mut out: Vec<Result<String, String>> = assets.iter().map(|_| Err(String::new())).collect();
-    std::thread::scope(|s| {
-        let workers: Vec<_> = (0..threads)
-            .map(|_| {
-                s.spawn(|| {
-                    let mut done = Vec::new();
-                    loop {
-                        let i = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(a) = assets.get(i) else { break done };
-                        let bytes = fs::read(root.join(&a.file)).map_err(|e| format!("{}: {e}", a.file));
-                        done.push((i, bytes.map(|b| hash(&a.ext, sets[a.set].image, &b))));
-                    }
-                })
-            })
-            .collect();
-        for w in workers {
-            for (i, h) in w.join().unwrap() {
-                out[i] = h;
-            }
-        }
-    });
-    out
+    lower::parallel::map(assets, |a| {
+        let bytes = fs::read(root.join(&a.file)).map_err(|e| format!("{}: {e}", a.file))?;
+        Ok(hash(&a.ext, sets[a.set].image, &bytes))
+    })
 }
 
 /// What a file goes up as. Only `.rbxm`/`.rbxmx` needs its bytes: exactly one top-level KeyframeSequence or

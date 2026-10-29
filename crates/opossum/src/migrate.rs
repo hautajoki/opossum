@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cloud::{AssetKind, Creator};
 use globset::GlobSet;
@@ -860,39 +859,12 @@ fn import_lock(
         imports.push(Import { record: r, file: a.file.clone(), set: a.set, ext: a.ext.clone() });
     }
 
-    // every file read once, on all cores: opossum's hash, tessera's fingerprint, and what it goes up as
-    let next = AtomicUsize::new(0);
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(imports.len()).max(1);
-    let mut read: Vec<Result<(String, String, AssetKind), String>> =
-        imports.iter().map(|_| Err(String::new())).collect();
-    std::thread::scope(|s| {
-        let workers: Vec<_> = (0..threads)
-            .map(|_| {
-                s.spawn(|| {
-                    let mut done = Vec::new();
-                    loop {
-                        let i = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(im) = imports.get(i) else { break done };
-                        let image = cfg.assets[im.set].image;
-                        let result =
-                            fs::read(root.join(&im.file)).map_err(|e| format!("{}: {e}", im.file)).and_then(|b| {
-                                let kind = crate::assets::kind(&im.ext, &b).map_err(|e| format!("{}: {e}", im.file))?;
-                                Ok((
-                                    crate::assets::hash(&im.ext, image, &b),
-                                    legacy::fingerprint(&b, &im.ext, image),
-                                    kind,
-                                ))
-                            });
-                        done.push((i, result));
-                    }
-                })
-            })
-            .collect();
-        for w in workers {
-            for (i, r) in w.join().unwrap() {
-                read[i] = r;
-            }
-        }
+    // every file read once, in parallel: opossum's hash, tessera's fingerprint, and what it goes up as
+    let read: Vec<Result<(String, String, AssetKind), String>> = lower::parallel::map(&imports, |im| {
+        let image = cfg.assets[im.set].image;
+        let b = fs::read(root.join(&im.file)).map_err(|e| format!("{}: {e}", im.file))?;
+        let kind = crate::assets::kind(&im.ext, &b).map_err(|e| format!("{}: {e}", im.file))?;
+        Ok((crate::assets::hash(&im.ext, image, &b), legacy::fingerprint(&b, &im.ext, image), kind))
     });
 
     let (mut lock, problems) = match lock::read(root) {
@@ -1219,6 +1191,7 @@ fn texts(root: &Path, dir: &Path, asset_roots: &[String], out: &mut Vec<PathBuf>
 #[cfg(test)]
 mod tests {
     use std::io::Write as _;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
 
