@@ -250,7 +250,7 @@ mod tests {
                            interface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\n\
                            interface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n";
 
-    /// A project with an asset set `art` holding `a.glb`, a pass, places `main` and `places` in universe 7 (ids from
+    /// A project with an asset set `art` holding `a.mp4`, a pass, places `main` and `places` in universe 7 (ids from
     /// 10), and `files` written over it.
     fn project(name: &str, places: &[&str], extra: &str, files: &[(&str, &str)]) -> PathBuf {
         let root = std::env::temp_dir().join(format!("opossum-deploy-{name}-{}", std::process::id()));
@@ -270,7 +270,7 @@ mod tests {
         write("opossum.toml", &toml);
         write("src/globals.d.ts", GLOBALS);
         write("src/shared/a.luau", "return 1\n");
-        write("art/a.glb", "x");
+        write("art/a.mp4", "x");
         for (file, text) in files {
             write(file, text);
         }
@@ -301,8 +301,8 @@ mod tests {
         let next = "1".repeat(32);
         let blocked = format!("version = 1\nuniverses.7.\"pass/vip\" = {{ next = \"{next}\" }}\n");
         let ambiguous =
-            format!("version = 1\ncreator = {{ user = 1 }}\nassets.\"art/a.glb\" = {{ next = \"{next}\" }}\n");
-        let badge = "[badges.welcome]\nname = \"W\"\ndescription = \"Hi\"\nicon = \"art/a.glb\"\nexpectedCost = 5\n";
+            format!("version = 1\ncreator = {{ user = 1 }}\nassets.\"art/a.mp4\" = {{ next = \"{next}\" }}\n");
+        let badge = "[badges.welcome]\nname = \"W\"\ndescription = \"Hi\"\nicon = \"art/a.mp4\"\nexpectedCost = 5\n";
         // each case writes one file over the project; the spend case's is harmless
         let cases = [
             ("image", "", ("art/bad.png", "not a png"), "asset.image"),

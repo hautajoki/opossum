@@ -720,6 +720,7 @@ dependencies = [
  "png",
  "resvg",
  "roxmltree",
+ "serde_json",
  "zune-jpeg",
 ]
 

@@ -235,11 +235,10 @@ pub fn serve(port: u16, results: Vec<Value>) -> Result<(), String> {
     }
 }
 
-/// A stateful stand-in for the endpoints opossum calls. Asset creates and FBX updates answer with an operation that
-/// is done at its first poll (new ids count up from 1000001); place saves count versions up per place; tasks run at
-/// the version asked for, or the place's last saved one, and complete at their first poll with no results and no logs;
-/// pass, product, badge and thumbnail creates answer with ids counting up from 2000001, and every other resource call
-/// succeeds.
+/// A stateful stand-in for the endpoints opossum calls. Asset creates answer with an operation that is done at its
+/// first poll (new ids count up from 1000001); place saves count versions up per place; tasks run at the version asked
+/// for, or the place's last saved one, and complete at their first poll with no results and no logs; pass, product,
+/// badge and thumbnail creates answer with ids counting up from 2000001, and every other resource call succeeds.
 pub fn auto() -> Fallback {
     let state = Mutex::new(Auto::default());
     Box::new(move |r| state.lock().unwrap().reply(r))
@@ -264,10 +263,6 @@ impl Auto {
                 self.next += 1;
                 self.operation(1_000_000 + self.next)
             }
-            ("PATCH", ["assets", "v1", "assets", id]) => match id.parse() {
-                Ok(id) => self.operation(id),
-                Err(_) => not_found(r),
-            },
             ("GET", ["assets", "v1", "operations", _]) => match self.operations.get(&r.path["assets/v1/".len()..]) {
                 Some(id) => Reply::json(
                     200,

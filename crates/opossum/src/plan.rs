@@ -113,7 +113,6 @@ pub fn classify(root: &Path, lock: &mut Lock, found: &[assets::Asset], hashes: &
                 let changed = record.is_some_and(|r| r.id.is_some());
                 match (unsettled.get(hash), held.get(hash)) {
                     _ if refused.contains(hash) => Class::Rejected,
-                    _ if !shares(a) => Class::Send { changed },
                     (Some(other), _) => Class::Ambiguous(copy_of(other)),
                     (None, Some(&id)) => Class::Reuses(id),
                     (None, None) => Class::Send { changed },
@@ -125,7 +124,7 @@ pub fn classify(root: &Path, lock: &mut Lock, found: &[assets::Asset], hashes: &
     // an upload in flight leads its content (it is resumed), else the first file sending it
     let mut leaders: HashMap<&str, usize> = HashMap::new();
     for pending in [true, false] {
-        for (i, a) in found.iter().enumerate().filter(|(_, a)| shares(a)) {
+        for (i, a) in found.iter().enumerate() {
             let content = match &classes[i] {
                 Class::Pending if pending => lock.assets[&a.file].next.as_deref().unwrap_or_default(),
                 Class::Send { .. } if !pending => hashes[i].as_str(),
@@ -296,12 +295,6 @@ fn compile(cfg: &Config, a: &assets::Asset, hash: &str) -> Result<Compiled, Diag
     assets::compile(&path, &a.ext, image, bytes)
 }
 
-/// Whether a file binds an id another file holds for its content, or joins another file's upload of it. An FBX model
-/// never does: its id may be updated in place, and another branch's file sharing it would silently change with it.
-pub fn shares(a: &assets::Asset) -> bool {
-    a.ext != ".fbx"
-}
-
 /// Content an upload that may or may not have happened sent, and the file it was for: a new or changed file holding the
 /// same content is ambiguous too, since sending it could upload that content twice.
 pub fn unsettled(lock: &Lock) -> HashMap<String, String> {
@@ -399,23 +392,23 @@ mod tests {
         std::fs::create_dir_all(root.join("art")).unwrap();
         std::fs::write(root.join("opossum.toml"), "name = \"plan\"\ncreator = { user = 1 }\n[routes]\nshared = \"ReplicatedStorage/shared\"\n[assets]\nart = \"art\"\n")
             .unwrap();
-        for file in ["current.glb", "changed.glb", "new.glb", "pending.ogg", "ambiguous.ogg"] {
+        for file in ["current.mp4", "changed.mp4", "new.mp4", "pending.ogg", "ambiguous.ogg"] {
             std::fs::write(root.join("art").join(file), file).unwrap();
         }
         // what upload binds, sends once or refuses before sending, which a plan says rather than calling them new
-        std::fs::write(root.join("art/reused.glb"), "current.glb").unwrap();
-        std::fs::write(root.join("art/twin.glb"), "new.glb").unwrap();
+        std::fs::write(root.join("art/reused.mp4"), "current.mp4").unwrap();
+        std::fs::write(root.join("art/twin.mp4"), "new.mp4").unwrap();
         std::fs::write(root.join("art/broken.png"), "not a png").unwrap();
         let cfg = crate::config::load(&root.join("opossum.toml")).unwrap();
         let hash = |file: &str, ext: &str| assets::hash(ext, cfg.assets[0].image, file.as_bytes());
         let (old, next) = ("0".repeat(32), "1".repeat(32));
         let lock = format!(
             "version = 1\n\
-             assets.\"art/current.glb\" = {{ id = 1, hash = \"{}\" }}\n\
-             assets.\"art/changed.glb\" = {{ id = 2, hash = \"{old}\" }}\n\
+             assets.\"art/current.mp4\" = {{ id = 1, hash = \"{}\" }}\n\
+             assets.\"art/changed.mp4\" = {{ id = 2, hash = \"{old}\" }}\n\
              assets.\"art/pending.ogg\" = {{ id = 3, hash = \"{}\", next = \"{next}\", op = \"operations/x\" }}\n\
              assets.\"art/ambiguous.ogg\" = {{ next = \"{next}\" }}\n",
-            hash("current.glb", ".glb"),
+            hash("current.mp4", ".mp4"),
             hash("pending.ogg", ".ogg"),
         );
         std::fs::write(root.join("opossum.lock"), lock).unwrap();

@@ -1,4 +1,4 @@
-//! Assets: create, the FBX content update, and the operation each returns.
+//! Assets: create, and the operation it returns.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -81,7 +81,6 @@ impl AssetKind {
 }
 
 const CREATE: &str = "create asset";
-const UPDATE: &str = "update asset";
 const OPERATION: &str = "get asset operation";
 
 impl Client {
@@ -92,44 +91,22 @@ impl Client {
             "displayName": display_name(u.name),
             "description": u.description,
             "creationContext": {"creator": creator(u.creator), "expectedPrice": 0},
-        });
-        self.upload(CREATE, "POST", "assets/v1/assets".into(), &request, u)
-    }
-
-    /// Replaces an FBX model's content in place (the only asset Roblox lets change). The caller splits off a new asset
-    /// instead when another file shares `id`, so one file's change never silently changes another's.
-    pub fn update_asset(&self, id: u64, u: &Upload) -> Result<Operation, Error> {
-        let request = json!({
-            "assetType": "Model",
-            "assetId": id.to_string(),
-            "creationContext": {"creator": creator(u.creator), "expectedPrice": 0},
-        });
-        let path = format!("assets/v1/assets/{id}");
-        if id == 0 || u.kind != AssetKind::Model || u.ext != ".fbx" {
-            let message =
-                format!("only an FBX model's content can be updated (asset {id}, a {} {})", u.kind.name(), u.ext);
-            let call = Call { op: UPDATE, method: "PATCH", path, body: None, create: true, long: true };
-            return Err(self.error(&call, ErrorKind::Local, message));
-        }
-        self.upload(UPDATE, "PATCH", path, &request, u)
-    }
-
-    fn upload(
-        &self,
-        op: &'static str,
-        method: &'static str,
-        path: String,
-        request: &Value,
-        u: &Upload,
-    ) -> Result<Operation, Error> {
-        let request = request.to_string();
+        })
+        .to_string();
         let filename = format!("asset{}", u.ext);
         let parts = [
             Part { name: "request", filename: "", mime: "", bytes: request.as_bytes() },
             Part { name: "fileContent", filename: &filename, mime: u.mime, bytes: u.bytes },
         ];
         let (mime, body) = multipart(&parts);
-        let call = Call { op, method, path, body: Some((&mime, &body)), create: true, long: true };
+        let call = Call {
+            op: CREATE,
+            method: "POST",
+            path: "assets/v1/assets".into(),
+            body: Some((&mime, &body)),
+            create: true,
+            long: true,
+        };
         let (Creator::User(n) | Creator::Group(n)) = u.creator;
         let invalid = if u.bytes.is_empty() || u.bytes.len() > MAX_ASSET {
             Some(format!("the file is {} bytes; Roblox takes 1 to {MAX_ASSET}", u.bytes.len()))
@@ -374,31 +351,11 @@ mod tests {
         for u in &bad {
             assert_eq!(c.create_asset(u).unwrap_err().kind, ErrorKind::Local);
         }
-        assert_eq!(c.update_asset(9001, &PNG).unwrap_err().kind, ErrorKind::Local);
         for path in
             ["operations/", "operations/a/b", "operations/..", "operations/a?x", "../operations/a", "operations/a b"]
         {
             assert_eq!(c.operation(path).unwrap_err().kind, ErrorKind::Local, "{path}");
         }
         assert!(mock.requests().is_empty());
-    }
-
-    #[test]
-    fn an_fbx_update_patches_its_asset() {
-        let mock = Mock::start();
-        mock.on(
-            "PATCH",
-            "assets/v1/assets/9001",
-            Reply::json(200, &json!({"path": "operations/u", "done": true, "response": {"assetId": "9001"}})),
-        );
-        let (c, _) = client(&mock.base);
-        let fbx = Upload { kind: AssetKind::Model, ext: ".fbx", mime: "model/fbx", creator: Creator::User(1), ..PNG };
-        assert_eq!(c.update_asset(9001, &fbx).unwrap().asset_id, Some(9001));
-        let r = &mock.requests()[0];
-        let body = String::from_utf8_lossy(&r.body);
-        assert!(body.contains(
-            r#"{"assetType":"Model","assetId":"9001","creationContext":{"creator":{"userId":"1"},"expectedPrice":0}}"#
-        ));
-        assert!(body.contains("filename=\"asset.fbx\""));
     }
 }

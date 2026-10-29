@@ -223,8 +223,6 @@ fn mime(ext: &str) -> &'static str {
         ".mp3" => "audio/mpeg",
         ".wav" => "audio/wav",
         ".flac" => "audio/flac",
-        ".fbx" => "model/fbx",
-        ".gltf" => "model/gltf+json",
         ".glb" => "model/gltf-binary",
         ".mp4" => "video/mp4",
         ".mov" => "video/mov",

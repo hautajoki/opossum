@@ -23,7 +23,8 @@ pub struct Asset {
 }
 
 /// Every extension opossum uploads and the asset type its file goes up as (an `.rbxm`/`.rbxmx` may turn out to be an
-/// Animation, see [`kind`]). `.bmp` and `.tga` are not here: convert them to PNG.
+/// Animation, see [`kind`]). `.bmp` and `.tga` are not here: convert them to PNG. A `.glb` is the only model file
+/// format, since its part names are checked before upload ([`media::glb`]).
 fn supported(ext: &str) -> Option<(&'static str, AssetKind)> {
     use AssetKind::*;
     let all = [
@@ -38,8 +39,6 @@ fn supported(ext: &str) -> Option<(&'static str, AssetKind)> {
         (".mp4", Video),
         (".mov", Video),
         (".glb", Model),
-        (".gltf", Model),
-        (".fbx", Model),
         (".rbxm", Model),
         (".rbxmx", Model),
     ];
@@ -48,8 +47,8 @@ fn supported(ext: &str) -> Option<(&'static str, AssetKind)> {
 
 /// The files of every set, each set's sorted by key. Dot-files and dot-directories are skipped, as is any subtree
 /// that is another set's root: the innermost root owns its files. Errors (a root that cannot be read, a file opossum
-/// cannot upload, two files with one key, a key that is also a directory) are build errors, and the files they name
-/// are left out.
+/// cannot upload, an `.fbx` or `.gltf` model, two files with one key, a key that is also a directory) are build
+/// errors, and the files they name are left out.
 pub fn discover(root: &Path, sets: &[AssetSet]) -> (Vec<Asset>, Vec<Diag>) {
     let mut assets = Vec::new();
     let mut diags = Vec::new();
@@ -67,6 +66,11 @@ pub fn discover(root: &Path, sets: &[AssetSet]) -> (Vec<Asset>, Vec<Diag>) {
             let file = join(&set.root, &rel);
             let name = rel.rsplit('/').next().unwrap_or(&rel);
             let ext = name.rfind('.').map_or(String::new(), |dot| name[dot..].to_ascii_lowercase());
+            if ext == ".fbx" || ext == ".gltf" {
+                let message = format!("{file}: export a glb; opossum uploads models as .glb only");
+                diags.push(error("asset.model", &file, message));
+                continue;
+            }
             if supported(&ext).is_none() {
                 let what = if ext.is_empty() { "a file with no extension".to_owned() } else { ext };
                 let message =
@@ -212,8 +216,8 @@ pub struct Compiled {
 }
 
 /// Turns a file's bytes into what its upload sends, refusing what Roblox would refuse and opossum can tell before
-/// sending: the size, image dimensions, audio length, rate and channels, a model that does not decode. `path` names
-/// the file in the diagnostic.
+/// sending: the size, image dimensions, audio length, rate and channels, a model that does not decode, a glb's part
+/// names. `path` names the file in the diagnostic.
 pub fn compile(path: &Path, ext: &str, image: ImageOptions, bytes: Vec<u8>) -> Result<Compiled, Diag> {
     let fail = |code: &str, message: String| Diag::new(code, Severity::Error, Some(path), message);
     let Some((ext, kind)) = supported(ext) else {
@@ -247,7 +251,12 @@ pub fn compile(path: &Path, ext: &str, image: ImageOptions, bytes: Vec<u8>) -> R
         AssetKind::Audio => {
             media::inspect_audio(ext, &out.bytes).map_err(|e| fail("asset.audio", e))?;
         }
-        AssetKind::Model => out.kind = self::kind(ext, &out.bytes).map_err(|e| fail("asset.model", e))?,
+        AssetKind::Model => {
+            if ext == ".glb" {
+                media::glb(&out.bytes).map_err(|e| fail("asset.model", e))?;
+            }
+            out.kind = self::kind(ext, &out.bytes).map_err(|e| fail("asset.model", e))?;
+        }
         AssetKind::Video | AssetKind::Animation => {}
     }
     Ok(out)
@@ -291,6 +300,7 @@ mod tests {
             "place/assets/sfx/hit.mp3",
             "place/assets/notes.txt",
             "place/assets/LICENSE",
+            "place/assets/models/hull.fbx",
             "place/assets/raw/skip.png",
             "place/assets/decal.png",
             "place/assets/decal/color.png",
@@ -326,6 +336,7 @@ mod tests {
             codes,
             [
                 ("asset.unsupported", "place/assets/LICENSE".to_owned()),
+                ("asset.model", "place/assets/models/hull.fbx".to_owned()),
                 ("asset.unsupported", "place/assets/notes.txt".to_owned()),
                 ("asset.collision", "place/assets/sfx/hit.ogg".to_owned()),
                 ("asset.treeClash", "place/assets/decal/color.png".to_owned()),

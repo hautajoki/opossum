@@ -1,11 +1,13 @@
 //! Asset media as pure functions over bytes: the image pipeline (PNG, SVG, JPEG headers, bleed, resize, encode),
-//! audio inspection (Ogg, WAV, MP3, FLAC) and the MIME table. No files, cache or config.
+//! audio inspection (Ogg, WAV, MP3, FLAC), a glb's part names and the MIME table. No files, cache or config.
 
 mod audio;
 mod image;
+mod model;
 
 pub use audio::inspect_audio;
 pub use image::{Fit, Image, ImageOptions, MAX_SIDE, Preset, fit, pipeline, process};
+pub use model::glb;
 
 /// The upload `Content-Type` of a file with this extension (lowercase, with its dot) when its own bytes are uploaded;
 /// `None` for one opossum cannot upload. An `Image::Png` output is always `image/png`, so an SVG maps to that.
@@ -20,8 +22,6 @@ pub fn mime(ext: &str) -> Option<&'static str> {
         ".mp4" => "video/mp4",
         ".mov" => "video/mov",
         ".glb" => "model/gltf-binary",
-        ".gltf" => "model/gltf+json",
-        ".fbx" => "model/fbx",
         ".rbxm" | ".rbxmx" => "model/x-rbxm",
         _ => return None,
     })

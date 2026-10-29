@@ -41,9 +41,8 @@ struct Group {
 }
 
 enum Job {
-    /// Upload the compiled file, named after its set key and described by its file, or put it into the FBX asset
-    /// `update` in place.
-    Send { compiled: Compiled, key: String, file: String, update: Option<u64> },
+    /// Upload the compiled file, named after its set key and described by its file.
+    Send { compiled: Compiled, key: String, file: String },
     /// Wait on the operation of an upload an earlier run started.
     Resume(String),
 }
@@ -92,10 +91,10 @@ pub struct Prepared {
     groups: Vec<Group>,
 }
 
-/// `opossum upload`: hash every asset file, bind files whose content the lock already has an id for, upload the rest
-/// (an FBX whose id no other file holds is updated in place), resume uploads earlier runs left in flight, and drop
-/// the records of files that are gone. A file that fails its checks or its upload fails alone. Exit 1 when anything
-/// failed, stayed pending or is ambiguous; 2 when nothing was sent (errors in the config, the lock or the roots).
+/// `opossum upload`: hash every asset file, bind files whose content the lock already has an id for, upload the rest,
+/// resume uploads earlier runs left in flight, and drop the records of files that are gone. A file that fails its
+/// checks or its upload fails alone. Exit 1 when anything failed, stayed pending or is ambiguous; 2 when nothing was
+/// sent (errors in the config, the lock or the roots).
 pub fn upload(cfg: &Config, client: &Client, guard: &RemoteGuard, stop: &AtomicBool) -> Outcome {
     match prepare(cfg) {
         Ok(Some(prepared)) => send(cfg, client, guard, prepared, stop),
@@ -171,8 +170,7 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
                 Some(op) => Job::Resume(op),
                 None => {
                     let (a, compiled) = (&found[members[0]], compiled.remove(&members[0]).expect("checked"));
-                    let update = in_place(&lock, a, &compiled, members.len());
-                    Job::Send { compiled, key: a.key.clone(), file: a.file.clone(), update }
+                    Job::Send { compiled, key: a.key.clone(), file: a.file.clone() }
                 }
             };
             Group { hash, members, job }
@@ -287,18 +285,6 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
     outcome(report, broken, halt, stopped)
 }
 
-/// The id a changed FBX model replaces in place: Roblox lets only FBX content change. Only when no other file in this
-/// lock holds its id (one migrated from tessera may), so one file's change never silently changes another's
-/// (copy-on-write: a shared id splits off a new asset instead); an FBX never comes to share one ([`plan::shares`]).
-fn in_place(lock: &Lock, a: &File, compiled: &Compiled, members: usize) -> Option<u64> {
-    if a.ext != ".fbx" || compiled.kind != cloud::AssetKind::Model || members != 1 {
-        return None;
-    }
-    let id = lock.assets.get(&a.file)?.id?;
-    let shared = lock.assets.iter().any(|(file, r)| *file != a.file && r.id == Some(id));
-    (!shared).then_some(id)
-}
-
 /// Records a group's intent on every member before its request: `next` for a send, `next` and the operation for
 /// files joining a resumed one.
 fn intent(lock: &mut Lock, g: &Group, found: &[File]) {
@@ -349,9 +335,8 @@ fn save(lock: &mut Lock, root: &Path, guard: &RemoteGuard, broken: &mut Option<D
 fn progress(g: &Group, found: &[File], n: usize, total: usize) {
     let file = &found[g.members[0]].file;
     let verb = match g.job {
-        Job::Send { update: Some(id), .. } => format!("updating {id} with"),
-        Job::Send { .. } => "uploading".into(),
-        Job::Resume(_) => "waiting on the upload of".into(),
+        Job::Send { .. } => "uploading",
+        Job::Resume(_) => "waiting on the upload of",
     };
     let more = match g.members.len() {
         1 => String::new(),
@@ -364,7 +349,7 @@ fn progress(g: &Group, found: &[File], n: usize, total: usize) {
 fn work(client: &Client, creator: cloud::Creator, g: &Group, audio: bool, stop: &AtomicBool, send: &dyn Fn(Event)) {
     let op = match &g.job {
         Job::Resume(op) => op.clone(),
-        Job::Send { compiled, key, file, update } => {
+        Job::Send { compiled, key, file } => {
             if stop.load(Ordering::SeqCst) {
                 return send(Event::NotSent);
             }
@@ -377,11 +362,7 @@ fn work(client: &Client, creator: cloud::Creator, g: &Group, audio: bool, stop: 
                 mime: compiled.mime,
                 bytes: &compiled.bytes,
             };
-            let sent = match update {
-                Some(id) => client.update_asset(*id, &upload),
-                None => client.create_asset(&upload),
-            };
-            match sent {
+            match client.create_asset(&upload) {
                 Err(e) => return send(Event::Failed(e)),
                 Ok(op) => {
                     send(Event::Created(op.path.clone()));
@@ -662,7 +643,7 @@ mod tests {
     }
 
     fn hash(text: &str) -> String {
-        assets::hash(".glb", ImageOptions::DEFAULT, text.as_bytes())
+        assets::hash(".mp4", ImageOptions::DEFAULT, text.as_bytes())
     }
 
     /// A done operation `operations/<op>` holding asset `id`.
@@ -672,7 +653,7 @@ mod tests {
 
     #[test]
     fn identical_files_share_one_upload_whose_intent_is_on_disk_first_and_a_rename_sends_nothing() {
-        let root = project("share", &[("a.glb", "x"), ("b.glb", "x")]);
+        let root = project("share", &[("a.mp4", "x"), ("b.mp4", "x")]);
         let mock = Mock::bind(0, Some(auto())).unwrap();
         let lock = root.join(lock::FILE);
         mock.on(
@@ -690,7 +671,7 @@ mod tests {
         assert_eq!((out.exit, &out.json["uploaded"]), (0, &json!(2)), "{}", out.json);
         assert_eq!((sent(&mock, "POST", ""), sent(&mock, "GET", "")), (1, 1));
         let bound = Asset { id: Some(77), hash: Some(hash("x")), ..Asset::default() };
-        assert_eq!((record(&root, "art/a.glb"), record(&root, "art/b.glb")), (Some(bound.clone()), Some(bound)));
+        assert_eq!((record(&root, "art/a.mp4"), record(&root, "art/b.mp4")), (Some(bound.clone()), Some(bound)));
 
         // the import's parts are the id's, so a rename binding it takes them along
         let part =
@@ -699,18 +680,18 @@ mod tests {
         {
             let guard = RemoteGuard::acquire(&Cache { dir: root.join(".cache") }).unwrap();
             let (mut lock, _) = lock::read(&root).unwrap();
-            lock.assets.get_mut("art/a.glb").unwrap().parts = Some(parts.clone());
+            lock.assets.get_mut("art/a.mp4").unwrap().parts = Some(parts.clone());
             lock::save(&mut lock, &root, &guard).unwrap();
         }
-        std::fs::rename(root.join("art/a.glb"), root.join("art/c.glb")).unwrap();
+        std::fs::rename(root.join("art/a.mp4"), root.join("art/c.mp4")).unwrap();
         let out = run(&root, &mock, &stop);
         let counts = ["uploaded", "reused", "unchanged", "dropped"].map(|k| out.json[k].as_u64().unwrap());
         assert_eq!((out.exit, counts, mock.requests().len()), (0, [0, 1, 1, 1], 2));
-        assert_eq!(record(&root, "art/c.glb").map(|r| (r.id, r.parts)), Some((Some(77), Some(parts))));
-        assert_eq!(record(&root, "art/a.glb"), None);
+        assert_eq!(record(&root, "art/c.mp4").map(|r| (r.id, r.parts)), Some((Some(77), Some(parts))));
+        assert_eq!(record(&root, "art/a.mp4"), None);
 
         // a discovery error sends nothing and keeps every record, even of files that look gone
-        std::fs::rename(root.join("art/c.glb"), root.join("art/c.txt")).unwrap();
+        std::fs::rename(root.join("art/c.mp4"), root.join("art/c.txt")).unwrap();
         let before = std::fs::read_to_string(root.join(lock::FILE)).unwrap();
         let out = run(&root, &mock, &stop);
         assert_eq!((out.exit, &out.json["code"], mock.requests().len()), (2, &json!("asset.unsupported"), 2));
@@ -720,47 +701,47 @@ mod tests {
 
     #[test]
     fn a_refused_create_clears_its_intent_and_a_lost_answer_keeps_it_until_adopted() {
-        let root = project("lost", &[("a.glb", "x")]);
+        let root = project("lost", &[("a.mp4", "x")]);
         let mock = Mock::bind(0, Some(auto())).unwrap();
         let stop = AtomicBool::new(false);
         mock.on("POST", "assets/v1/assets", Reply::json(400, &json!({ "code": "INVALID_ARGUMENT" })));
         let out = run(&root, &mock, &stop);
         assert_eq!((out.exit, &out.json["failed"][0]["code"]), (1, &json!("cloud.http")));
-        assert_eq!(record(&root, "art/a.glb"), None);
+        assert_eq!(record(&root, "art/a.mp4"), None);
 
         mock.on("POST", "assets/v1/assets", Reply::Reset);
         let out = run(&root, &mock, &stop);
-        assert_eq!((out.exit, &out.json["ambiguous"]), (1, &json!(["art/a.glb"])));
+        assert_eq!((out.exit, &out.json["ambiguous"]), (1, &json!(["art/a.mp4"])));
         let lost = Asset { next: Some(hash("x")), ..Asset::default() };
-        assert_eq!(record(&root, "art/a.glb"), Some(lost));
+        assert_eq!(record(&root, "art/a.mp4"), Some(lost));
         // nothing can say whether it happened, so nothing is sent until the user does, a copy of it included
-        std::fs::write(root.join("art/b.glb"), "x").unwrap();
+        std::fs::write(root.join("art/b.mp4"), "x").unwrap();
         let out = run(&root, &mock, &stop);
         assert_eq!((out.exit, &out.json["code"], sent(&mock, "POST", "")), (1, &json!("asset.ambiguous"), 2));
-        assert_eq!(out.json["ambiguous"], json!(["art/a.glb", "art/b.glb"]));
+        assert_eq!(out.json["ambiguous"], json!(["art/a.mp4", "art/b.mp4"]));
 
-        assert_eq!(adopt(&root, "art/a.glb", None).exit, 0);
+        assert_eq!(adopt(&root, "art/a.mp4", None).exit, 0);
         let out = run(&root, &mock, &stop);
         assert_eq!((out.exit, &out.json["uploaded"], sent(&mock, "POST", "")), (0, &json!(2), 3));
-        assert_eq!(adopt(&root, "art/a.glb", Some(5)).json["code"], "asset.adopt");
+        assert_eq!(adopt(&root, "art/a.mp4", Some(5)).json["code"], "asset.adopt");
         let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A merge's ambiguous create hides behind the other branch's id until something picks it; adopt finds it anyway.
     #[test]
     fn adopt_settles_an_ambiguous_create_a_merge_left_beside_an_older_id() {
-        let root = project("adopt-merged", &[("a.glb", "y")]);
+        let root = project("adopt-merged", &[("a.mp4", "y")]);
         let (x, y) = (hash("x"), hash("y"));
         let lock = format!(
-            "version = 1\ncreator = {{ user = 1 }}\nassets.\"art/a.glb\" = {{ id = 5, hash = \"{x}\" }}\n\
-             assets.\"art/a.glb\" = {{ next = \"{y}\" }}\n"
+            "version = 1\ncreator = {{ user = 1 }}\nassets.\"art/a.mp4\" = {{ id = 5, hash = \"{x}\" }}\n\
+             assets.\"art/a.mp4\" = {{ next = \"{y}\" }}\n"
         );
         std::fs::write(root.join(lock::FILE), lock).unwrap();
-        assert_eq!(adopt(&root, "art/a.glb", Some(77)).exit, 0);
+        assert_eq!(adopt(&root, "art/a.mp4", Some(77)).exit, 0);
         let mock = Mock::bind(0, Some(auto())).unwrap();
         let out = run(&root, &mock, &stop_flag());
         assert_eq!((out.exit, &out.json["unchanged"], mock.requests().len()), (0, &json!(1), 0), "{}", out.json);
-        assert_eq!(record(&root, "art/a.glb").and_then(|r| r.id), Some(77));
+        assert_eq!(record(&root, "art/a.mp4").and_then(|r| r.id), Some(77));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -768,42 +749,42 @@ mod tests {
     /// rather than dropping it with the old name and sending the content again.
     #[test]
     fn an_ambiguous_upload_follows_its_file_through_a_rename() {
-        let root = project("renamed", &[("a.glb", "x")]);
+        let root = project("renamed", &[("a.mp4", "x")]);
         let mock = Mock::bind(0, Some(auto())).unwrap();
         mock.on("POST", "assets/v1/assets", Reply::Reset);
-        assert_eq!(run(&root, &mock, &stop_flag()).json["ambiguous"], json!(["art/a.glb"]));
-        std::fs::rename(root.join("art/a.glb"), root.join("art/b.glb")).unwrap();
+        assert_eq!(run(&root, &mock, &stop_flag()).json["ambiguous"], json!(["art/a.mp4"]));
+        std::fs::rename(root.join("art/a.mp4"), root.join("art/b.mp4")).unwrap();
         for _ in 0..2 {
             let out = run(&root, &mock, &stop_flag());
             assert_eq!(
                 (&out.json["ambiguous"], &out.json["dropped"]),
-                (&json!(["art/b.glb"]), &json!(0)),
+                (&json!(["art/b.mp4"]), &json!(0)),
                 "{}",
                 out.json
             );
         }
-        assert_eq!(adopt(&root, "art/b.glb", Some(9)).exit, 0);
-        assert_eq!((record(&root, "art/b.glb").and_then(|r| r.id), sent(&mock, "POST", "")), (Some(9), 1));
+        assert_eq!(adopt(&root, "art/b.mp4", Some(9)).exit, 0);
+        assert_eq!((record(&root, "art/b.mp4").and_then(|r| r.id), sent(&mock, "POST", "")), (Some(9), 1));
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn a_crash_after_the_create_resumes_its_operation_and_identical_files_join_it() {
-        let root = project("resume", &[("a.glb", "x"), ("b.glb", "x"), ("c.glb", "x")]);
+        let root = project("resume", &[("a.mp4", "x"), ("b.mp4", "x"), ("c.mp4", "x")]);
         let h = hash("x");
         let lock = format!(
-            "version = 1\ncreator = {{ user = 1 }}\nassets.\"art/a.glb\" = {{ next = \"{h}\", op = \"operations/7\" }}\n\
-             assets.\"art/b.glb\" = {{ next = \"{h}\", op = \"operations/7\" }}\n"
+            "version = 1\ncreator = {{ user = 1 }}\nassets.\"art/a.mp4\" = {{ next = \"{h}\", op = \"operations/7\" }}\n\
+             assets.\"art/b.mp4\" = {{ next = \"{h}\", op = \"operations/7\" }}\n"
         );
         std::fs::write(root.join(lock::FILE), lock).unwrap();
-        let out = adopt(&root, "art/a.glb", Some(5));
+        let out = adopt(&root, "art/a.mp4", Some(5));
         assert!(out.json["error"].as_str().unwrap().contains("`opossum upload` resumes it"), "{}", out.json);
         let mock = Mock::bind(0, Some(auto())).unwrap();
         mock.on("GET", "assets/v1/operations/7", done(7, 55));
         let out = run(&root, &mock, &stop_flag());
         assert_eq!((out.exit, &out.json["uploaded"]), (0, &json!(3)), "{}", out.json);
         assert_eq!((sent(&mock, "POST", ""), sent(&mock, "GET", "")), (0, 1));
-        for file in ["art/a.glb", "art/b.glb", "art/c.glb"] {
+        for file in ["art/a.mp4", "art/b.mp4", "art/c.mp4"] {
             assert_eq!(record(&root, file).and_then(|r| r.id), Some(55));
         }
         let _ = std::fs::remove_dir_all(&root);
@@ -813,26 +794,26 @@ mod tests {
     /// create of the file's current content is in flight: that create is resumed, never sent again.
     #[test]
     fn a_folded_back_upload_in_flight_wins_over_the_older_id_and_is_resumed() {
-        let root = project("fold", &[("a.glb", "y")]);
+        let root = project("fold", &[("a.mp4", "y")]);
         let (x, y) = (hash("x"), hash("y"));
         let lock = format!(
-            "version = 1\ncreator = {{ user = 1 }}\nassets.\"art/a.glb\" = {{ id = 5, hash = \"{x}\" }}\n\
-             assets.\"art/a.glb\" = {{ id = 5, hash = \"{x}\", next = \"{y}\", op = \"operations/7\" }}\n"
+            "version = 1\ncreator = {{ user = 1 }}\nassets.\"art/a.mp4\" = {{ id = 5, hash = \"{x}\" }}\n\
+             assets.\"art/a.mp4\" = {{ id = 5, hash = \"{x}\", next = \"{y}\", op = \"operations/7\" }}\n"
         );
         std::fs::write(root.join(lock::FILE), lock).unwrap();
         let mock = Mock::bind(0, Some(auto())).unwrap();
         mock.on("GET", "assets/v1/operations/7", done(7, 55));
         let out = run(&root, &mock, &stop_flag());
         assert_eq!((out.exit, sent(&mock, "POST", ""), sent(&mock, "GET", "")), (0, 0, 1), "{}", out.json);
-        assert_eq!(record(&root, "art/a.glb"), Some(Asset { id: Some(55), hash: Some(y), ..Asset::default() }));
+        assert_eq!(record(&root, "art/a.mp4"), Some(Asset { id: Some(55), hash: Some(y), ..Asset::default() }));
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn four_uploads_run_at_once_and_a_file_that_fails_its_checks_fails_alone() {
-        let files: Vec<(String, String)> = (0..6).map(|i| (format!("{i}.glb"), i.to_string())).collect();
+        let files: Vec<(String, String)> = (0..6).map(|i| (format!("{i}.mp4"), i.to_string())).collect();
         let mut files: Vec<(&str, &str)> = files.iter().map(|(f, t)| (f.as_str(), t.as_str())).collect();
-        files.push(("empty.glb", ""));
+        files.push(("empty.mp4", ""));
         let root = project("flight", &files);
         let mock = Mock::start();
         // the first four answer only once four are in flight; a fifth at once would show in the peak
@@ -851,7 +832,7 @@ mod tests {
         assert_eq!((out.exit, &out.json["uploaded"], mock.peak()), (1, &json!(6), 4), "{}", out.json);
         assert_eq!(
             out.json["failed"],
-            json!([{ "file": "art/empty.glb", "code": "asset.tooLarge",
+            json!([{ "file": "art/empty.mp4", "code": "asset.tooLarge",
             "error": "the file is empty; Roblox takes no empty asset" }])
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -859,7 +840,7 @@ mod tests {
 
     #[test]
     fn a_refused_key_or_a_stop_sends_nothing_new_and_finishes_what_is_in_flight() {
-        let files: Vec<(String, String)> = (0..6).map(|i| (format!("{i}.glb"), i.to_string())).collect();
+        let files: Vec<(String, String)> = (0..6).map(|i| (format!("{i}.mp4"), i.to_string())).collect();
         let files: Vec<(&str, &str)> = files.iter().map(|(f, t)| (f.as_str(), t.as_str())).collect();
         let root = project("halt", &files);
         let refuse: cloud::mock::Fallback = Box::new(|_| Reply::json(401, &json!({ "message": "bad key" })));
@@ -898,7 +879,7 @@ mod tests {
     /// uploads already in flight need settling by hand.
     #[test]
     fn a_lost_answer_sends_nothing_new() {
-        let files: Vec<(String, String)> = (0..12).map(|i| (format!("{i}.glb"), i.to_string())).collect();
+        let files: Vec<(String, String)> = (0..12).map(|i| (format!("{i}.mp4"), i.to_string())).collect();
         let files: Vec<(&str, &str)> = files.iter().map(|(f, t)| (f.as_str(), t.as_str())).collect();
         let root = project("lost-net", &files);
         let mock = Mock::bind(0, Some(Box::new(|_| Reply::Reset))).unwrap();
@@ -914,7 +895,7 @@ mod tests {
 
     #[test]
     fn a_lock_git_rewrote_mid_upload_is_recovered_instead_of_overwritten() {
-        let root = project("git", &[("a.glb", "x")]);
+        let root = project("git", &[("a.mp4", "x")]);
         let lock = root.join(lock::FILE);
         let mock = Mock::start();
         mock.on(
@@ -929,58 +910,21 @@ mod tests {
         assert_eq!((out.exit, &out.json["code"]), (1, &json!("lock.changedOnDisk")));
         assert_eq!(std::fs::read_to_string(root.join(lock::FILE)).unwrap(), "version = 1\n");
         let recovered = std::fs::read_to_string(root.join(".opossum/opossum.lock.recovered")).unwrap();
-        assert!(recovered.contains(&format!("\"art/a.glb\" = {{ id = 9, hash = \"{}\" }}", hash("x"))), "{recovered}");
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn a_changed_fbx_is_updated_in_place_unless_another_file_holds_its_id() {
-        let root = project("fbx", &[("model.fbx", "new"), ("alias.fbx", "old")]);
-        let old = assets::hash(".fbx", ImageOptions::DEFAULT, b"old");
-        let lock = format!(
-            "version = 1\ncreator = {{ user = 1 }}\nassets.\"art/alias.fbx\" = {{ id = 9001, hash = \"{old}\" }}\n\
-             assets.\"art/model.fbx\" = {{ id = 9001, hash = \"{old}\" }}\n"
-        );
-        std::fs::write(root.join(lock::FILE), lock).unwrap();
-        let mock = Mock::bind(0, Some(auto())).unwrap();
-        let out = run(&root, &mock, &stop_flag());
-        assert_eq!((out.exit, sent(&mock, "POST", "assets/v1/assets"), sent(&mock, "PATCH", "")), (0, 1, 0));
-        let split = record(&root, "art/model.fbx").and_then(|r| r.id).unwrap();
-        assert_ne!(split, 9001);
-        assert_eq!(record(&root, "art/alias.fbx").and_then(|r| r.id), Some(9001));
-
-        std::fs::write(root.join("art/model.fbx"), "newer").unwrap();
-        let out = run(&root, &mock, &stop_flag());
-        assert_eq!((out.exit, sent(&mock, "POST", "assets/v1/assets"), sent(&mock, "PATCH", "")), (0, 1, 1));
-        assert_eq!(
-            mock.requests().iter().find(|r| r.method == "PATCH").unwrap().path,
-            format!("assets/v1/assets/{split}")
-        );
-        let newer = assets::hash(".fbx", ImageOptions::DEFAULT, b"newer");
-        assert_eq!(
-            record(&root, "art/model.fbx"),
-            Some(Asset { id: Some(split), hash: Some(newer), ..Asset::default() })
-        );
-
-        // a copy gets an asset of its own: on another branch, the next in-place update would change it unseen
-        std::fs::write(root.join("art/copy.fbx"), "newer").unwrap();
-        let out = run(&root, &mock, &stop_flag());
-        assert_eq!((out.exit, sent(&mock, "POST", "assets/v1/assets")), (0, 2));
-        assert!(record(&root, "art/copy.fbx").and_then(|r| r.id).is_some_and(|id| id != split));
+        assert!(recovered.contains(&format!("\"art/a.mp4\" = {{ id = 9, hash = \"{}\" }}", hash("x"))), "{recovered}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Every moderation hit counts against the account, so refused bytes stay unsent until the user says otherwise.
     #[test]
     fn content_roblox_refused_is_not_sent_again_until_it_changes_or_the_refusal_is_forgotten() {
-        let root = project("rejected", &[("a.glb", "x")]);
+        let root = project("rejected", &[("a.mp4", "x")]);
         let mock = Mock::bind(0, Some(auto())).unwrap();
         let rejected = json!({ "path": "operations/1", "done": true,
                                "response": { "assetId": 5, "moderationResult": { "moderationState": "Rejected" } } });
         mock.on("POST", "assets/v1/assets", Reply::json(200, &rejected));
         let out = run(&root, &mock, &stop_flag());
         assert_eq!((out.exit, &out.json["failed"][0]["code"]), (1, &json!("asset.moderated")));
-        assert_eq!(record(&root, "art/a.glb"), Some(Asset { rejected: Some(hash("x")), ..Asset::default() }));
+        assert_eq!(record(&root, "art/a.mp4"), Some(Asset { rejected: Some(hash("x")), ..Asset::default() }));
 
         let out = run(&root, &mock, &stop_flag());
         assert_eq!(
@@ -988,14 +932,14 @@ mod tests {
             (1, &json!("asset.rejected"), 1)
         );
         // the refusal is the content's: a rename or a copy carries it, and forgetting it on one forgets it for all
-        std::fs::rename(root.join("art/a.glb"), root.join("art/b.glb")).unwrap();
-        std::fs::write(root.join("art/c.glb"), "x").unwrap();
+        std::fs::rename(root.join("art/a.mp4"), root.join("art/b.mp4")).unwrap();
+        std::fs::write(root.join("art/c.mp4"), "x").unwrap();
         let out = run(&root, &mock, &stop_flag());
         assert_eq!((out.exit, &out.json["dropped"], sent(&mock, "POST", "")), (1, &json!(1), 1), "{}", out.json);
         assert_eq!(out.json["failed"].as_array().unwrap().len(), 2);
-        std::fs::remove_file(root.join("art/c.glb")).unwrap();
-        assert_eq!(adopt(&root, "art/b.glb", None).exit, 0);
-        assert_eq!(record(&root, "art/b.glb"), None);
+        std::fs::remove_file(root.join("art/c.mp4")).unwrap();
+        assert_eq!(adopt(&root, "art/b.mp4", None).exit, 0);
+        assert_eq!(record(&root, "art/b.mp4"), None);
         let out = run(&root, &mock, &stop_flag());
         assert_eq!((out.exit, sent(&mock, "POST", "")), (0, 2));
         let _ = std::fs::remove_dir_all(&root);
