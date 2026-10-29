@@ -1033,6 +1033,7 @@ fn rewrite_sources(plan: &mut Plan, generated: &str, modules: &[(String, String)
     let skip = plan.root.join(generated);
     sources(&plan.root.join("src"), &skip, &mut files);
     let needle = generated.rsplit('/').next().unwrap_or(generated);
+    let mut resources = false;
     for path in files {
         let Ok(text) = fs::read_to_string(&path) else { continue };
         if !text.contains(HEXAGON) && (modules.is_empty() || !text.contains(needle)) {
@@ -1064,7 +1065,15 @@ fn rewrite_sources(plan: &mut Plan, generated: &str, modules: &[(String, String)
             out.replace_range(start..end, target);
         }
         plan.imports += edits.len();
+        resources |= edits.iter().any(|(_, _, target)| target == "opossum/resources");
         plan.sources.push((path, out));
+    }
+    if resources {
+        plan.notes.push(
+            "opossum/resources calls tessera's gamePasses, developerProducts and experienceThumbnails passes, \
+             products and thumbnails; code that reads them takes the new names"
+                .into(),
+        );
     }
 }
 
