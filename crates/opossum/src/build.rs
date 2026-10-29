@@ -353,15 +353,20 @@ impl Session {
         files
     }
 
+    /// Whether `src/` holds TypeScript. A project without (Luau, or assets and a place alone) has no program to
+    /// check: its globals need the Roblox types, which only TypeScript needs installed.
+    fn ts(&self) -> bool {
+        self.scan.modules.iter().any(|m| matches!(m.kind, route::Kind::Ts | route::Kind::Tsx))
+    }
+
     /// Loads the program afresh (parsed files come from the session's cache), routes the package files it reached
     /// and gathers the packages to mount.
     fn load(&self) -> Result<Project, String> {
         // without them no global exists (Array, print, Instance), and every file fails a dozen ways that hide why
-        let ts = self.scan.modules.iter().any(|m| matches!(m.kind, route::Kind::Ts | route::Kind::Tsx));
         let types = ["@rbxts/compiler-types", "@rbxts/types"];
         let missing: Vec<&str> =
             types.into_iter().filter(|p| !self.cfg.root.join("node_modules").join(p).is_dir()).collect();
-        if ts && !missing.is_empty() {
+        if self.ts() && !missing.is_empty() {
             return Err(format!(
                 "node_modules has no {}: install the Roblox types as dev dependencies (`bun add -d {}`, or your \
                  package manager's add)",
@@ -520,7 +525,7 @@ impl Session {
         let file_of = |name: &str| PathBuf::from(name);
         let t = Instant::now();
         let ctx = tsrs_compiler::Context::background();
-        let checked = project.check(&ctx, files);
+        let checked = if self.ts() { project.check(&ctx, files) } else { Vec::new() };
         stats.time("check", t);
         stats.checked = files.len();
         let names: FxHashSet<&str> = files.iter().map(|f| f.file_name()).collect();
@@ -847,5 +852,31 @@ mod tests {
         write("art/sfx/bang.ogg", "ogg");
         assert_eq!(session.render_modules().unwrap(), Changed::Types);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A project of a place alone, with no source, no routes and no node_modules, checks clean: it has no program
+    /// whose globals would need the Roblox types.
+    #[test]
+    fn a_place_alone_checks_clean() {
+        let root = std::env::temp_dir().join(format!("opossum-build-place-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("place/workspace")).unwrap();
+        std::fs::write(root.join("opossum.toml"), "name = \"place\"\n").unwrap();
+        std::fs::write(root.join("place/workspace/crate.model.json"), r#"{ "className": "Part" }"#).unwrap();
+        let cfg = crate::config::load(&root.join("opossum.toml")).unwrap();
+        let (diags, tree) = std::thread::Builder::new()
+            .stack_size(lower::STACK_SIZE)
+            .spawn(move || {
+                let mut session = Session::new(cfg, None, None).unwrap();
+                session.build().unwrap();
+                let tree = session.tree(false);
+                (session.diagnostics(), tree)
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(diags.is_empty(), "{diags:?}");
+        assert!(tree.find("Workspace/crate").is_some());
     }
 }

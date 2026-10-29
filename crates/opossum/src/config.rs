@@ -280,9 +280,6 @@ pub(crate) fn parse(text: &str, root: PathBuf) -> Result<Config, String> {
     if config.name.is_empty() {
         return Err("`name` is missing".into());
     }
-    if config.routes.is_empty() {
-        return Err("[routes] declares no route".into());
-    }
     // the TypeScript flag names are lower's to check: fail here rather than at the first build
     lower::compiler_options("/", &config.ts)?;
     link(&mut config)?;

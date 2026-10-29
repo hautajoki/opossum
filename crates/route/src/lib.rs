@@ -350,6 +350,13 @@ pub fn route(routes: &Routes, rel: &Path, module_dirs: &HashSet<PathBuf>) -> Res
     let (route, via) = match (governing, routes.fallback) {
         (Some((r, via, _)), _) => (r, via),
         (None, Some(f)) => (f, Via::Fallback),
+        (None, None) if routes.list.is_empty() => {
+            return Err(diag(
+                Code::Unrouted,
+                rel,
+                "no route matches: [routes] declares none, so source has nowhere to go".into(),
+            ));
+        }
         (None, None) => {
             let keys: Vec<&str> = routes.list.iter().map(|r| r.key.as_str()).collect();
             return Err(diag(
