@@ -34,10 +34,6 @@ use diag::Diag;
 use guard::{Cache, RemoteGuard};
 use serde_json::{Value, json};
 
-/// Roblox's Open Cloud: the only place a request goes, unless `OPOSSUM_OPEN_CLOUD_URL` points it at a mock on this
-/// machine.
-const ROBLOX: &str = "https://apis.roblox.com";
-
 #[global_allocator]
 static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 
@@ -447,13 +443,13 @@ fn adopt(file: &Path, cwd: &Path, what: &Adopted, id: Option<u64>) -> Outcome {
     }
 }
 
-/// The Open Cloud client with the project's API key, refused without one. `OPOSSUM_OPEN_CLOUD_URL` may point it at
-/// `http://127.0.0.1:<port>` or `http://localhost:<port>` (the mock, for end-to-end checks) and nowhere else, so the
-/// variable can never send the key off the machine.
+/// The Open Cloud client with the project's API key, refused without one. `OPOSSUM_OPEN_CLOUD_URL` may point it at a
+/// [`cloud::loopback`] mock (for end-to-end checks) and nowhere else, so the variable can never send the key off the
+/// machine.
 fn open_cloud(root: &Path) -> Result<Client, Outcome> {
     let base = match std::env::var("OPOSSUM_OPEN_CLOUD_URL") {
-        Err(std::env::VarError::NotPresent) => ROBLOX.to_owned(),
-        Ok(url) if loopback(&url) => url,
+        Err(std::env::VarError::NotPresent) => cloud::ROBLOX.to_owned(),
+        Ok(url) if cloud::loopback(&url) => url,
         _ => {
             let error = "OPOSSUM_OPEN_CLOUD_URL must be http://127.0.0.1:<port> or http://localhost:<port>";
             return Err(Outcome::refused("cloud.baseUrl", error.into()));
@@ -464,12 +460,6 @@ fn open_cloud(root: &Path) -> Result<Client, Outcome> {
         return Err(Outcome::refused("cloud.credentials", error.into()));
     };
     Client::new(&key, &base, Clock::Real).map_err(|error| Outcome::refused("cloud.credentials", error))
-}
-
-/// `http://127.0.0.1:<port>` or `http://localhost:<port>`, nothing more.
-fn loopback(url: &str) -> bool {
-    let rest = url.strip_prefix("http://127.0.0.1:").or_else(|| url.strip_prefix("http://localhost:"));
-    rest.is_some_and(|port| port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok_and(|p| p > 0))
 }
 
 /// A session for the one-shot commands, with the editor's files written for its modules.

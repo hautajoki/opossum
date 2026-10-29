@@ -39,6 +39,9 @@ const ERROR_LIMIT: u64 = 64 << 10;
 /// The place save's op name: its 409 means the place is open in Studio.
 const SAVE_PLACE: &str = "save place";
 
+/// Roblox's Open Cloud: the only base a client sends to, besides the mock on this machine ([`loopback`]).
+pub const ROBLOX: &str = "https://apis.roblox.com";
+
 /// Time for retries and polls. A `Fake` sleeps by moving its own clock forward, so tests record every wait and never
 /// block; one is shared by every thread of a test.
 pub enum Clock {
@@ -145,18 +148,14 @@ pub(crate) struct Call<'a> {
 }
 
 impl Client {
-    /// The only constructor. `base` is `https://<host>`, or `http://` only to 127.0.0.1 or localhost (the mock), so the
-    /// key can never travel in clear text off the machine. The real base URL is spelled once, in opossum's main.rs.
+    /// The only constructor. `base` is [`ROBLOX`] or a [`loopback`] mock, so a client can talk to nothing else.
     pub fn new(key: &str, base: &str, clock: Clock) -> Result<Client, String> {
         let key = key.trim();
         if key.is_empty() || !key.bytes().all(|b| b.is_ascii_graphic()) {
             return Err("the Open Cloud API key is empty or holds characters an HTTP header cannot carry".into());
         }
-        let base = base.trim().trim_end_matches('/');
-        if !base_ok(base) {
-            return Err(format!(
-                "the Open Cloud base URL {base:?} must be https://<host>, or http://127.0.0.1:<port> or http://localhost:<port>"
-            ));
+        if base != ROBLOX && !loopback(base) {
+            return Err(format!("the Open Cloud base URL {base:?} is not {ROBLOX} or a loopback mock"));
         }
         let timeouts = Timeouts {
             connect: Duration::from_secs(10),
@@ -344,17 +343,10 @@ fn kind(e: &ureq::Error) -> ErrorKind {
     }
 }
 
-fn base_ok(base: &str) -> bool {
-    if let Some(host) = base.strip_prefix("https://") {
-        return !host.is_empty()
-            && host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b':');
-    }
-    let Some(rest) = base.strip_prefix("http://") else { return false };
-    let (host, port) = rest.split_once(':').unwrap_or((rest, "0"));
-    (host == "127.0.0.1" || host == "localhost")
-        && !port.is_empty()
-        && port.len() <= 5
-        && port.bytes().all(|b| b.is_ascii_digit())
+/// `http://127.0.0.1:<port>` or `http://localhost:<port>`, nothing more: where the mock listens.
+pub fn loopback(base: &str) -> bool {
+    let port = base.strip_prefix("http://127.0.0.1:").or_else(|| base.strip_prefix("http://localhost:"));
+    port.is_some_and(|port| port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok_and(|p| p > 0))
 }
 
 impl Error {
@@ -672,24 +664,23 @@ mod tests {
     }
 
     #[test]
-    fn only_https_or_loopback_http_carries_the_key() {
-        for base in
-            ["https://apis.roblox.com", "https://apis.roblox.com/", "http://127.0.0.1:4100", "http://localhost:80"]
-        {
+    fn a_client_talks_to_roblox_or_a_loopback_mock_and_nothing_else() {
+        for base in [ROBLOX, "http://127.0.0.1:4100", "http://localhost:80"] {
             assert!(Client::new("k", base, Clock::Real).is_ok(), "{base}");
         }
         for base in [
             "http://apis.roblox.com",
-            "http://127.0.0.1.evil.com",
-            "https://user@host",
-            "https://h/path",
-            "ftp://x",
+            "https://apis.roblox.com.evil.com",
+            "http://127.0.0.1.evil.com:80",
+            "http://127.0.0.1:80/x",
+            "http://localhost:0",
+            "https://h",
             "",
         ] {
             assert!(Client::new("k", base, Clock::Real).is_err(), "{base}");
         }
-        assert!(Client::new(" \n", "https://h", Clock::Real).is_err());
-        assert!(Client::new("a\r\nX: y", "https://h", Clock::Real).is_err());
+        assert!(Client::new(" \n", ROBLOX, Clock::Real).is_err());
+        assert!(Client::new("a\r\nX: y", ROBLOX, Clock::Real).is_err());
     }
 
     #[test]
