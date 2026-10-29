@@ -10,8 +10,10 @@
 
 mod assets;
 pub mod mock;
+mod places;
 
 pub use assets::{AssetKind, Creator, MAX_ASSET, OPERATION_DEADLINE, Operation, Upload};
+pub use places::MAX_PLACE;
 
 use std::fmt;
 use std::io::Read;
