@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use luau::vm::Vm;
 use serde_json::{Value, json};
@@ -30,9 +30,9 @@ pub struct LocalOptions {
     pub codegen: bool,
 }
 
-/// Runs the project's local suites: the aggregate report, and what each file printed (`(label, output)`, files that
-/// printed nothing left out), in file order. Test files run on a thread per core; bench files one at a time with
-/// nothing else running, so timings do not share cores.
+/// Runs the project's local suites: the aggregate report, its duration the run's wall-clock time, and what each file
+/// printed (`(label, output)`, files that printed nothing left out), in file order. Test files run on a thread per
+/// core; bench files one at a time with nothing else running, so timings do not share cores.
 pub fn run_local(root: &Path, opts: &LocalOptions) -> Result<(Value, Vec<(String, String)>), String> {
     let suffix = match opts.mode {
         Mode::Test => ".local.spec.luau",
@@ -42,6 +42,7 @@ pub fn run_local(root: &Path, opts: &LocalOptions) -> Result<(Value, Vec<(String
     discover(root, "src", suffix, &mut files)?;
     files.sort();
 
+    let started = Instant::now();
     let mut results = run_files(root, &files, opts, false)?;
     let focused: Vec<String> = files
         .iter()
@@ -62,6 +63,8 @@ pub fn run_local(root: &Path, opts: &LocalOptions) -> Result<(Value, Vec<(String
         // a focused run discovered every file's cases, not only the focused files'
         report["discovered"] = discovered.into();
     }
+    // the files ran side by side, so the sum of their durations is not how long the run took
+    report["duration_seconds"] = started.elapsed().as_secs_f64().into();
     let outputs = files.into_iter().zip(results).filter(|(_, (_, out))| !out.is_empty()).map(|(f, (_, o))| (f, o));
     Ok((report, outputs.collect()))
 }
