@@ -32,8 +32,8 @@ struct Group {
 }
 
 enum Job {
-    /// Upload the compiled file.
-    Send { compiled: Compiled, name: String },
+    /// Upload the compiled file, or put it into the FBX asset `update` in place.
+    Send { compiled: Compiled, name: String, update: Option<u64> },
     /// Wait on the operation of an upload an earlier run started.
     Resume(String),
 }
@@ -69,7 +69,8 @@ struct Report {
 }
 
 /// `opossum upload`: hash every asset file, bind files whose content the lock already has an id for, upload the rest
-/// as new assets, resume uploads earlier runs left in flight, and drop the records of files that are gone. A file that fails its checks or its upload fails alone. Exit 1 when anything
+/// (an FBX whose id no other file holds is updated in place), resume uploads earlier runs left in flight, and drop
+/// the records of files that are gone. A file that fails its checks or its upload fails alone. Exit 1 when anything
 /// failed, stayed pending or is ambiguous; 2 when nothing was sent (errors in the config, the lock or the roots).
 pub fn upload(cfg: &Config, client: &Client, guard: &RemoteGuard, stop: &AtomicBool) -> Outcome {
     let root = &cfg.root;
@@ -143,7 +144,8 @@ pub fn upload(cfg: &Config, client: &Client, guard: &RemoteGuard, stop: &AtomicB
                 Ok(compiled) => {
                     let a = &found[members[0]];
                     let name = a.key.rsplit('/').next().unwrap_or(&a.key).to_owned();
-                    Job::Send { compiled, name }
+                    let update = in_place(&lock, a, &compiled, members.len());
+                    Job::Send { compiled, name, update }
                 }
                 Err(d) => {
                     for &m in &members {
@@ -240,6 +242,18 @@ fn compile(cfg: &Config, a: &File, hash: &str) -> Result<Compiled, Diag> {
     assets::compile(&path, &a.ext, image, bytes)
 }
 
+/// The id a changed FBX model replaces in place: Roblox lets only FBX content change. Only when the file is alone in
+/// its group and no other file holds its id, so one file's change never silently changes another's (copy-on-write: a
+/// shared id splits off a new asset instead).
+fn in_place(lock: &Lock, a: &File, compiled: &Compiled, members: usize) -> Option<u64> {
+    if a.ext != ".fbx" || compiled.kind != cloud::AssetKind::Model || members != 1 {
+        return None;
+    }
+    let id = lock.assets.get(&a.file)?.id?;
+    let shared = lock.assets.iter().any(|(file, r)| *file != a.file && r.id == Some(id));
+    (!shared).then_some(id)
+}
+
 /// Records a group's intent on every member before its request: `next` for a send, `next` and the operation for
 /// files joining a resumed one.
 fn intent(lock: &mut Lock, g: &Group, found: &[File]) {
@@ -288,8 +302,9 @@ fn save(lock: &mut Lock, root: &Path, guard: &RemoteGuard, broken: &mut Option<D
 fn progress(g: &Group, found: &[File]) {
     let file = &found[g.members[0]].file;
     let verb = match g.job {
-        Job::Send { .. } => "uploading",
-        Job::Resume(_) => "waiting on the upload of",
+        Job::Send { update: Some(id), .. } => format!("updating {id} with"),
+        Job::Send { .. } => "uploading".into(),
+        Job::Resume(_) => "waiting on the upload of".into(),
     };
     let more = match g.members.len() {
         1 => String::new(),
@@ -302,7 +317,7 @@ fn progress(g: &Group, found: &[File]) {
 fn work(client: &Client, creator: cloud::Creator, g: &Group, audio: bool, stop: &AtomicBool, send: &dyn Fn(Event)) {
     let op = match &g.job {
         Job::Resume(op) => op.clone(),
-        Job::Send { compiled, name } => {
+        Job::Send { compiled, name, update } => {
             if stop.load(Ordering::SeqCst) {
                 return send(Event::NotSent);
             }
@@ -314,7 +329,11 @@ fn work(client: &Client, creator: cloud::Creator, g: &Group, audio: bool, stop: 
                 mime: compiled.mime,
                 bytes: &compiled.bytes,
             };
-            match client.create_asset(&upload) {
+            let sent = match update {
+                Some(id) => client.update_asset(*id, &upload),
+                None => client.create_asset(&upload),
+            };
+            match sent {
                 Err(e) => return send(Event::Failed(e)),
                 Ok(op) => {
                     send(Event::Created(op.path.clone()));
@@ -740,6 +759,37 @@ mod tests {
         assert_eq!(std::fs::read_to_string(root.join(lock::FILE)).unwrap(), "version = 1\n");
         let recovered = std::fs::read_to_string(root.join(".opossum/opossum.lock.recovered")).unwrap();
         assert!(recovered.contains(&format!("\"art/a.glb\" = {{ id = 9, hash = \"{}\" }}", hash("x"))), "{recovered}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_changed_fbx_is_updated_in_place_unless_another_file_holds_its_id() {
+        let root = project("fbx", &[("model.fbx", "new"), ("alias.fbx", "old")]);
+        let old = assets::hash(".fbx", ImageOptions::DEFAULT, b"old");
+        let lock = format!(
+            "version = 1\ncreator = {{ user = 1 }}\n[assets]\n\"art/alias.fbx\" = {{ id = 9001, hash = \"{old}\" }}\n\
+             \"art/model.fbx\" = {{ id = 9001, hash = \"{old}\" }}\n"
+        );
+        std::fs::write(root.join(lock::FILE), lock).unwrap();
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!((out.exit, sent(&mock, "POST", "assets/v1/assets"), sent(&mock, "PATCH", "")), (0, 1, 0));
+        let split = record(&root, "art/model.fbx").and_then(|r| r.id).unwrap();
+        assert_ne!(split, 9001);
+        assert_eq!(record(&root, "art/alias.fbx").and_then(|r| r.id), Some(9001));
+
+        std::fs::write(root.join("art/model.fbx"), "newer").unwrap();
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!((out.exit, sent(&mock, "POST", "assets/v1/assets"), sent(&mock, "PATCH", "")), (0, 1, 1));
+        assert_eq!(
+            mock.requests().iter().find(|r| r.method == "PATCH").unwrap().path,
+            format!("assets/v1/assets/{split}")
+        );
+        let newer = assets::hash(".fbx", ImageOptions::DEFAULT, b"newer");
+        assert_eq!(
+            record(&root, "art/model.fbx"),
+            Some(Asset { id: Some(split), hash: Some(newer), ..Asset::default() })
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }
