@@ -761,6 +761,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// Folding `.opossum/opossum.lock.recovered` back (or a union merge) leaves the old record beside the one whose
+    /// create of the file's current content is in flight: that create is resumed, never sent again.
+    #[test]
+    fn a_folded_back_upload_in_flight_wins_over_the_older_id_and_is_resumed() {
+        let root = project("fold", &[("a.glb", "y")]);
+        let (x, y) = (hash("x"), hash("y"));
+        let lock = format!(
+            "version = 1\ncreator = {{ user = 1 }}\nassets.\"art/a.glb\" = {{ id = 5, hash = \"{x}\" }}\n\
+             assets.\"art/a.glb\" = {{ id = 5, hash = \"{x}\", next = \"{y}\", op = \"operations/7\" }}\n"
+        );
+        std::fs::write(root.join(lock::FILE), lock).unwrap();
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        mock.on("GET", "assets/v1/operations/7", done(7, 55));
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!((out.exit, sent(&mock, "POST", ""), sent(&mock, "GET", "")), (0, 0, 1), "{}", out.json);
+        assert_eq!(record(&root, "art/a.glb"), Some(Asset { id: Some(55), hash: Some(y), ..Asset::default() }));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn four_uploads_run_at_once_and_a_file_that_fails_its_checks_fails_alone() {
         let files: Vec<(String, String)> = (0..6).map(|i| (format!("{i}.glb"), i.to_string())).collect();

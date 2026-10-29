@@ -212,11 +212,13 @@ pub fn parse(text: &str, file: &Path) -> (Lock, Vec<Diag>) {
 }
 
 /// Which of a merge's records for one file holds (§2.4): with the file's current hash, one whose id holds that
-/// content; then the highest id with no create in flight, since Roblox ids grow; then the first create in flight.
+/// content, then one whose create in flight sends it (resumed or settled, never sent again); then the highest id with
+/// no create in flight, since Roblox ids grow; then the first create in flight.
 fn pick<'a>(all: &'a [Asset], hash: Option<&str>) -> &'a Asset {
     let holds = |a: &&Asset| a.id.is_some() && hash.is_some() && a.hash.as_deref() == hash;
     all.iter()
         .find(holds)
+        .or_else(|| all.iter().find(|a| hash.is_some() && a.next.as_deref() == hash))
         .or_else(|| all.iter().filter(|a| a.id.is_some() && a.next.is_none()).max_by_key(|a| a.id))
         .or_else(|| all.iter().find(|a| a.next.is_some()))
         .unwrap_or(&all[0])
@@ -226,8 +228,8 @@ fn pick<'a>(all: &'a [Asset], hash: Option<&str>) -> &'a Asset {
 /// command that hashed the file keeps.
 fn merged_warning(root: &Path, file: &str, a: &Asset, settled: bool) -> Diag {
     let used = match a.id {
-        Some(id) => format!("id {id}"),
-        None => "the upload in flight".to_owned(),
+        Some(id) if !(settled && a.next.is_some()) => format!("id {id}"),
+        _ => "the upload in flight".to_owned(),
     };
     let message = match settled {
         true => format!("{file} had several records after a merge; keeping {used}"),
