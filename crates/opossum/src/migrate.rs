@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use cloud::{AssetKind, Creator};
+use cloud::AssetKind;
 use globset::GlobSet;
 use media::{ImageOptions, Preset};
 use tsrs_ast::{Kind, Node, SourceFileParseOptions};
@@ -851,8 +851,13 @@ fn import_lock(
         if let (Some(theirs), Some(ours)) = (r.creator, cfg.creator)
             && theirs != ours
         {
-            let message =
-                format!("{} was uploaded as {} but {} says {}", a.file, name(theirs), config::FILE, name(ours));
+            let message = format!(
+                "{} was uploaded as {} but {} says {}",
+                a.file,
+                lock::creator_name(theirs),
+                config::FILE,
+                lock::creator_name(ours)
+            );
             diags.push(refuse("migrate.lock", message));
             continue;
         }
@@ -952,13 +957,6 @@ fn import_lock(
     line.push(')');
     let changed_text = lock::render(&lock) != before || !root.join(lock::FILE).exists();
     Some((lock, line, changed_text))
-}
-
-fn name(c: Creator) -> String {
-    match c {
-        Creator::User(id) => format!("user:{id}"),
-        Creator::Group(id) => format!("group:{id}"),
-    }
 }
 
 /// `<set>/<logical path>` → project file, as tessera discovered them: every regular file under the root (dot-files

@@ -351,7 +351,8 @@ fn link(config: &mut Config) -> Result<(), String> {
     Ok(())
 }
 
-fn creator(value: &toml::Value) -> Result<Creator, String> {
+/// `{ user = <id> }` or `{ group = <id> }`, in opossum.toml and opossum.lock alike.
+pub fn creator(value: &toml::Value) -> Result<Creator, String> {
     const RULE: &str = "`creator` must be { user = <id> } or { group = <id> }";
     let entries: Vec<_> = value.as_table().ok_or(RULE)?.iter().collect();
     let [(kind, id)] = entries[..] else { return Err(RULE.into()) };

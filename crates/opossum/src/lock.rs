@@ -150,7 +150,7 @@ pub fn parse(text: &str, file: &Path) -> (Lock, Vec<Diag>) {
                 }
                 None => Err("`version` must be an integer".to_owned()),
             },
-            "creator" => creator(&value).map(|c| match lock.creator {
+            "creator" => crate::config::creator(&value).map(|c| match lock.creator {
                 Some(old) if old != c && !lock.other_creators.contains(&c) => lock.other_creators.push(c),
                 Some(_) => {}
                 _ => lock.creator = Some(c),
@@ -287,22 +287,11 @@ impl Lock {
     }
 }
 
-fn creator_name(c: Creator) -> String {
+/// `user:7`, as messages name a creator.
+pub fn creator_name(c: Creator) -> String {
     match c {
         Creator::User(id) => format!("user:{id}"),
         Creator::Group(id) => format!("group:{id}"),
-    }
-}
-
-fn creator(v: &toml::Value) -> Result<Creator, String> {
-    let bad = || "`creator` must be { user = <id> } or { group = <id> }".to_owned();
-    let table = v.as_table().filter(|t| t.len() == 1).ok_or_else(bad)?;
-    let (kind, id) = table.iter().next().ok_or_else(bad)?;
-    let id = positive(id, kind).map_err(|_| bad())?;
-    match kind.as_str() {
-        "user" => Ok(Creator::User(id)),
-        "group" => Ok(Creator::Group(id)),
-        _ => Err(bad()),
     }
 }
 
