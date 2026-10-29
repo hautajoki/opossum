@@ -69,6 +69,8 @@ pub struct Source {
     pub path: String,
     pub ext: String,
     pub bytes: Vec<u8>,
+    /// The preset of its purpose: the size it goes up at, and the name its hash carries.
+    pub preset: Preset,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -117,7 +119,7 @@ pub fn catalog(cfg: &Config) -> Result<Vec<Want>, String> {
         let bytes = std::fs::read(cfg.root.join(path)).map_err(|e| format!("{path}: {e}"))?;
         let ext = path.rfind('.').map_or(String::new(), |dot| path[dot..].to_ascii_lowercase());
         let hash = assets::hash(&ext, ImageOptions { preset, bleed: true }, &bytes);
-        Ok((hash, Some(Source { path: path.to_owned(), ext, bytes })))
+        Ok((hash, Some(Source { path: path.to_owned(), ext, bytes, preset })))
     };
     let mut wants = Vec::new();
     for (kind, sales, preset) in
@@ -314,8 +316,8 @@ pub fn prepare(
     let mut images = Vec::with_capacity(ops.len());
     for op in ops {
         let image = match (op.want.map(|i| &wants[i]), sends_image(op)) {
-            (Some(Want { image: Some(Source { path, ext, bytes }), .. }), true) => {
-                let fitted = fit(op.kind, ext, bytes).map_err(|e| ("resource.image", format!("{path}: {e}")))?;
+            (Some(Want { image: Some(source), .. }), true) => {
+                let fitted = fit(source).map_err(|e| ("resource.image", format!("{}: {e}", source.path)))?;
                 Some(fitted)
             }
             _ => None,
@@ -381,11 +383,14 @@ pub fn prepare(
     Ok(images)
 }
 
-/// An icon (512 by 512, whole) or a thumbnail (1920 by 1080, filled), bled, as the bytes that go up.
-fn fit(kind: Kind, ext: &str, bytes: &[u8]) -> Result<(&'static str, Vec<u8>), String> {
-    let (w, h, how) = if kind == Kind::Thumbnail { (1920, 1080, Fit::Cover) } else { (512, 512, Fit::Contain) };
+/// An image at its preset's size, bled, as the bytes that go up: an icon whole, a thumbnail filling the carousel's
+/// frame. The preset in its hash names both, since each preset has one purpose here.
+fn fit(source: &Source) -> Result<(&'static str, Vec<u8>), String> {
+    let Source { ext, bytes, preset, .. } = source;
+    let (w, h) = preset.size().expect("a resource image's preset has a size");
+    let how = if *preset == Preset::Thumbnail { Fit::Cover } else { Fit::Contain };
     match media::fit(ext, bytes, w, h, how)? {
-        media::Image::Unchanged { .. } => Ok((media::mime(ext).unwrap_or("image/png"), bytes.to_vec())),
+        media::Image::Unchanged { .. } => Ok((media::mime(ext).unwrap_or("image/png"), bytes.clone())),
         media::Image::Png { bytes, .. } => Ok(("image/png", bytes)),
     }
 }
