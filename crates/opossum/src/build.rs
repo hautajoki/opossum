@@ -70,13 +70,14 @@ impl Stats {
     }
 }
 
-/// What rendering the id modules again changed.
+/// What rendering the id modules again changed, the strongest of: their types (a file came or went: the program
+/// loads again, and the tree changes shape), what `$asset` references resolve to (a new id or read: the tree is made
+/// again, the modules' sources with it), their sources or diagnostics (the tree takes the sources).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Changed {
     Nothing,
-    /// Their sources or diagnostics (a new id): the tree takes the sources.
     Sources,
-    /// Their types (a file came or went): the program loads again, and the tree changes shape.
+    Place,
     Types,
 }
 
@@ -90,6 +91,10 @@ pub struct Session {
     module_diags: Vec<Diag>,
     /// The lock's texture packs, read with the modules: every place write sets them.
     pub packs: place::TexturePacks,
+    /// What `$asset` references resolve to, read with the modules: every tree resolves the place with it.
+    resolver: place::Resolver,
+    /// The files whose `$asset`s the last [`Session::render_modules`] gave new uploaded content.
+    pub drawn: Vec<PathBuf>,
     /// The asset files discovery found, relative to the root: an event on one that is still there changed its
     /// content, never the modules.
     pub asset_files: FxHashSet<String>,
@@ -115,7 +120,7 @@ pub struct Session {
     global_diags: Vec<Diag>,
     route_diags: Vec<Diag>,
     pub place_diags: Vec<Diag>,
-    /// Problems mounting scripts and packages into the tree.
+    /// Problems resolving `$asset`s and mounting scripts and packages into the tree, made again with each tree.
     mount_diags: Vec<Diag>,
     pub packages: Vec<(Package, Vec<place::PackageFile>)>,
     /// Luau sources by file, with the modification time and size they were read at: a change the watcher reports
@@ -199,6 +204,8 @@ impl Session {
             modules: Vec::new(),
             module_diags: Vec::new(),
             packs: place::TexturePacks::new(),
+            resolver: place::Resolver::default(),
+            drawn: Vec::new(),
             asset_files: FxHashSet::default(),
             exclude,
             native,
@@ -228,8 +235,9 @@ impl Session {
         Ok(session)
     }
 
-    /// Renders the virtual modules again from the lock and the asset roots as they are now, and takes the lock's packs,
-    /// saying what changed (packs never change the modules or the tree). Fails only when the lock cannot be read.
+    /// Renders the virtual modules again from the lock and the asset roots as they are now, and takes the lock's packs
+    /// and `$asset` resolver, saying what changed (packs never change the modules or the tree). Fails only when the
+    /// lock cannot be read.
     pub fn render_modules(&mut self) -> Result<Changed, String> {
         let root = &self.cfg.root;
         let environment = self.cfg.build_environment(self.environment.as_deref())?;
@@ -246,11 +254,27 @@ impl Session {
                 diags.push(d);
             }
         }
-        self.asset_files = found.into_iter().map(|a| a.file).collect();
+        self.asset_files = found.iter().map(|a| a.file.clone()).collect();
+        let resolver = ids::resolver(&lock, &found);
         let types = |m: &[Module]| m.iter().map(|m| (m.name.clone(), m.types.clone())).collect::<Vec<_>>();
         let sources = |m: &[Module]| m.iter().map(|m| m.luau.clone()).collect::<Vec<_>>();
+        self.drawn = self.place.as_ref().map_or_else(Vec::new, |place| {
+            let mut drawn: Vec<PathBuf> = place
+                .asset_refs()
+                .filter(|(file, _)| {
+                    let now = resolver.by_file.get(*file);
+                    now != self.resolver.by_file.get(*file) && !matches!(now, None | Some(place::Value::Unset))
+                })
+                .map(|(_, spec)| spec.to_path_buf())
+                .collect();
+            drawn.sort();
+            drawn.dedup();
+            drawn
+        });
         let changed = if types(&modules) != types(&self.modules) {
             Changed::Types
+        } else if resolver != self.resolver {
+            Changed::Place
         } else if sources(&modules) != sources(&self.modules) || diags != self.module_diags {
             Changed::Sources
         } else {
@@ -259,6 +283,7 @@ impl Session {
         self.modules = modules;
         self.module_diags = diags;
         self.packs = lock.packs;
+        self.resolver = resolver;
         Ok(changed)
     }
 
@@ -637,9 +662,9 @@ impl Session {
         Some(scopes == [dir])
     }
 
-    /// A fresh tree of the whole DataModel: `place/` with its properties files, every routed module, the packages
-    /// and the runtime. With `shapes`, a TypeScript module with no output mounts empty (the sourcemap needs only the
-    /// tree).
+    /// A fresh tree of the whole DataModel: `place/` with its properties files and `$asset`s resolved, every routed
+    /// module, the packages and the runtime. With `shapes`, a TypeScript module with no output mounts empty (the
+    /// sourcemap needs only the tree).
     pub fn tree(&mut self, shapes: bool) -> place::Tree {
         let dir = self.cfg.root.join("place");
         if self.place.is_none() {
@@ -651,9 +676,10 @@ impl Session {
             self.place_diags = place_diags.iter().map(diag::from_place).collect();
             self.place = Some(place);
         }
+        let place = self.place.as_mut().expect("read above");
+        let mut diags: Vec<Diag> = place.resolve_assets(&self.resolver).iter().map(diag::from_place).collect();
         let mut tree = place::Tree::new();
-        tree.add_place(self.place.as_ref().expect("read above"));
-        let mut diags = Vec::new();
+        tree.add_place(place);
         let runtime = self.needs_runtime();
         let modules = std::mem::take(&mut self.scan.modules);
         for m in &modules {
@@ -760,7 +786,8 @@ mod tests {
     use super::*;
 
     /// The id modules build like any module, and what an edit under an asset root or to the lock changes decides how
-    /// dev takes it: a new id only sets sources, a file coming or going loads the program again, new bytes nothing.
+    /// dev takes it: a new id makes the tree again (a `$asset` may name it), a file coming or going loads the program
+    /// again, new bytes nothing.
     #[test]
     fn id_modules_build_and_say_what_an_edit_changed() {
         let root = std::env::temp_dir().join(format!("opossum-build-ids-{}", std::process::id()));
@@ -804,7 +831,7 @@ mod tests {
         write("art/sfx/boom.ogg", "new bytes");
         assert_eq!(session.render_modules().unwrap(), Changed::Nothing);
         write("opossum.lock", &lock(6));
-        assert_eq!(session.render_modules().unwrap(), Changed::Sources);
+        assert_eq!(session.render_modules().unwrap(), Changed::Place);
         write("art/sfx/bang.ogg", "ogg");
         assert_eq!(session.render_modules().unwrap(), Changed::Types);
         std::fs::remove_dir_all(&root).unwrap();

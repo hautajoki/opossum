@@ -73,6 +73,10 @@ pub enum Event<'a> {
     Assets {
         changed: &'a [String],
     },
+    /// opossum.lock gave these place files' `$asset`s new uploaded content.
+    Drawn {
+        files: &'a [PathBuf],
+    },
     /// A config file changed: the session starts over.
     Restart {
         file: &'a str,
@@ -167,6 +171,11 @@ impl Event<'_> {
                     changed.join(", ")
                 )
             }
+            Event::Drawn { files } => {
+                let names: Vec<String> = files.iter().map(|f| shown(root, f)).collect();
+                let them = if files.len() == 1 { "file now draws" } else { "files now draw" };
+                format!("place: {} {them} uploaded content ({})", files.len(), names.join(", "))
+            }
             Event::Restart { file } => format!("{file} changed, starting over"),
             Event::Error { message, .. } => format!("opossum: {message}"),
         }
@@ -237,6 +246,10 @@ impl Event<'_> {
                 "error": error,
             }),
             Event::Assets { changed } => json!({"t": "assets", "changed": changed, "run": "opossum upload"}),
+            Event::Drawn { files } => {
+                let files: Vec<String> = files.iter().map(|f| shown(root, f)).collect();
+                json!({"t": "drawn", "files": files})
+            }
             Event::Restart { file } => json!({"t": "restart", "file": file}),
             Event::Error { message, fatal } => json!({"t": "error", "message": message, "fatal": fatal}),
         }

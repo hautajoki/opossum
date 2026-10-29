@@ -5,6 +5,9 @@
 //! (`[assets]`, uploaded rather than built) and other loose top-level files are not content. Rojo's formats,
 //! `*.meta.json` files and `Rojo_Id` / `Rojo_Target_<Property>` attributes, are errors that `opossum migrate` converts.
 //!
+//! A property written `{"$asset": "<project path>", "part": "<part>"}` names an uploaded file's content: the reader
+//! keeps it aside and [`Place::resolve_assets`] sets it from opossum.lock before every tree is made.
+//!
 //! `dev` keeps the [`Place`] it read and re-reads only the entry a file event touched ([`Place::replace_entry`]).
 //! Entry order is not kept in the dom: a re-read entry lands last among its siblings, so [`Place::entry_name`] gives
 //! the tree its directory order back.
@@ -13,17 +16,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rbx_dom_weak::types::{Ref, Variant};
-use rbx_dom_weak::ustr;
-use rbx_dom_weak::{InstanceBuilder, WeakDom};
-use rbx_reflection::ClassTag;
+use rbx_dom_weak::types::{Content, ContentId, Ref, Variant, VariantType, Vector3};
+use rbx_dom_weak::{InstanceBuilder, Ustr, WeakDom, ustr};
+use rbx_reflection::{ClassTag, DataType};
 use serde_json::Value;
 
 use crate::properties::{self, PlaceEntry, is_properties_file, read_properties};
 use crate::props;
 use crate::tree::NESTED;
 use crate::value::{self, Resolved, db};
-use crate::{Diag, Severity};
+use crate::{Channel, Diag, Resolver, Severity, Value as Asset};
 
 /// What `place/` holds, as a DataModel, with the file each instance came from.
 pub struct Place {
@@ -33,6 +35,8 @@ pub struct Place {
     entries: HashMap<Ref, String>,
     /// Every Ref property read, resolved or not, so a re-read entry can resolve the refs into it again.
     refs: Vec<RefSpec>,
+    /// Every `$asset` property, by holder and the name its value is stored under.
+    assets: HashMap<(Ref, Ustr), AssetSpec>,
 }
 
 /// A Ref property as written in a model file or a properties file: a path from its holder.
@@ -43,6 +47,15 @@ struct RefSpec {
     file: PathBuf,
     /// Why it does not resolve, or None when it does.
     error: Option<String>,
+}
+
+/// A `$asset` property as written in a model file or a properties file.
+struct AssetSpec {
+    property: &'static str,
+    /// The project path it names.
+    file: String,
+    part: Option<String>,
+    spec_file: PathBuf,
 }
 
 impl Default for Place {
@@ -58,6 +71,7 @@ impl Place {
             files: HashMap::new(),
             entries: HashMap::new(),
             refs: Vec::new(),
+            assets: HashMap::new(),
         }
     }
 
@@ -324,6 +338,8 @@ impl Place {
         }
         // what pointed into the forgotten instances now dangles; properties refs are read again with their files
         r.place.refs.retain(|s| s.file.parent() != Some(dir) && r.place.dom.get_by_ref(s.holder).is_some());
+        let dom = &r.place.dom;
+        r.place.assets.retain(|(holder, _), s| s.spec_file.parent() != Some(dir) && dom.get_by_ref(*holder).is_some());
         let props = read_properties(dir, &mut r.diags);
         r.apply(properties::base());
         r.apply(&props.entries);
@@ -369,6 +385,130 @@ impl Place {
             .collect()
     }
 
+    /// The `$asset` references: the project path each names, and the file that names it.
+    pub fn asset_refs(&self) -> impl Iterator<Item = (&str, &Path)> {
+        self.assets.values().map(|s| (s.file.as_str(), s.spec_file.as_path()))
+    }
+
+    /// Sets every `$asset` property from `resolver` (a glb part's mesh also sets its MeshPart's `InitialSize`, the
+    /// size that mesh was made at), and reports the references that do not resolve and every literal
+    /// `rbxassetid://` repeating an id the lock holds. Runs before each tree is made from the place: one resolver
+    /// gives one dom however often it runs.
+    pub fn resolve_assets(&mut self, resolver: &Resolver) -> Vec<Diag> {
+        let mut diags = Vec::new();
+        let mut writes = Vec::with_capacity(self.assets.len());
+        for (&(holder, stored), spec) in &self.assets {
+            let Some(class) = self.dom.get_by_ref(holder).map(|i| i.class) else { continue };
+            let file = &spec.file;
+            let empty = Some((String::new(), None));
+            let resolved = match (resolver.by_file.get(file), &spec.part) {
+                (None, _) => {
+                    let near = resolver.by_file.keys().min_by_key(|f| crate::distance(f, file));
+                    let hint = near.map(|f| format!("; did you mean {f}?")).unwrap_or_default();
+                    let message = format!("{file} is no file under an asset root{hint}");
+                    diags.push(Diag::error("place.unknownAsset", &spec.spec_file, message));
+                    None
+                }
+                (Some(Asset::Id(id)), _) => Some((format!("rbxassetid://{id}"), None)),
+                (Some(Asset::Parts(parts)), Some(name)) => {
+                    let channel = Channel::of(spec.property).expect("the reader takes `part` only on a mesh or map");
+                    match parts.get(name) {
+                        Some(part) => match part.get(channel) {
+                            Some(id) => {
+                                let size = (channel == Channel::Mesh).then_some(part.size);
+                                Some((format!("rbxassetid://{id}"), size))
+                            }
+                            None => {
+                                let message = format!("{file} part {name} has no {} map", channel.name());
+                                diags.push(Diag::warning("place.unknownPart", &spec.spec_file, message));
+                                empty
+                            }
+                        },
+                        None => {
+                            let names: Vec<&str> = parts.keys().map(String::as_str).collect();
+                            let message = format!(
+                                "{file} has no part {name} yet ({}): `opossum upload` if {file} changed",
+                                names.join(", ")
+                            );
+                            diags.push(Diag::warning("place.unknownPart", &spec.spec_file, message));
+                            empty
+                        }
+                    }
+                }
+                // not uploaded, or uploaded and not read back: the file's own `asset.*` warning says so, once
+                _ => empty,
+            };
+            writes.push((holder, class, stored, spec.property, resolved));
+        }
+        for (holder, class, stored, property, resolved) in writes {
+            let Some(inst) = self.dom.get_by_ref_mut(holder) else { continue };
+            inst.properties.remove(&stored);
+            let Some((uri, size)) = resolved else { continue };
+            if let Some((name, value)) = content(&class, property, &uri) {
+                inst.properties.insert(name, value);
+            }
+            if let Some([x, y, z]) = size
+                && props::is_a(&class, "MeshPart")
+            {
+                inst.properties.insert(ustr("InitialSize"), Variant::Vector3(Vector3::new(x, y, z)));
+            }
+        }
+        if !resolver.by_id.is_empty() {
+            diags.extend(self.pasted_ids(resolver));
+        }
+        // one per file and problem: a missing part's mesh and maps are one warning
+        diags.sort_by(|a, b| (&a.path, &a.message).cmp(&(&b.path, &b.message)));
+        diags.dedup();
+        diags
+    }
+
+    /// `place.pastedId` for every Content or ContentId, `$asset`s aside, that spells an id the lock holds.
+    fn pasted_ids(&self, resolver: &Resolver) -> Vec<Diag> {
+        let mut diags = Vec::new();
+        for inst in self.dom.descendants() {
+            for (name, value) in &inst.properties {
+                let uri = match value {
+                    Variant::Content(c) => c.as_uri(),
+                    Variant::ContentId(c) => Some(c.as_str()),
+                    _ => None,
+                };
+                let Some(id) = uri.and_then(|u| u.strip_prefix("rbxassetid://")?.parse::<u64>().ok()) else {
+                    continue;
+                };
+                let Some((file, part)) = resolver.by_id.get(&id) else { continue };
+                if self.assets.contains_key(&(inst.referent(), *name)) {
+                    continue;
+                }
+                let (what, write) = match part {
+                    Some((part, Channel::Mesh)) => {
+                        (format!("{file} part {part}'s mesh"), format!(", \"part\": \"{part}\""))
+                    }
+                    Some((part, channel)) => {
+                        (format!("{file} part {part}'s {} map", channel.name()), format!(", \"part\": \"{part}\""))
+                    }
+                    None => (file.clone(), String::new()),
+                };
+                let at = self.path_of(inst.referent());
+                let message =
+                    format!("{at}.{name} = `rbxassetid://{id}` is {what}: write `{{\"$asset\": \"{file}\"{write}}}`");
+                diags.push(Diag::error("place.pastedId", self.source_of(inst.referent()), message));
+            }
+        }
+        diags
+    }
+
+    /// The file an instance or its nearest ancestor was read from, else (what a properties file made) its path.
+    fn source_of(&self, r: Ref) -> PathBuf {
+        let mut at = r;
+        while let Some(inst) = self.dom.get_by_ref(at) {
+            if let Some(file) = self.files.get(&at) {
+                return file.clone();
+            }
+            at = inst.parent();
+        }
+        PathBuf::from(self.path_of(r))
+    }
+
     /// Destroys an instance and its subtree, with their files.
     fn forget(&mut self, r: Ref) {
         for inst in self.dom.descendants_of(r) {
@@ -377,6 +517,19 @@ impl Place {
         }
         self.dom.destroy(r);
     }
+}
+
+/// `uri` as `class.name` holds it (a ContentId, or a Content that is none when empty), under the name a place dom
+/// stores it.
+fn content(class: &str, name: &str, uri: &str) -> Option<(Ustr, Variant)> {
+    let content_id =
+        value::descriptor(class, name).is_some_and(|p| matches!(p.data_type, DataType::Value(VariantType::ContentId)));
+    let value = match (content_id, uri) {
+        (true, _) => Variant::ContentId(ContentId::from(uri)),
+        (false, "") => Variant::Content(Content::none()),
+        (false, _) => Variant::Content(Content::from_uri(uri)),
+    };
+    props::node_prop(class, ustr(name), value)
 }
 
 /// The instance a directory entry makes: a directory's own name, a file's name without its content extension.
@@ -543,8 +696,8 @@ impl Reader<'_> {
         }
         if let Value::Object(props) = &json["properties"] {
             for (prop, value) in props {
-                if let Err(e) = self.set_property(r, class, prop, value, file) {
-                    self.diags.push(Diag::error("place.badProperty", file, format!("{name}.{prop}: {e}")));
+                if let Err((code, e)) = self.set_property(r, class, prop, value, file) {
+                    self.diags.push(Diag::error(code, file, format!("{name}.{prop}: {e}")));
                 }
             }
         }
@@ -568,17 +721,37 @@ impl Reader<'_> {
 
     /// Sets `class.prop` from its JSON, stored under the name rbx_binary serializes (`MeshId` as `MeshContent`), with
     /// the name it was written under removed: rbx_binary writes the newer name when an instance holds both, so an
-    /// overlay's `MeshId` would lose to the `MeshContent` an rbxm entry already holds.
-    fn set_property(&mut self, r: Ref, class: &str, prop: &str, json: &Value, file: &Path) -> Result<(), String> {
-        match value::property(class, prop, json)? {
+    /// overlay's `MeshId` would lose to the `MeshContent` an rbxm entry already holds. A `$asset` is kept aside with
+    /// the value cleared, and a value set later (a properties file over a model file) replaces it. Fails with the
+    /// diagnostic's code: `place.assetKind` for a `$asset`, else `place.badProperty`.
+    fn set_property(
+        &mut self,
+        r: Ref,
+        class: &str,
+        prop: &str,
+        json: &Value,
+        file: &Path,
+    ) -> Result<(), (&'static str, String)> {
+        let code = if json.get("$asset").is_some() { "place.assetKind" } else { "place.badProperty" };
+        match value::property(class, prop, json).map_err(|e| (code, e))? {
             (name, Resolved::Value(v)) => {
                 let stored = props::node_prop(class, ustr(name), v);
                 if let Some(inst) = self.place.dom.get_by_ref_mut(r) {
                     inst.properties.remove(&ustr(name));
                     if let Some((name, v)) = stored {
+                        self.place.assets.remove(&(r, name));
                         inst.properties.insert(name, v);
                     }
                 }
+            }
+            (name, Resolved::Asset { file: asset, part }) => {
+                let stored = content(class, name, "").map_or(ustr(name), |(stored, _)| stored);
+                if let Some(inst) = self.place.dom.get_by_ref_mut(r) {
+                    inst.properties.remove(&ustr(name));
+                    inst.properties.remove(&stored);
+                }
+                let spec = AssetSpec { property: name, file: asset, part, spec_file: file.to_path_buf() };
+                self.place.assets.insert((r, stored), spec);
             }
             (name, Resolved::Ref(path)) => {
                 self.refs.push(RefSpec { holder: r, property: name, path, file: file.to_path_buf(), error: None })
@@ -672,8 +845,8 @@ impl Reader<'_> {
             }
             let class = inst.class.to_string();
             for (prop, json) in &entry.props {
-                if let Err(e) = self.set_property(r, &class, prop, json, toml) {
-                    self.diags.push(Diag::error("place.badProperty", toml, format!("{}.{prop}: {e}", entry.path)));
+                if let Err((code, e)) = self.set_property(r, &class, prop, json, toml) {
+                    self.diags.push(Diag::error(code, toml, format!("{}.{prop}: {e}", entry.path)));
                 }
             }
         }

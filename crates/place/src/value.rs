@@ -17,11 +17,13 @@ pub fn is_class(name: &str) -> bool {
     db().classes.contains_key(name)
 }
 
-/// A property value: either a variant, or a Ref written as an instance path relative to its holder, resolved
-/// once the whole tree exists.
+/// A property value: a variant, a Ref written as an instance path relative to its holder, resolved once the whole
+/// tree exists, or an uploaded file's content (`{"$asset": "<project path>", "part": "<part>"}`), set from opossum.lock
+/// by [`crate::Place::resolve_assets`].
 pub enum Resolved {
     Value(Variant),
     Ref(String),
+    Asset { file: String, part: Option<String> },
 }
 
 /// The canonical descriptor of `class.name`, looked up through superclasses and aliases.
@@ -44,6 +46,9 @@ pub fn property(class: &str, name: &str, json: &Value) -> Result<(&'static str, 
     let Some(prop) = descriptor(class, name) else {
         return Err(format!("{class} has no property {name}"));
     };
+    if json.get("$asset").is_some() {
+        return asset(prop, json).map(|r| (prop.name, r));
+    }
     let resolved = match (&prop.data_type, json) {
         (DataType::Value(VariantType::Ref), Value::String(path)) => Resolved::Ref(path.clone()),
         (DataType::Enum(enum_name), Value::String(item)) => {
@@ -58,6 +63,33 @@ pub fn property(class: &str, name: &str, json: &Value) -> Result<(&'static str, 
         (data_type, json) => Resolved::Value(value(data_type.ty(), json)?),
     };
     Ok((prop.name, resolved))
+}
+
+/// A `$asset` reference, as far as its property and spelling say: it sits on a Content or ContentId property beside
+/// nothing but `part`; `part` sits only on a mesh or one of the four maps; a `.glb` always has a `part` and a `part`
+/// always names a `.glb`. Whether the file exists is the resolver's to say.
+fn asset(prop: &PropertyDescriptor, json: &Value) -> Result<Resolved, String> {
+    let Value::Object(fields) = json else { unreachable!("only an object holds `$asset`") };
+    let file = fields["$asset"].as_str().ok_or("`$asset` is a project path, as a string")?;
+    if !matches!(prop.data_type, DataType::Value(VariantType::Content | VariantType::ContentId)) {
+        return Err(format!("{} is not a Content property, so it takes no `$asset`", prop.name));
+    }
+    if let Some(key) = fields.keys().find(|k| !matches!(k.as_str(), "$asset" | "part")) {
+        return Err(format!("`$asset` takes nothing beside `part`, not `{key}`"));
+    }
+    let part = match fields.get("part") {
+        None => None,
+        Some(Value::String(part)) => Some(part.clone()),
+        Some(_) => return Err("`part` is a part name, as a string".into()),
+    };
+    match (&part, crate::is_glb(file), crate::Channel::of(prop.name)) {
+        (None, true, _) => Err(format!("{file} is a model: name the part, as `\"part\": \"<name>\"`")),
+        (Some(_), false, _) => Err(format!("`part` names a part of a .glb, and {file} is not one")),
+        (Some(_), true, None) => {
+            Err(format!("{} takes no `part`: only a mesh and the four maps come from one", prop.name))
+        }
+        _ => Ok(Resolved::Asset { file: file.to_owned(), part }),
+    }
 }
 
 /// An attribute value: booleans, numbers (as Float64) and strings by shorthand, anything else fully qualified.

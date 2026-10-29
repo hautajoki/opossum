@@ -342,14 +342,19 @@ fn serve(
         if !edited.is_empty() {
             out.emit(&Event::Assets { changed: &edited });
         }
-        // the id modules: new types load the program again, new sources (or warnings) only publish
+        // the id modules: new types load the program again, what `$asset`s resolve to makes the tree again, new
+        // sources (or warnings) only publish
         let mut modules = false;
         if ids {
             match session.render_modules() {
                 Ok(Changed::Nothing) => {}
                 Ok(changed) => {
                     rescan |= changed == Changed::Types;
+                    shape |= changed == Changed::Place;
                     modules = true;
+                    if !session.drawn.is_empty() {
+                        out.emit(&Event::Drawn { files: &session.drawn });
+                    }
                     let cfg = &session.cfg;
                     if let Err(message) = editor::write(&cfg.root, &cfg.ts, &session.modules) {
                         out.emit(&Event::Error { message: &message, fatal: false });

@@ -670,7 +670,7 @@ fn unknown(path: &str) -> String {
     let typed = path.rsplit('.').next().unwrap_or(path);
     let near = KEYS
         .split_whitespace()
-        .map(|k| (distance(&k.to_lowercase(), &typed.to_lowercase()), k))
+        .map(|k| (place::distance(&k.to_lowercase(), &typed.to_lowercase()), k))
         .filter(|&(d, _)| d <= 2)
         .min()
         .filter(|_| !KEYS.split_whitespace().any(|k| k == typed));
@@ -678,21 +678,6 @@ fn unknown(path: &str) -> String {
         Some((_, key)) => format!("unknown key `{path}`; did you mean `{key}`?"),
         None => format!("unknown key `{path}`"),
     }
-}
-
-/// Edits (insert, delete, replace) from `a` to `b`.
-fn distance(a: &str, b: &str) -> usize {
-    let b: Vec<char> = b.chars().collect();
-    let mut row: Vec<usize> = (0..=b.len()).collect();
-    for (i, ca) in a.chars().enumerate() {
-        let mut diagonal = std::mem::replace(&mut row[0], i + 1);
-        for j in 0..b.len() {
-            let above = row[j + 1];
-            row[j + 1] = (diagonal + usize::from(ca != b[j])).min(row[j] + 1).min(above + 1);
-            diagonal = above;
-        }
-    }
-    row[b.len()]
 }
 
 /// The line and column where `text` spells the first `dotted.key` an error names: the deepest of its keys found.

@@ -79,15 +79,23 @@ pub fn modules(
     (modules, diags)
 }
 
+/// Why a glb with an id and no `parts` draws nothing yet.
+pub const UNREAD: &str = "uploaded; the next `opossum upload` reads its parts back, sending nothing";
+
 /// What a build puts in its set's module for `file`: its id from the lock, or `""` before its first upload, with the
-/// warning that says why it is not yet what the files hold.
+/// warning that says why it is not yet what the files hold. A glb whose upload is not read back is pending too: its
+/// parts, which templates draw, are not known yet.
 pub fn value(root: &Path, file: &str, record: Option<&Asset>) -> (String, Option<Diag>) {
     let warn = |code: &str, message: String| Some(Diag::new(code, Severity::Warning, Some(&root.join(file)), message));
     match record {
-        Some(Asset { id: Some(id), next, .. }) => {
-            let pending = next.as_ref().and_then(|_| {
-                warn("asset.pending", "an upload of this file is pending; `opossum upload` finishes it".into())
-            });
+        Some(Asset { id: Some(id), next, parts, .. }) => {
+            let pending = match (next, parts) {
+                (Some(_), _) => {
+                    warn("asset.pending", "an upload of this file is pending; `opossum upload` finishes it".into())
+                }
+                (None, None) if place::is_glb(file) => warn("asset.pending", UNREAD.into()),
+                _ => None,
+            };
             (format!("rbxassetid://{id}"), pending)
         }
         _ => (
@@ -95,6 +103,34 @@ pub fn value(root: &Path, file: &str, record: Option<&Asset>) -> (String, Option
             warn("asset.notUploaded", "not uploaded yet, so its id is \"\"; run `opossum upload`".into()),
         ),
     }
+}
+
+/// What `$asset` references in `place/` resolve to: each discovered file's read parts (a glb) or id (anything else),
+/// and the file, part and channel behind every id the lock holds for them.
+pub fn resolver(lock: &Lock, found: &[assets::Asset]) -> place::Resolver {
+    let mut resolver = place::Resolver::default();
+    for a in found {
+        let record = lock.assets.get(&a.file);
+        let value = match record {
+            Some(Asset { parts: Some(parts), .. }) => place::Value::Parts(parts.clone()),
+            Some(Asset { id: Some(id), .. }) if !place::is_glb(&a.file) => place::Value::Id(*id),
+            _ => place::Value::Unset,
+        };
+        if let Some(id) = record.and_then(|r| r.id) {
+            resolver.by_id.entry(id).or_insert((a.file.clone(), None));
+        }
+        if let place::Value::Parts(parts) = &value {
+            for (name, part) in parts {
+                for channel in place::Channel::ALL {
+                    if let Some(id) = part.get(channel) {
+                        resolver.by_id.entry(id).or_insert_with(|| (a.file.clone(), Some((name.clone(), channel))));
+                    }
+                }
+            }
+        }
+        resolver.by_file.insert(a.file.clone(), value);
+    }
+    resolver
 }
 
 enum Node<'a> {
@@ -322,6 +358,124 @@ export = ids
             .join()
             .unwrap();
         assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    /// A place's `$asset`s against a lock: every way a reference resolves or doesn't (design §4.2), from the lock's
+    /// own lines through the resolver into the dom the tree and rbxl are made from.
+    #[test]
+    fn asset_references_resolve_from_the_lock() {
+        use place::rbx_dom_weak::types::{Content, Vector3};
+        let hash = "0".repeat(32);
+        let text = format!(
+            "version = 1\n\
+             assets.\"art/crate.glb\" = {{ id = 10, hash = \"{hash}\", parts = {{ Lid = {{ mesh = 11, size = [0.4272, \
+             8.0, 1e-7], color = 12 }} }} }}\n\
+             assets.\"art/fresh.glb\" = {{ id = 30, hash = \"{hash}\" }}\n\
+             assets.\"art/stone.png\" = {{ id = 20, hash = \"{hash}\" }}\n"
+        );
+        let (lock, diags) = crate::lock::parse(&text, Path::new("opossum.lock"));
+        assert!(diags.is_empty(), "{diags:?}");
+        let found: Vec<assets::Asset> = ["art/crate.glb", "art/fresh.glb", "art/new.png", "art/stone.png"]
+            .iter()
+            .map(|f| assets::Asset { set: 0, file: f.to_string(), key: String::new(), ext: String::new() })
+            .collect();
+
+        let dir = std::env::temp_dir().join(format!("opossum-ids-assets-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("replicated-storage")).unwrap();
+        let crate_ = |part: &str| format!(r#"{{ "$asset": "art/crate.glb", "part": "{part}" }}"#);
+        let model = format!(
+            r#"{{ "className": "Model", "children": [
+                {{ "name": "Lid", "className": "MeshPart", "properties": {{ "MeshId": {lid} }}, "children": [
+                    {{ "name": "SA", "className": "SurfaceAppearance",
+                       "properties": {{ "ColorMap": {lid}, "MetalnessMap": {lid} }} }}
+                ] }},
+                {{ "name": "Lids", "className": "MeshPart", "properties": {{ "MeshContent": {lids} }} }},
+                {{ "name": "Fresh", "className": "MeshPart",
+                   "properties": {{ "MeshContent": {{ "$asset": "art/fresh.glb", "part": "A" }} }} }},
+                {{ "name": "Stone", "className": "Decal", "properties": {{ "Texture": {{ "$asset": "art/stone.png" }} }} }},
+                {{ "name": "New", "className": "Decal", "properties": {{ "Texture": {{ "$asset": "art/new.png" }} }} }},
+                {{ "name": "Typo", "className": "Decal", "properties": {{ "Texture": {{ "$asset": "art/ston.png" }} }} }},
+                {{ "name": "Kind", "className": "Part", "properties": {{ "Size": {{ "$asset": "art/stone.png" }} }} }},
+                {{ "name": "Bare", "className": "MeshPart", "properties": {{ "MeshContent": {{ "$asset": "art/crate.glb" }} }} }},
+                {{ "name": "Pasted", "className": "Decal", "properties": {{ "Texture": "rbxassetid://12" }} }}
+            ] }}"#,
+            lid = crate_("Lid"),
+            lids = crate_("Lids"),
+        );
+        let file = dir.join("replicated-storage/crate.model.json");
+        std::fs::write(&file, model).unwrap();
+        let (mut place, mut diags) = place::read_place(&dir, &[]);
+        let mut resolver = resolver(&lock, &found);
+        diags.extend(place.resolve_assets(&resolver));
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let prop = |place: &place::Place, path: &str, name: &str| {
+            let at = place.find(&format!("ReplicatedStorage/crate/{path}")).unwrap();
+            place.dom.get_by_ref(at).unwrap().properties.get(&place::ustr(name)).cloned()
+        };
+        let uri = |uri: &str| Some(place::Variant::Content(Content::from_uri(uri)));
+        // a glb part's mesh, with the size it was made at, and its maps
+        assert_eq!(prop(&place, "Lid", "MeshContent"), uri("rbxassetid://11"));
+        assert_eq!(prop(&place, "Lid", "MeshId"), None);
+        assert_eq!(prop(&place, "Lid", "InitialSize"), Some(place::Variant::Vector3(Vector3::new(0.4272, 8.0, 1e-7))));
+        assert_eq!(prop(&place, "Lid/SA", "ColorMapContent"), uri("rbxassetid://12"));
+        // a channel or part the read doesn't have, and an unread glb: drawn empty
+        assert_eq!(prop(&place, "Lid/SA", "MetalnessMapContent"), Some(place::Variant::Content(Content::none())));
+        assert_eq!(prop(&place, "Lids", "MeshContent"), Some(place::Variant::Content(Content::none())));
+        assert_eq!(prop(&place, "Fresh", "MeshContent"), Some(place::Variant::Content(Content::none())));
+        // anything else is its id, or empty before its first upload; a file that isn't there is not set
+        assert_eq!(prop(&place, "Stone", "TextureContent"), uri("rbxassetid://20"));
+        assert_eq!(prop(&place, "New", "TextureContent"), Some(place::Variant::Content(Content::none())));
+        assert_eq!(prop(&place, "Typo", "TextureContent"), None);
+        // a literal id the lock holds is left as written
+        let pasted = Some(place::Variant::Content(Content::from_uri("rbxassetid://12")));
+        assert_eq!(prop(&place, "Pasted", "TextureContent"), pasted);
+
+        let mut got: Vec<(&str, String)> = diags.iter().map(|d| (d.code, d.message.clone())).collect();
+        got.sort();
+        let want = [
+            ("place.assetKind", "Bare.MeshContent: art/crate.glb is a model: name the part, as `\"part\": \"<name>\"`"),
+            ("place.assetKind", "Kind.Size: Size is not a Content property, so it takes no `$asset`"),
+            (
+                "place.pastedId",
+                "ReplicatedStorage/crate/Pasted.TextureContent = `rbxassetid://12` is art/crate.glb part Lid's color \
+                 map: write `{\"$asset\": \"art/crate.glb\", \"part\": \"Lid\"}`",
+            ),
+            ("place.unknownAsset", "art/ston.png is no file under an asset root; did you mean art/stone.png?"),
+            (
+                "place.unknownPart",
+                "art/crate.glb has no part Lids yet (Lid): `opossum upload` if art/crate.glb changed",
+            ),
+            ("place.unknownPart", "art/crate.glb part Lid has no metalness map"),
+        ];
+        assert_eq!(got, want.map(|(c, m)| (c, m.to_owned())));
+
+        // the read lands: resolving again draws it, whatever the dom held
+        let fresh = place::Part {
+            mesh: 31,
+            size: [1.0, 2.0, 3.0],
+            color: None,
+            normal: None,
+            roughness: None,
+            metalness: None,
+        };
+        resolver.by_file.insert("art/fresh.glb".into(), place::Value::Parts([("A".to_owned(), fresh)].into()));
+        place.resolve_assets(&resolver);
+        assert_eq!(prop(&place, "Fresh", "MeshContent"), uri("rbxassetid://31"));
+    }
+
+    /// Only a glb's upload is unread without `parts`: an image with an id is complete.
+    #[test]
+    fn an_unread_glb_is_pending_and_an_image_is_not() {
+        let uploaded = Asset { id: Some(5), hash: Some("0".repeat(32)), ..Asset::default() };
+        let (id, warning) = value(Path::new("/p"), "art/a.png", Some(&uploaded));
+        assert_eq!((id.as_str(), warning), ("rbxassetid://5", None));
+        let (id, warning) = value(Path::new("/p"), "art/a.glb", Some(&uploaded));
+        let warning = warning.unwrap();
+        assert_eq!(
+            (id.as_str(), warning.code.as_str(), warning.message.as_str()),
+            ("rbxassetid://5", "asset.pending", UNREAD)
+        );
     }
 
     #[test]
