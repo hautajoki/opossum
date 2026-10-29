@@ -24,6 +24,14 @@ use crate::{Outcome, canonical_prefix};
 /// Groups in flight at once.
 const WORKERS: usize = 4;
 
+/// Why a run sends nothing new after a worker's answer: Roblox refused the key, or an answer was lost (a dropped
+/// network fails every later create the same way, and each would be one more upload to settle by hand).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Halt {
+    Auth,
+    Lost,
+}
+
 /// Every file needing Roblox with one input hash: they share one upload and one id.
 struct Group {
     hash: String,
@@ -96,7 +104,7 @@ pub fn upload(cfg: &Config, client: &Client, guard: &RemoteGuard, stop: &AtomicB
 /// An upload with no `[assets]`: nothing to do.
 pub fn idle() -> Outcome {
     let text = "nothing to upload: opossum.toml declares no [assets]\n".into();
-    Outcome { text, ..outcome(Report::default(), None, false, false) }
+    Outcome { text, ..outcome(Report::default(), None, None, false) }
 }
 
 /// Everything an upload does before its first request: hash and classify every file against the lock, bind content
@@ -200,14 +208,17 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
     let root = &cfg.root;
     let Prepared { mut lock, found, creator, mut report, groups: ready } = prepared;
     let mut broken = None;
-    let mut auth = false;
+    let mut halt = None;
     let (tx, rx) = mpsc::channel();
     let mut sent = 0;
     let ready = &ready;
     std::thread::scope(|s| {
         let mut flight = 0;
         loop {
-            while flight < WORKERS && sent < ready.len() && !(auth || broken.is_some() || stop.load(Ordering::SeqCst)) {
+            while flight < WORKERS
+                && sent < ready.len()
+                && !(halt.is_some() || broken.is_some() || stop.load(Ordering::SeqCst))
+            {
                 let g = &ready[sent];
                 intent(&mut lock, g, &found);
                 if !save(&mut lock, root, guard, &mut broken) {
@@ -240,15 +251,17 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
             }
             let (i, event) = rx.recv().expect("a worker hung up");
             flight -= usize::from(!matches!(event, Event::Created(_)));
-            auth |= apply(&mut lock, &ready[i], &found, event, &mut report);
+            halt = halt.or(apply(&mut lock, &ready[i], &found, event, &mut report));
             save(&mut lock, root, guard, &mut broken);
         }
     });
     let stopped = stop.load(Ordering::SeqCst);
     let (code, why) = if broken.is_some() {
         ("lock.changedOnDisk", "opossum.lock could not be saved")
-    } else if auth {
+    } else if halt == Some(Halt::Auth) {
         ("cloud.auth", "Roblox refused the API key")
+    } else if halt == Some(Halt::Lost) {
+        ("upload.halted", "an upload's answer was lost, so nothing more was sent")
     } else {
         ("upload.stopped", "opossum was stopped")
     };
@@ -269,7 +282,7 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
     lock.merged.retain(|file, _| files.contains(file.as_str()));
     report.dropped = before - lock.assets.len();
     save(&mut lock, root, guard, &mut broken);
-    outcome(report, broken, auth, stopped)
+    outcome(report, broken, halt, stopped)
 }
 
 /// The bytes a file's upload sends, read again and checked against the hash its group was formed by.
@@ -414,8 +427,8 @@ fn finished(op: Operation, audio: bool) -> Event {
     }
 }
 
-/// Records what a worker said on every member of its group. True when Roblox refused the key: nothing new is sent.
-fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut Report) -> bool {
+/// Records what a worker said on every member of its group, and whether the run sends nothing new after it.
+fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut Report) -> Option<Halt> {
     let files = || g.members.iter().map(|&m| found[m].file.as_str());
     match event {
         Event::Created(op) => {
@@ -428,13 +441,14 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
                 forget(lock, file, true);
                 report.failed.push((file.into(), e.to_string(), e.diag().into()));
             }
-            return e.diag() == "cloud.auth";
+            return (e.diag() == "cloud.auth").then_some(Halt::Auth);
         }
         Event::Failed(e) => {
             for file in files() {
                 lock.assets.entry(file.to_owned()).or_default().op = None;
                 report.ambiguous.push((file.into(), format!("{e}; {}", plan::settle(file))));
             }
+            return Some(Halt::Lost);
         }
         Event::Done(id, reviewing) => {
             for file in files() {
@@ -466,7 +480,7 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
             report.pending.extend(files().map(String::from));
             if let Some(e) = e {
                 eprintln!("{e}");
-                return e.diag() == "cloud.auth";
+                return (e.diag() == "cloud.auth").then_some(Halt::Auth);
             }
         }
         Event::Panicked => {
@@ -486,10 +500,10 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
             }
         }
     }
-    false
+    None
 }
 
-fn outcome(r: Report, broken: Option<Diag>, auth: bool, stopped: bool) -> Outcome {
+fn outcome(r: Report, broken: Option<Diag>, halt: Option<Halt>, stopped: bool) -> Outcome {
     let mut text = format!(
         "uploaded {}, reused {}, unchanged {}, dropped {}\n",
         count(r.uploaded),
@@ -518,8 +532,14 @@ fn outcome(r: Report, broken: Option<Diag>, auth: bool, stopped: bool) -> Outcom
         (d.code, d.message)
     } else if stopped {
         ("upload.stopped".into(), "opossum was stopped; what it sent is recorded".into())
-    } else if auth {
+    } else if halt == Some(Halt::Auth) {
         ("cloud.auth".into(), "Roblox refused the API key, so nothing more was sent".into())
+    } else if halt == Some(Halt::Lost) {
+        let error = format!(
+            "{}; nothing more was sent, and `opossum upload` sends the rest",
+            plan::ambiguous(r.ambiguous.len())
+        );
+        ("asset.ambiguous".into(), error)
     } else if let Some((_, _, code)) = r.failed.first() {
         (code.clone(), format!("{} failed", plan::counted(r.failed.len(), "file")))
     } else if !r.ambiguous.is_empty() {
@@ -863,6 +883,24 @@ mod tests {
         let (lock, _) = lock::read(&root).unwrap();
         assert_eq!(lock.assets.values().filter(|a| a.id.is_some() && a.next.is_none()).count(), 4);
         assert_eq!(lock.assets.len(), 4);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A dropped network loses every later create's answer too: the first lost one stops the run, so at most the
+    /// uploads already in flight need settling by hand.
+    #[test]
+    fn a_lost_answer_sends_nothing_new() {
+        let files: Vec<(String, String)> = (0..12).map(|i| (format!("{i}.glb"), i.to_string())).collect();
+        let files: Vec<(&str, &str)> = files.iter().map(|(f, t)| (f.as_str(), t.as_str())).collect();
+        let root = project("lost-net", &files);
+        let mock = Mock::bind(0, Some(Box::new(|_| Reply::Reset))).unwrap();
+        let out = run(&root, &mock, &stop_flag());
+        let ambiguous = out.json["ambiguous"].as_array().unwrap().len();
+        assert_eq!(
+            (out.exit, &out.json["code"], ambiguous + out.json["failed"].as_array().unwrap().len()),
+            (1, &json!("asset.ambiguous"), 12)
+        );
+        assert!((1..=WORKERS).contains(&ambiguous) && sent(&mock, "POST", "") == ambiguous, "{}", out.json);
         let _ = std::fs::remove_dir_all(&root);
     }
 
