@@ -1,6 +1,6 @@
 //! `opossum.lock`: the ids opossum created on Roblox, committed beside `opossum.toml`. TOML with one record per line,
-//! sorted, each naming its own table (`assets."<file>" = …`, `universes.<id>."<kind>/<key>" = …`) with no section
-//! headers, so every record stands on its own wherever a merge puts it: the first write adds `opossum.lock
+//! sorted, each naming its own table (`assets."<file>" = …`, `packs."<key>" = …`, `universes.<id>."<kind>/<key>" = …`)
+//! with no section headers, so every record stands on its own wherever a merge puts it: the first write adds `opossum.lock
 //! merge=union` to `.gitattributes`, and [`parse`] reads what any merge leaves (both sides of a conflict, a key twice,
 //! lines in any order) without a hand edit. Builds only read
 //! it; the commands that change it write it through [`save`], which takes the [`RemoteGuard`].
@@ -13,6 +13,7 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use cloud::Creator;
+pub use place::Part;
 
 use crate::diag::{Diag, Severity};
 use crate::guard::RemoteGuard;
@@ -26,14 +27,26 @@ const VERSION: i64 = 1;
 
 /// One source file's record. `hash` is the input hash of what `id` holds; `next` is the input hash of a create in
 /// flight and `op` its operation, so `next` without `op` is a create that may or may not have happened. `rejected` is
-/// the input hash of content Roblox refused (moderation, processing): the same bytes are never sent again.
-#[derive(Clone, Default, PartialEq, Eq, Debug)]
+/// the input hash of content Roblox refused (moderation, processing): the same bytes are never sent again. `parts` is
+/// what the import of a `.glb`'s `id` made, by part name, read back once; a glb's record with `id` and no `parts` is
+/// unread.
+#[derive(Clone, Default, PartialEq, Debug)]
 pub struct Asset {
     pub id: Option<u64>,
     pub hash: Option<String>,
     pub next: Option<String>,
     pub op: Option<String>,
     pub rejected: Option<String>,
+    pub parts: Option<BTreeMap<String, Part>>,
+}
+
+impl Asset {
+    /// The same upload state, read back or not: a merge of a branch that read the file with one that didn't leaves
+    /// these two, which are one record.
+    fn same(&self, other: &Asset) -> bool {
+        (self.id, &self.hash, &self.next, &self.op, &self.rejected)
+            == (other.id, &other.hash, &other.next, &other.op, &other.rejected)
+    }
 }
 
 /// One resource's applied values: what Roblox holds, not a fingerprint of it, so a plan diffs field by field. Image
@@ -67,6 +80,9 @@ pub struct Lock {
     /// Every different record a merge left for one file, each written back until a command that hashed the file
     /// [`Lock::settle`]s it; `assets` holds the build's pick meanwhile.
     pub merged: BTreeMap<String, Vec<Asset>>,
+    /// Texture packs Studio baked, by `place`'s pack key (`<class>|<color>|<normal>|<roughness>|<metalness>`, the map
+    /// uris): the pack's id.
+    pub packs: BTreeMap<String, u64>,
     /// By universe id, then `<kind>/<key>` (`pass/vip`, `experience/icon`).
     pub universes: BTreeMap<u64, BTreeMap<String, Resource>>,
     /// Every different record a merge left for one resource; `universes` holds the first. Each is written back until
@@ -103,9 +119,11 @@ pub fn read(root: &Path) -> Result<(Lock, Vec<Diag>), String> {
 
 /// Reads the lock's text line by line, each record on its own, so one bad line costs only that record. Git conflict
 /// markers are skipped, keeping both sides' records; a key twice with different records is kept for [`Lock::settle`]
-/// (assets) or marked in `conflicts` (resources).
+/// (assets) or marked in `conflicts` (resources). An asset record and the same one with `parts` are one record, and
+/// two ids for one pack are both good packs of its maps, so the highest is kept: neither is a conflict.
 pub fn parse(text: &str, file: &Path) -> (Lock, Vec<Diag>) {
     let mut lock = Lock::default();
+    let mut records: BTreeMap<String, Vec<Asset>> = BTreeMap::new();
     let mut diags = Vec::new();
     let mut version = false;
     let mut content = false;
@@ -157,18 +175,24 @@ pub fn parse(text: &str, file: &Path) -> (Lock, Vec<Diag>) {
             }),
             "assets" => one(&value, "assets.\"<file>\"").and_then(|(key, value)| {
                 let a = asset(value)?;
-                match lock.assets.get(key) {
-                    None => {
-                        lock.assets.insert(key.clone(), a);
-                    }
-                    Some(old) if *old == a => {}
-                    Some(old) => {
-                        let all = lock.merged.entry(key.clone()).or_insert_with(|| vec![old.clone()]);
-                        if !all.contains(&a) {
-                            all.push(a);
+                let all = records.entry(key.clone()).or_default();
+                match all.iter_mut().find(|r| r.same(&a)) {
+                    Some(r) => {
+                        if r.parts.is_none() {
+                            r.parts = a.parts;
                         }
                     }
+                    None => all.push(a),
                 }
+                Ok(())
+            }),
+            "packs" => one(&value, "packs.\"<key>\"").and_then(|(key, value)| {
+                if key.split('|').count() != 5 {
+                    return Err(format!("`{key}` is not <class>|<color>|<normal>|<roughness>|<metalness>"));
+                }
+                let id = value.as_integer().filter(|&n| n > 0).ok_or("a pack's value is its id, a positive integer")? as u64;
+                let old = lock.packs.entry(key.clone()).or_default();
+                *old = id.max(*old);
                 Ok(())
             }),
             "universes" => one(&value, "universes.<id>").and_then(|(u, value)| {
@@ -195,7 +219,9 @@ pub fn parse(text: &str, file: &Path) -> (Lock, Vec<Diag>) {
                 }
                 Ok(())
             }),
-            _ => Err(format!("`{key}` is not version, creator, assets.\"<file>\" or universes.<id>.\"<kind>/<key>\"")),
+            _ => Err(format!(
+                "`{key}` is not version, creator, assets.\"<file>\", packs.\"<key>\" or universes.<id>.\"<kind>/<key>\""
+            )),
         };
         if let Err(e) = read {
             fail("lock.syntax", e);
@@ -205,8 +231,13 @@ pub fn parse(text: &str, file: &Path) -> (Lock, Vec<Diag>) {
         let message = "opossum.lock has no `version = 1` line".to_owned();
         diags.push(Diag::new("lock.version", Severity::Error, Some(file), message));
     }
-    for (key, all) in &lock.merged {
-        lock.assets.insert(key.clone(), pick(all, None).clone());
+    for (key, mut all) in records {
+        if all.len() > 1 {
+            lock.assets.insert(key.clone(), pick(&all, None).clone());
+            lock.merged.insert(key, all);
+        } else {
+            lock.assets.insert(key, all.pop().expect("a record"));
+        }
     }
     (lock, diags)
 }
@@ -285,7 +316,10 @@ impl Lock {
     }
 
     fn is_empty(&self) -> bool {
-        self.creator.is_none() && self.assets.is_empty() && self.universes.values().all(BTreeMap::is_empty)
+        self.creator.is_none()
+            && self.assets.is_empty()
+            && self.packs.is_empty()
+            && self.universes.values().all(BTreeMap::is_empty)
     }
 }
 
@@ -311,6 +345,7 @@ fn asset(v: &toml::Value) -> Result<Asset, String> {
             "hash" => a.hash = Some(hash(v, k)?),
             "next" => a.next = Some(hash(v, k)?),
             "rejected" => a.rejected = Some(hash(v, k)?),
+            "parts" => a.parts = Some(parts(v)?),
             "op" => {
                 let op = v.as_str().filter(|op| {
                     op.strip_prefix("operations/").is_some_and(|id| {
@@ -331,7 +366,45 @@ fn asset(v: &toml::Value) -> Result<Asset, String> {
     if a.op.is_some() && a.next.is_none() {
         return Err("`op` needs `next`".into());
     }
+    if a.parts.is_some() && a.id.is_none() {
+        return Err("`parts` needs `id`".into());
+    }
     Ok(a)
+}
+
+/// `{ <name> = { mesh, size, color, normal, roughness, metalness }, … }`; a size component may be written as an
+/// integer.
+fn parts(v: &toml::Value) -> Result<BTreeMap<String, Part>, String> {
+    let table = v.as_table().ok_or("`parts` must be a table of parts by name")?;
+    let mut parts = BTreeMap::new();
+    for (name, v) in table {
+        let (mut mesh, mut size, mut maps) = (None, None, [None; 4]);
+        for (k, v) in v.as_table().ok_or(format!("part `{name}` must be a table"))? {
+            match k.as_str() {
+                "mesh" => mesh = Some(positive(v, k)?),
+                "size" => {
+                    let bad = || format!("part `{name}`'s `size` must be three numbers");
+                    let items = v.as_array().filter(|a| a.len() == 3).ok_or_else(bad)?;
+                    let mut xyz = [0.0; 3];
+                    for (n, item) in xyz.iter_mut().zip(items) {
+                        *n = item.as_float().or(item.as_integer().map(|i| i as f64)).ok_or_else(bad)? as f32;
+                    }
+                    size = Some(xyz);
+                }
+                "color" => maps[0] = Some(positive(v, k)?),
+                "normal" => maps[1] = Some(positive(v, k)?),
+                "roughness" => maps[2] = Some(positive(v, k)?),
+                "metalness" => maps[3] = Some(positive(v, k)?),
+                _ => return Err(format!("part `{name}` has an unknown field `{k}`")),
+            }
+        }
+        let (Some(mesh), Some(size)) = (mesh, size) else {
+            return Err(format!("part `{name}` needs `mesh` and `size`"));
+        };
+        let [color, normal, roughness, metalness] = maps;
+        parts.insert(name.clone(), Part { mesh, size, color, normal, roughness, metalness });
+    }
+    Ok(parts)
 }
 
 fn resource(v: &toml::Value) -> Result<Resource, String> {
@@ -385,8 +458,9 @@ fn hash(v: &toml::Value, k: &str) -> Result<String, String> {
         .ok_or(format!("`{k}` must be 32 lowercase hex characters"))
 }
 
-/// The lock's only form: the header, `version` and `creator`, then the asset records and each universe's (by number),
-/// a blank line before each group, records sorted bytewise by key, each record's fields in a fixed order.
+/// The lock's only form: the header, `version` and `creator`, then the asset records, the packs and each universe's
+/// records (by number), a blank line before each group, records sorted bytewise by key, each record's fields in a fixed
+/// order.
 pub fn render(lock: &Lock) -> String {
     let mut out = format!("{HEADER}\nversion = {VERSION}\n");
     for c in lock.creator.iter().chain(&lock.other_creators) {
@@ -409,6 +483,12 @@ pub fn render(lock: &Lock) -> String {
             let _ = writeln!(out, "assets.{} = {fields}", self::key(key));
         }
     }
+    if !lock.packs.is_empty() {
+        out.push('\n');
+    }
+    for (key, id) in &lock.packs {
+        let _ = writeln!(out, "packs.{} = {id}", self::key(key));
+    }
     for (u, records) in lock.universes.iter().filter(|(_, r)| !r.is_empty()) {
         out.push('\n');
         for (key, r) in records {
@@ -430,6 +510,25 @@ fn asset_fields(a: &Asset) -> String {
     for (name, value) in [("hash", &a.hash), ("next", &a.next), ("op", &a.op), ("rejected", &a.rejected)] {
         if let Some(s) = value {
             fields.push((name, string(s)));
+        }
+    }
+    if let Some(parts) = &a.parts {
+        let parts: Vec<(String, String)> = parts.iter().map(|(name, p)| (key(name), part_fields(p))).collect();
+        fields.push(("parts", inline(&parts)));
+    }
+    inline(&fields)
+}
+
+/// A part's inline table. Sizes are written as Rust's `{:?}` writes an f32, the shortest text that reads back as the
+/// same number, and always a TOML float (`8.0`, `1e-7`).
+fn part_fields(p: &Part) -> String {
+    let [x, y, z] = p.size;
+    let mut fields = vec![("mesh", p.mesh.to_string()), ("size", format!("[{x:?}, {y:?}, {z:?}]"))];
+    for (name, map) in
+        [("color", p.color), ("normal", p.normal), ("roughness", p.roughness), ("metalness", p.metalness)]
+    {
+        if let Some(id) = map {
+            fields.push((name, id.to_string()));
         }
     }
     inline(&fields)
@@ -493,7 +592,7 @@ pub(crate) fn key(k: &str) -> String {
 }
 
 /// `{ a = 1, b = "x" }`, or `{}`.
-fn inline(fields: &[(&str, String)]) -> String {
+fn inline(fields: &[(impl std::fmt::Display, String)]) -> String {
     if fields.is_empty() {
         return "{}".into();
     }
@@ -606,8 +705,12 @@ version = 1
 creator = { user = 988525232 }
 
 assets."place/assets/animations/idle.rbxmx" = { id = 154467536451246, hash = "6d76e3e3a1c94f0b2e8d7c51a0b3f9e2" }
+assets."place/assets/models/lantern.glb" = { id = 156800916240477, hash = "0bc03d3cf5b65244b3aa6352c0a80671", parts = { Lens = { mesh = 83567644535122, size = [0.4272, 0.3491, 0.9131], color = 199676980884141, normal = 147280647780558, roughness = 131313702417440, metalness = 86729430079521 }, hull = { mesh = 87525364898392, size = [8.0, 1e-7, 4.99756], color = 199676980884141 } } }
 assets."place/assets/sfx/new.ogg" = { next = "9b1f0c2d4e5a6b7c8d9e0f1a2b3c4d5e", op = "operations/9f2c41" }
 assets."place/assets/sfx/odd.ogg" = { id = 140112233445566, hash = "00000000000000000000000000000001", next = "00000000000000000000000000000002" }
+
+packs."MaterialVariant|rbxassetid://5|||" = 7
+packs."SurfaceAppearance|rbxassetid://199676980884141|rbxassetid://147280647780558|rbxassetid://131313702417440|rbxassetid://86729430079521" = 83799176238290
 
 universes.42."pass/vip" = { id = 9 }
 
@@ -693,6 +796,25 @@ universes.15302144394."thumbnail/main" = { id = 55, altText = "Lobby", image = "
     }
 
     #[test]
+    fn a_merge_of_a_read_record_and_its_unread_self_is_one_record_and_of_two_packs_keeps_the_highest() {
+        let hash = "a".repeat(32);
+        let unread = format!("assets.\"m.glb\" = {{ id = 5, hash = \"{hash}\" }}");
+        let read = format!(
+            "assets.\"m.glb\" = {{ id = 5, hash = \"{hash}\", parts = {{ Box = {{ mesh = 6, size = [1.5, 2, 0.5] }} }} }}"
+        );
+        let (low, high) = ("packs.\"SurfaceAppearance|a|b|c|d\" = 3", "packs.\"SurfaceAppearance|a|b|c|d\" = 9");
+        for lines in [[&unread, &read, low, high], [&read, &unread, high, low]] {
+            let lock = parsed(&format!("version = 1\n{}\n", lines.join("\n")));
+            assert!(lock.merged.is_empty() && lock.merge_warnings(Path::new("/p")).is_empty());
+            assert_eq!(lock.assets["m.glb"].parts.as_ref().map(|p| p["Box"].size), Some([1.5, 2.0, 0.5]));
+            assert_eq!(lock.packs["SurfaceAppearance|a|b|c|d"], 9);
+            let text = render(&lock);
+            assert!(text.contains("parts = { Box = { mesh = 6, size = [1.5, 2.0, 0.5] } }"), "{text}");
+            assert_eq!((text.matches("m.glb").count(), text.matches("packs.").count()), (1, 1), "{text}");
+        }
+    }
+
+    #[test]
     fn every_line_is_checked_on_its_own() {
         let hash = "0".repeat(32);
         let cases = [
@@ -711,6 +833,9 @@ universes.15302144394."thumbnail/main" = { id = 55, altText = "Lobby", image = "
             ("\"a\" = { id = 1, hash = \"H\" }", "is not version, creator"),
             ("assets.\"a\" = { id = 1,", ""),
             ("creator = { user = 1, group = 2 }", "`creator` must be"),
+            ("assets.\"a\" = { next = \"H\", parts = {} }", "`parts` needs `id`"),
+            ("assets.\"a\" = { id = 1, hash = \"H\", parts = { hull = { mesh = 1 } } }", "needs `mesh` and `size`"),
+            ("packs.\"SurfaceAppearance|rbxassetid://1\" = 2", "is not <class>|<color>"),
         ];
         for (body, message) in cases {
             let text = format!("version = 1\n{}\n", body.replace('H', &hash));

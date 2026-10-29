@@ -137,8 +137,12 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
             }
             Class::Invalid(code, message) => report.failed.push((a.file.clone(), message.clone(), code.clone())),
             Class::Reuses(id) => {
+                // what the id's import made is a fact of the id, so it comes along with it
+                let all = lock.assets.values().chain(lock.merged.values().flatten());
+                let parts = all.filter(|r| r.id == Some(*id)).find_map(|r| r.parts.clone());
                 let record = lock.assets.entry(a.file.clone()).or_default();
-                (record.id, record.hash, record.rejected) = (Some(*id), Some(hashes[i].clone()), None);
+                (record.id, record.hash, record.rejected, record.parts) =
+                    (Some(*id), Some(hashes[i].clone()), None, parts);
                 report.reused += 1;
             }
             // a later change waits for the next run: this one finishes what was started
@@ -688,11 +692,21 @@ mod tests {
         let bound = Asset { id: Some(77), hash: Some(hash("x")), ..Asset::default() };
         assert_eq!((record(&root, "art/a.glb"), record(&root, "art/b.glb")), (Some(bound.clone()), Some(bound)));
 
+        // the import's parts are the id's, so a rename binding it takes them along
+        let part =
+            lock::Part { mesh: 9, size: [1.0, 2.0, 3.0], color: None, normal: None, roughness: None, metalness: None };
+        let parts = std::collections::BTreeMap::from([("hull".to_owned(), part)]);
+        {
+            let guard = RemoteGuard::acquire(&Cache { dir: root.join(".cache") }).unwrap();
+            let (mut lock, _) = lock::read(&root).unwrap();
+            lock.assets.get_mut("art/a.glb").unwrap().parts = Some(parts.clone());
+            lock::save(&mut lock, &root, &guard).unwrap();
+        }
         std::fs::rename(root.join("art/a.glb"), root.join("art/c.glb")).unwrap();
         let out = run(&root, &mock, &stop);
         let counts = ["uploaded", "reused", "unchanged", "dropped"].map(|k| out.json[k].as_u64().unwrap());
         assert_eq!((out.exit, counts, mock.requests().len()), (0, [0, 1, 1, 1], 2));
-        assert_eq!(record(&root, "art/c.glb").and_then(|r| r.id), Some(77));
+        assert_eq!(record(&root, "art/c.glb").map(|r| (r.id, r.parts)), Some((Some(77), Some(parts))));
         assert_eq!(record(&root, "art/a.glb"), None);
 
         // a discovery error sends nothing and keeps every record, even of files that look gone

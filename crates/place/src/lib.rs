@@ -22,6 +22,18 @@ pub use tree::{
 pub use value::{db, descriptor};
 pub use write::{PackStats, TexturePacks, read_texture_packs, write_rbxl, write_rbxm};
 
+/// One part of an uploaded model as Roblox's import made it, read back once and kept in `opossum.lock`: the MeshPart's
+/// mesh, its `InitialSize`, and its SurfaceAppearance's maps (a channel the import gave no id is `None`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Part {
+    pub mesh: u64,
+    pub size: [f32; 3],
+    pub color: Option<u64>,
+    pub normal: Option<u64>,
+    pub roughness: Option<u64>,
+    pub metalness: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
