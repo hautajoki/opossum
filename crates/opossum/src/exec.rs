@@ -69,7 +69,8 @@ pub struct Tests {
 /// Runs Luau in the DataModel of `realm` (dev's default when None) and prints what it printed and returned.
 pub fn exec(cfg: &Config, options: &Options, realm: &Option<String>, source: Source) -> Result<bool, String> {
     let (_, name, code) = read(source)?;
-    let answer = post(cfg, options, "/exec", with_realm(json!({ "name": name, "source": code }), realm))?;
+    let body = with_realm(json!({ "name": name, "source": code }), realm);
+    let answer = post_run(cfg, options, "/exec", body)?;
     Ok(print_answer(options, &answer))
 }
 
@@ -340,7 +341,7 @@ pub fn test_studio(cfg: &Config, options: &Options, realm: &Option<String>, test
     let request = spec::Request { suites: &suites, mode: tests.mode, filter: tests.filter.as_deref(), focus: None };
     let source = spec::bundle(Host::Roblox, &request);
     let body = json!({ "name": "spec", "source": source, "report": true, "fresh": true });
-    let mut answer = post(cfg, options, "/exec", with_realm(body, realm))?;
+    let mut answer = post_run(cfg, options, "/exec", with_realm(body, realm))?;
     let Some(report) = Some(answer["values"][0].take()).filter(Value::is_object) else {
         if options.json {
             if let Some(object) = answer.as_object_mut() {
@@ -637,6 +638,14 @@ fn print_error(answer: &Value) -> bool {
 /// ran, which `--json` prints as `{"ok": false, "ran": false, "error"}` too.
 fn post(cfg: &Config, options: &Options, path: &str, body: Value) -> Result<Value, String> {
     send(cfg, options, path, body).map_err(|error| refused(options.json, error))
+}
+
+/// [`post`] for code that runs in Studio by default: with no dev here, it also says where else it runs.
+fn post_run(cfg: &Config, options: &Options, path: &str, body: Value) -> Result<Value, String> {
+    if let Err(error) = port(cfg) {
+        return Err(refused(options.json, format!("{error}; start `opossum dev`, or run with --local or --cloud")));
+    }
+    post(cfg, options, path, body)
 }
 
 fn send(cfg: &Config, options: &Options, path: &str, mut body: Value) -> Result<Value, String> {

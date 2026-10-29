@@ -64,8 +64,16 @@ pub fn policy(report: &Value, allow_focused: bool) -> Option<(&'static str, Stri
     None
 }
 
-/// `no cases matched “filter” (n discovered)`, the filter only when there is one.
+/// `no cases matched “filter” (n discovered)`, the filter only when there is one; a local run that found no file says
+/// which files it runs and where the others do.
 pub(crate) fn none_selected(report: &Value) -> String {
+    if report["files"] == 0 {
+        let kind = if report["mode"] == "bench" { "bench" } else { "spec" };
+        return format!(
+            "no src/**/*.local.{kind}.luau files to run here; *.{kind}.ts and *.{kind}.luau run in Studio (`opossum dev`) \
+             or with --cloud"
+        );
+    }
     let filter = report["filter"].as_str().map_or(String::new(), |filter| format!(" “{filter}”"));
     format!("no cases matched{filter} ({} discovered)", report["discovered"].as_u64().unwrap_or(0))
 }

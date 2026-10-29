@@ -41,6 +41,7 @@ pub fn run_local(root: &Path, opts: &LocalOptions) -> Result<(Value, Vec<(String
     let mut files = Vec::new();
     discover(root, "src", suffix, &mut files)?;
     files.sort();
+    let files_found = files.len();
 
     let started = Instant::now();
     let mut results = run_files(root, &files, opts, false)?;
@@ -59,6 +60,7 @@ pub fn run_local(root: &Path, opts: &LocalOptions) -> Result<(Value, Vec<(String
 
     let reports: Vec<Value> = results.iter().map(|(report, _)| report.clone()).collect();
     let mut report = aggregate(&reports, opts.mode, opts.filter.as_deref());
+    report["files"] = files_found.into();
     if let Some(discovered) = discovered {
         // a focused run discovered every file's cases, not only the focused files'
         report["discovered"] = discovered.into();
