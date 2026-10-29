@@ -111,8 +111,13 @@ pub fn discover(root: &Path, sets: &[AssetSet]) -> (Vec<Asset>, Vec<Diag>) {
     (assets, diags)
 }
 
-fn join(dir: &str, rel: &str) -> String {
-    if dir.is_empty() || dir == "." { rel.to_owned() } else { format!("{dir}/{rel}") }
+/// `dir/rel` as a project path, where an empty or `.` dir is the project root and an empty rel the dir itself.
+pub fn join(dir: &str, rel: &str) -> String {
+    match (dir, rel) {
+        ("" | ".", rel) => rel.to_owned(),
+        (dir, "") => dir.to_owned(),
+        (dir, rel) => format!("{dir}/{rel}"),
+    }
 }
 
 /// Collects the regular files under `<root>/<set_root>/<rel>`, paths relative to the set root, in bytewise order.

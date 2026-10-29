@@ -18,6 +18,7 @@ use tsrs_ast::{Kind, Node, SourceFileParseOptions};
 use tsrs_core::P;
 use tsrs_core::ScriptKind;
 
+use crate::assets::join;
 use crate::config::{self, Config};
 use crate::diag::{self, Diag, Severity};
 use crate::guard::{Cache, RemoteGuard};
@@ -773,14 +774,6 @@ impl Reader<'_> {
     }
 }
 
-fn join(dir: &str, rel: &str) -> String {
-    match (dir, rel) {
-        ("", rel) => rel.to_owned(),
-        (dir, "") => dir.to_owned(),
-        (dir, rel) => format!("{dir}/{rel}"),
-    }
-}
-
 /// One tessera record whose file opossum has: what the lock gets for it.
 struct Import<'r> {
     record: &'r tessera::Record,
@@ -965,9 +958,7 @@ fn import_lock(
 fn tessera_keys(root: &Path, sets: &[Set]) -> HashMap<String, String> {
     let mut keys = HashMap::new();
     for set in sets {
-        let mut files = Vec::new();
-        walk(&root.join(&set.root), "", &mut files);
-        for rel in files {
+        for rel in files(&root.join(&set.root), &|_, _| true) {
             if !set.include.is_match(&rel) || set.exclude.is_match(&rel) {
                 continue;
             }
@@ -982,26 +973,40 @@ fn tessera_keys(root: &Path, sets: &[Set]) -> HashMap<String, String> {
     keys
 }
 
-fn walk(dir: &Path, rel: &str, out: &mut Vec<String>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let (Ok(name), Ok(t)) = (entry.file_name().into_string(), entry.file_type()) else { continue };
-        let rel = join(rel, &name);
-        if t.is_dir() {
-            walk(&entry.path(), &rel, out);
-        } else if t.is_file() {
-            out.push(rel);
+/// Every regular file under `base` that `keep(rel, false)` takes, in the directories `keep(rel, true)` lets it into, as
+/// paths relative to `base` in bytewise order. Symbolic links are skipped (file_type does not follow them), and so are
+/// names that are not UTF-8.
+fn files(base: &Path, keep: &dyn Fn(&str, bool) -> bool) -> Vec<String> {
+    fn walk(base: &Path, rel: &str, keep: &dyn Fn(&str, bool) -> bool, out: &mut Vec<String>) {
+        let Ok(entries) = fs::read_dir(base.join(rel)) else { return };
+        let mut entries: Vec<_> =
+            entries.flatten().filter_map(|e| Some((e.file_name().into_string().ok()?, e.file_type().ok()?))).collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, t) in entries {
+            let rel = join(rel, &name);
+            if t.is_dir() && keep(&rel, true) {
+                walk(base, &rel, keep, out);
+            } else if t.is_file() && keep(&rel, false) {
+                out.push(rel);
+            }
         }
     }
+    let mut out = Vec::new();
+    walk(base, "", keep, &mut out);
+    out
 }
 
 /// Rewrites the module specifier strings of every TS file under `src/` that name a module in `modules` (by the
 /// project path it resolves to: from the file for `./`, from `src/` otherwise) or hexagon. Only the string's bytes
 /// change.
 fn rewrite_sources(plan: &mut Plan, generated: &str, modules: &[(String, String)]) {
-    let mut files = Vec::new();
-    let skip = plan.root.join(generated);
-    sources(&plan.root.join("src"), &skip, &mut files);
+    let (src, skip) = (plan.root.join("src"), plan.root.join(generated));
+    let keep = |rel: &str, dir: bool| {
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        let ts = name.ends_with(".ts") || name.ends_with(".tsx");
+        !name.starts_with('.') && name != "node_modules" && if dir { src.join(rel) != skip } else { ts }
+    };
+    let files: Vec<PathBuf> = files(&src, &keep).into_iter().map(|rel| src.join(rel)).collect();
     let needle = generated.rsplit('/').next().unwrap_or(generated);
     let mut resources = false;
     for path in files {
@@ -1044,25 +1049,6 @@ fn rewrite_sources(plan: &mut Plan, generated: &str, modules: &[(String, String)
              products and thumbnails; code that reads them takes the new names"
                 .into(),
         );
-    }
-}
-
-fn sources(dir: &Path, skip: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    let mut entries: Vec<_> = entries.flatten().collect();
-    entries.sort_by_key(|e| e.file_name());
-    for entry in entries {
-        let (path, name) = (entry.path(), entry.file_name());
-        let name = name.to_string_lossy();
-        let Ok(t) = entry.file_type() else { continue };
-        if name.starts_with('.') || name == "node_modules" || path == skip {
-            continue;
-        }
-        if t.is_dir() {
-            sources(&path, skip, out);
-        } else if t.is_file() && (name.ends_with(".ts") || name.ends_with(".tsx")) {
-            out.push(path);
-        }
     }
 }
 
@@ -1114,9 +1100,8 @@ fn visit(node: P<Node>, out: &mut Vec<P<Node>>) {
 /// A note naming every line outside the TS sources that still mentions tessera, hexagon or the generated directory,
 /// with what each becomes: package.json scripts and dependencies, rokit.toml, .gitignore, tooling scripts.
 fn leftovers(plan: &mut Plan, generated: &str, asset_roots: &[String]) {
-    let mut files = Vec::new();
     let removed: Vec<PathBuf> = plan.removals.clone();
-    texts(&plan.root, &plan.root, asset_roots, &mut files);
+    let files: Vec<PathBuf> = texts(&plan.root, asset_roots).into_iter().map(|rel| plan.root.join(rel)).collect();
     let word = |line: &str, w: &str| {
         line.match_indices(w).any(|(i, _)| {
             let before = line[..i].chars().next_back().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
@@ -1156,22 +1141,14 @@ fn leftovers(plan: &mut Plan, generated: &str, asset_roots: &[String]) {
 
 /// Text files a project's tooling lives in, outside `src/`'s TS (rewritten already), `node_modules`, dot-directories,
 /// asset roots and `place/`.
-fn texts(root: &Path, dir: &Path, asset_roots: &[String], out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    let mut entries: Vec<_> = entries.flatten().collect();
-    entries.sort_by_key(|e| e.file_name());
-    for entry in entries {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
-        let Ok(t) = entry.file_type() else { continue };
-        if t.is_dir() {
-            let skipped =
-                name.starts_with('.') || name == "node_modules" || rel == "place" || asset_roots.contains(&rel);
-            if !skipped {
-                texts(root, &path, asset_roots, out);
-            }
-            continue;
+fn texts(root: &Path, asset_roots: &[String]) -> Vec<String> {
+    files(root, &|rel, dir| {
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        if dir {
+            return !name.starts_with('.')
+                && name != "node_modules"
+                && rel != "place"
+                && !asset_roots.iter().any(|r| r == rel);
         }
         let ext = name.rsplit_once('.').map_or("", |(_, e)| e);
         let ts = matches!(ext, "ts" | "tsx") && rel.starts_with("src/");
@@ -1179,11 +1156,9 @@ fn texts(root: &Path, dir: &Path, asset_roots: &[String], out: &mut Vec<PathBuf>
             ext,
             "luau" | "lua" | "ts" | "tsx" | "js" | "mjs" | "cjs" | "json" | "toml" | "sh" | "yml" | "yaml"
         );
-        let small = entry.metadata().is_ok_and(|m| m.len() < 1 << 20);
-        if t.is_file() && small && !ts && (text || name == ".gitignore") && name != lock::FILE {
-            out.push(path);
-        }
-    }
+        let small = fs::metadata(root.join(rel)).is_ok_and(|m| m.len() < 1 << 20);
+        small && !ts && (text || name == ".gitignore") && name != lock::FILE
+    })
 }
 
 #[cfg(test)]
