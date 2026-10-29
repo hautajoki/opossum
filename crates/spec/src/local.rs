@@ -1,9 +1,11 @@
 //! Local runs: a project's `src/**/*.local.spec.luau` (bench: `*.local.bench.luau`) in in-process VMs, one fresh VM
 //! per file, so no file sees another's module state and a crash or a hang costs one file, not the run.
 //!
-//! Focus is global although files run apart, by one speculative pass: every file runs unfocused and reports how many
-//! of its selected cases have `only`; when any has, those results are dropped and only the files with `only` cases
-//! run again, focused. The common run, with no `.only`, costs one pass.
+//! Focus is global although files run apart. Tests take one speculative pass: every file runs unfocused and reports
+//! how many of its selected cases have `only`; when any has, those results are dropped and only the files with `only`
+//! cases run again, focused. The common run, with no `.only`, costs one pass. Benches run one file at a time, so a
+//! first pass on every core only loads each file and counts what it would select; the timed pass then runs just the
+//! files with something selected, and a filtered bench costs the files it names, not every file's top level.
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -44,18 +46,27 @@ pub fn run_local(root: &Path, opts: &LocalOptions) -> Result<(Value, Vec<(String
     let files_found = files.len();
 
     let started = Instant::now();
-    let mut results = run_files(root, &files, opts, false)?;
-    let focused: Vec<String> = files
-        .iter()
-        .zip(&results)
-        .filter(|(_, (report, _))| report["only"].as_u64().is_some_and(|only| only > 0))
-        .map(|(file, _)| file.clone())
-        .collect();
+    let counting = opts.mode == Mode::Bench;
+    let first = if counting { Pass::Count } else { Pass::Run { focus: false } };
+    let mut results = run_files(root, &files, opts, first)?;
+    let has = |report: &Value, key: &str| report[key].as_u64().is_some_and(|n| n > 0);
+    let focus = results.iter().any(|(report, _)| has(report, "only"));
     let mut discovered = None;
-    if !focused.is_empty() {
+    if counting || focus {
         discovered = Some(results.iter().filter_map(|(report, _)| report["discovered"].as_u64()).sum::<u64>());
-        files = focused;
-        results = run_files(root, &files, opts, true)?;
+        // a file that failed to count (no VM, a crash, a timeout) keeps that failure instead of failing again
+        let (mut kept, mut again) = (Vec::new(), Vec::new());
+        for (file, result) in files.into_iter().zip(results) {
+            if counting && result.0["ok"] == false {
+                kept.push((file, result));
+            } else if has(&result.0, if focus { "only" } else { "selected" }) {
+                again.push(file);
+            }
+        }
+        let ran = run_files(root, &again, opts, Pass::Run { focus })?;
+        kept.extend(again.into_iter().zip(ran));
+        kept.sort_by(|a, b| a.0.cmp(&b.0));
+        (files, results) = kept.into_iter().unzip();
     }
 
     let reports: Vec<Value> = results.iter().map(|(report, _)| report.clone()).collect();
@@ -99,12 +110,22 @@ fn discover(root: &Path, dir: &str, suffix: &str, out: &mut Vec<String>) -> Resu
     Ok(())
 }
 
-/// Each file's report and output, in `files` order, from worker threads pulling the next file. Workers get a deep
-/// stack: Luau's parser and require chains recurse through C++ frames.
-fn run_files(root: &Path, files: &[String], opts: &LocalOptions, focus: bool) -> Result<Vec<(Value, String)>, String> {
-    let workers = match opts.mode {
-        Mode::Bench => 1,
-        Mode::Test => std::thread::available_parallelism().map_or(1, |n| n.get()),
+/// What a pass over the files does with each.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Pass {
+    /// Loads it and counts the cases a run would select (`selected`, `only`), running none.
+    Count,
+    /// Runs its selected cases, or with `focus` only those with `only`.
+    Run { focus: bool },
+}
+
+/// Each file's report and output, in `files` order, from worker threads pulling the next file; a bench pass that
+/// times runs on one, so timings do not share cores. Workers get a deep stack: Luau's parser and require chains
+/// recurse through C++ frames.
+fn run_files(root: &Path, files: &[String], opts: &LocalOptions, pass: Pass) -> Result<Vec<(Value, String)>, String> {
+    let workers = match (opts.mode, pass) {
+        (Mode::Bench, Pass::Run { .. }) => 1,
+        _ => std::thread::available_parallelism().map_or(1, |n| n.get()),
     };
     let next = AtomicUsize::new(0);
     let results = Mutex::new(vec![None; files.len()]);
@@ -113,7 +134,7 @@ fn run_files(root: &Path, files: &[String], opts: &LocalOptions, focus: bool) ->
             loop {
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 let Some(file) = files.get(index) else { break };
-                let result = run_file(root, file, opts, focus);
+                let result = run_file(root, file, opts, pass);
                 results.lock().unwrap_or_else(|e| e.into_inner())[index] = Some(result);
             }
         };
@@ -128,13 +149,17 @@ fn run_files(root: &Path, files: &[String], opts: &LocalOptions, focus: bool) ->
 
 /// One file in a fresh VM: its report and what it printed. A VM that cannot start, a run that dies outside a case and
 /// a run past the timeout each become one failing case of the file, so the run goes on.
-fn run_file(root: &Path, file: &str, opts: &LocalOptions, focus: bool) -> (Value, String) {
+fn run_file(root: &Path, file: &str, opts: &LocalOptions, pass: Pass) -> (Value, String) {
     let mut vm = match Vm::new(root, opts.codegen) {
         Ok(vm) => vm,
         Err(e) => return (failed(file, "runs suite", &e, None, opts), String::new()),
     };
     let suites = [Suite { label: file.to_owned(), path: Vec::new() }];
-    let req = Request { suites: &suites, mode: opts.mode, filter: opts.filter.as_deref(), focus: Some(focus) };
+    let (focus, count) = match pass {
+        Pass::Count => (false, true),
+        Pass::Run { focus } => (focus, false),
+    };
+    let req = Request { suites: &suites, mode: opts.mode, filter: opts.filter.as_deref(), focus: Some(focus), count };
     let source = bundle(Host::Vm, &req);
 
     let (done, finished) = mpsc::channel::<()>();
@@ -257,6 +282,24 @@ mod tests {
             (labels(&filtered, "tests"), &filtered["focused"]),
             (vec!["src/b.local.spec.luau / three".to_owned()], &false.into())
         );
+    }
+
+    #[test]
+    fn a_filtered_bench_times_only_the_files_it_selects() {
+        let bench = "print('{0} loaded')\nreturn function(t) t.bench('{0}', function() end, { samples = 1 }) end";
+        let root = project(
+            "bench",
+            &[
+                ("src/a.local.bench.luau", &bench.replace("{0}", "a")),
+                ("src/b.local.bench.luau", &bench.replace("{0}", "b")),
+            ],
+        );
+        let (report, output) = run_local(&root, &options(Mode::Bench, Some("b.local"), None)).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(labels(&report, "benchmarks"), ["src/b.local.bench.luau / b"]);
+        assert_eq!((&report["discovered"], &report["files"]), (&2.into(), &2.into()));
+        // a loaded only to be counted, so its top level's output is not shown
+        assert_eq!(output, [("src/b.local.bench.luau".to_owned(), "b loaded\n".to_owned())]);
     }
 
     #[test]

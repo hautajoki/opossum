@@ -338,7 +338,8 @@ pub fn test_studio(cfg: &Config, options: &Options, realm: &Option<String>, test
     let routes = route::Routes::new(cfg.routes.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .map_err(|e| refused(options.json, e))?;
     let suites = suites(&route::scan(&cfg.src(), &routes), &cfg.root, tests.mode);
-    let request = spec::Request { suites: &suites, mode: tests.mode, filter: tests.filter.as_deref(), focus: None };
+    let request =
+        spec::Request { suites: &suites, mode: tests.mode, filter: tests.filter.as_deref(), focus: None, count: false };
     let source = spec::bundle(Host::Roblox, &request);
     let body = json!({ "name": "spec", "source": source, "report": true, "fresh": true });
     let mut answer = post_run(cfg, options, "/exec", with_realm(body, realm))?;
@@ -396,7 +397,8 @@ pub fn test_cloud(
     let root = session.cfg.root.clone();
     let index = dev::log_index(&session);
     let suites = suites(&session.scan, &root, tests.mode);
-    let request = spec::Request { suites: &suites, mode: tests.mode, filter: tests.filter.as_deref(), focus: None };
+    let request =
+        spec::Request { suites: &suites, mode: tests.mode, filter: tests.filter.as_deref(), focus: None, count: false };
     let script = spec::bundle(Host::Roblox, &request);
     let timeout = options.timeout.map_or(cloud::MAX_TASK_TIMEOUT, Duration::from_secs_f64);
     let ran = match cloud_exec::run(client, cache, &at, Some(&rbxl), reproducible(&session), &script, timeout) {

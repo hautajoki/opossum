@@ -70,6 +70,8 @@ pub struct Request<'a> {
     pub filter: Option<&'a str>,
     /// Keeps only the `only` cases.
     pub focus: Option<bool>,
+    /// Loads and selects but runs nothing: the report's `selected` and `only` are what a run would select.
+    pub count: bool,
 }
 
 /// The script for `req` on `host`. It returns the run's report as JSON text.
@@ -119,7 +121,10 @@ fn request(req: &Request) -> String {
     }
     let focus = req.focus.map_or("nil", |focus| if focus { "true" } else { "false" });
     let filter = req.filter.map_or_else(|| "nil".to_owned(), luau_string);
-    out.push_str(&format!("\t}},\n\tmode = \"{}\",\n\tfilter = {filter},\n\tfocus = {focus},\n}}", req.mode.name()));
+    let (mode, count) = (req.mode.name(), req.count);
+    out.push_str(&format!(
+        "\t}},\n\tmode = \"{mode}\",\n\tfilter = {filter},\n\tfocus = {focus},\n\tcount = {count},\n}}"
+    ));
     out
 }
 
@@ -133,7 +138,7 @@ mod tests {
             Suite { label: "src/a.spec.ts".into(), path: vec!["ReplicatedStorage".into(), "a.spec".into()] },
             Suite { label: "src/\"b\"\n.spec.luau".into(), path: vec!["ServerScriptService".into(), "b.spec".into()] },
         ];
-        let req = Request { suites: &suites, mode: Mode::Bench, filter: Some("x\"y"), focus: None };
+        let req = Request { suites: &suites, mode: Mode::Bench, filter: Some("x\"y"), focus: None, count: false };
         for host in [Host::Roblox, Host::Vm] {
             let source = bundle(host, &req);
             if let Err(error) = luau::gate::compile(&source, 2, 1) {
@@ -145,7 +150,7 @@ mod tests {
     #[test]
     fn the_runtime_passes_its_own_spec() {
         let suites = [Suite { label: "tests/runtime.local.spec.luau".into(), path: Vec::new() }];
-        let req = Request { suites: &suites, mode: Mode::Test, filter: None, focus: None };
+        let req = Request { suites: &suites, mode: Mode::Test, filter: None, focus: None, count: false };
         let mut vm = luau::vm::Vm::new(std::path::Path::new(env!("CARGO_MANIFEST_DIR")), true).unwrap();
         let report: serde_json::Value =
             serde_json::from_str(&vm.eval(CHUNK, &bundle(Host::Vm, &req)).unwrap()).unwrap();

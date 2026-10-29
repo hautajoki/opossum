@@ -14,6 +14,7 @@ export type Request = {
 	mode: "test" | "bench",
 	filter: string?,
 	focus: boolean?,
+	count: boolean?,
 }
 
 -- On Roblox a run yields every 16 cases or every 0.1 s, so a long run does not hold the engine (or trip its script
@@ -66,6 +67,7 @@ function runner.run(request: Request, load: (Suite) -> unknown, wait: (() -> ())
 		mode = request.mode,
 		filter = request.filter,
 		focus = request.focus,
+		count = request.count,
 		onCaseComplete = if wait ~= nil then yield else nil,
 	}))
 end

@@ -20,11 +20,13 @@ export type BenchOptions = {
 }
 
 -- `focus`: nil focuses on the selected `only` cases when there are any; true or false is the host's decision for the
--- whole run (a local run collects each file on its own, so it decides focus across files).
+-- whole run (a local run collects each file on its own, so it decides focus across files). `count` selects and runs
+-- nothing: the report says how many cases a run would select, and how many of them have `only`.
 export type RunOptions = {
 	mode: ("test" | "bench")?,
 	filter: string?,
 	focus: boolean?,
+	count: boolean?,
 	onCaseComplete: (() -> ())?,
 }
 
@@ -497,6 +499,7 @@ function spec.run(collection: Collection, options: RunOptions?): RunReport
 		tests = {},
 		benchmarks = {},
 	}
+	if opts.count then return report end
 	local failed_files: { [string]: true } = {}
 	local run_started = os.clock()
 
