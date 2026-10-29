@@ -15,6 +15,7 @@ mod inputs;
 mod lock;
 mod packages;
 mod plan;
+mod resources;
 mod signals;
 mod upload;
 
@@ -52,9 +53,13 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
                                                              on Open Cloud, on the place version holding this
                                                              build (saved to Roblox unless one already is);
                                                              exec --head: on the current head, no build
-  plan [--environment <e>] [--json]                          every asset's state against opossum.lock; offline
+  plan [--environment <e>] [--json]                          every asset's state and every resource change; offline
   upload [--json]                                            upload new and changed assets, ids into opossum.lock
+  provision [--environment <e>] [--allow-spend] [--json]     create and update passes, products, badges and the
+                                                             experience; --allow-spend lets badge creates pay
   adopt [--json] asset <file> (<id> | --none)                settle an upload that may or may not have happened
+  adopt [--environment <e>] [--json] (pass | product | badge | thumbnail) <key> (<id> | --none)
+                                                             settle a create, or bind one made elsewhere
   play [--run] [--timeout <s>] [--json]                      start a Studio playtest through opossum dev
   stop [--timeout <s>] [--json]                              end it and sum up what it logged
   pull [--timeout <s>] [--json] <Instance.Path> [<file.rbxm>]
@@ -72,7 +77,8 @@ enum Command {
     Dev { environment: Option<String>, json: bool },
     Plan { environment: Option<String>, json: bool },
     Upload { json: bool },
-    Adopt { json: bool, file: String, id: Option<u64> },
+    Provision { environment: Option<String>, allow_spend: bool, json: bool },
+    Adopt { json: bool, what: Adopted, id: Option<u64> },
     Exec(exec::Options, exec::Target, exec::Source),
     Test(exec::Options, exec::Target, exec::Tests),
     Play(exec::Options, bool),
@@ -84,6 +90,12 @@ enum Command {
     Sourcemap,
     Plugin(Option<PathBuf>),
     Migrate,
+}
+
+/// What `adopt` settles: an asset file, or a resource by kind and key in an environment.
+enum Adopted {
+    Asset(String),
+    Resource { environment: Option<String>, kind: String, key: String },
 }
 
 fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
@@ -99,7 +111,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     let (mut profile, mut out, mut emit, mut json) = (None, None, None, false);
     let (mut realm, mut timeout, mut code, mut run) = (None, None, None, false);
     let (mut local, mut interpreted, mut cloud, mut place, mut environment) = (false, false, false, None, None);
-    let (mut force, mut allow_focused, mut none, mut head) = (false, false, false, false);
+    let (mut force, mut allow_focused, mut none, mut head, mut allow_spend) = (false, false, false, false, false);
     let mut positional: Vec<&str> = Vec::new();
     let mut it = rest.iter().copied().skip(1);
     while let Some(arg) = it.next() {
@@ -126,6 +138,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
             "--allow-focused" => allow_focused = true,
             "--none" => none = true,
             "--head" => head = true,
+            "--allow-spend" => allow_spend = true,
             "-" => positional.push(arg),
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}")),
             _ => positional.push(arg),
@@ -152,7 +165,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     let timed = runs || matches!(verb, Some("play" | "stop" | "pull" | "attach"));
     let targeted = realm.is_some() || local || interpreted || cloud || place.is_some() || head;
     // the ids `opossum/resources` holds, or where a cloud run runs
-    let environed = runs || matches!(verb, Some("build" | "check" | "dev" | "plan"));
+    let environed = runs || matches!(verb, Some("build" | "check" | "dev" | "plan" | "provision" | "adopt"));
     let stray = targeted && !runs
         || environment.is_some() && !environed
         || timeout.is_some() && !timed
@@ -162,6 +175,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         || run && verb != Some("play")
         || force && verb != Some("attach")
         || none && verb != Some("adopt")
+        || allow_spend && verb != Some("provision")
     {
         return Err(USAGE.to_owned());
     }
@@ -173,12 +187,19 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         (Some("dev"), [], _) if !built => Command::Dev { environment, json },
         (Some("plan"), [], _) if !built => Command::Plan { environment, json },
         (Some("upload"), [], _) if !built => Command::Upload { json },
-        (Some("adopt"), ["asset", file, id @ ..], _) if !built && id.len() == usize::from(!none) => {
+        (Some("provision"), [], _) if !built => Command::Provision { environment, allow_spend, json },
+        (Some("adopt"), [kind @ ("asset" | "pass" | "product" | "badge" | "thumbnail"), name, id @ ..], _)
+            if !built && id.len() == usize::from(!none) && (*kind != "asset" || environment.is_none()) =>
+        {
             let id = match id.first() {
-                Some(id) => Some(id.parse().ok().filter(|&id| id > 0).ok_or(format!("{id} is not an asset id"))?),
+                Some(id) => Some(id.parse().ok().filter(|&id| id > 0).ok_or(format!("{id} is not an id"))?),
                 None => None,
             };
-            Command::Adopt { json, file: (*file).to_owned(), id }
+            let what = match *kind {
+                "asset" => Adopted::Asset((*name).to_owned()),
+                _ => Adopted::Resource { environment, kind: (*kind).to_owned(), key: (*name).to_owned() },
+            };
+            Command::Adopt { json, what, id }
         }
         (Some("exec"), [], Some(target)) if code.is_some() && !built => {
             Command::Exec(options(), target, exec::Source::Code(code.clone().unwrap_or_default()))
@@ -291,7 +312,10 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
                 Err(refusal) => finish(refusal, options.json),
             };
         }
-        Command::Adopt { json, file: asset, id } => return finish(adopt(&file, &cwd, asset, *id), *json),
+        Command::Provision { environment, allow_spend, json } => {
+            return finish(provision(&file, environment.as_deref(), *allow_spend), *json);
+        }
+        Command::Adopt { json, what, id } => return finish(adopt(&file, &cwd, what, *id), *json),
         _ => {}
     }
     let cfg = config::load(&file)?;
@@ -322,6 +346,7 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         | Command::Dev { .. }
         | Command::Plan { .. }
         | Command::Upload { .. }
+        | Command::Provision { .. }
         | Command::Adopt { .. }
         | Command::Exec(..)
         | Command::Test(..)
@@ -390,15 +415,39 @@ fn remote(file: &Path) -> Result<(Config, Client, Cache), Outcome> {
     Ok((cfg, client, cache))
 }
 
-/// `opossum adopt asset`: offline, but it writes the lock, so it holds the guard.
-fn adopt(file: &Path, cwd: &Path, asset: &str, id: Option<u64>) -> Outcome {
+/// `opossum provision`, with the guard held and Ctrl-C asking it to stop.
+fn provision(file: &Path, environment: Option<&str>, allow_spend: bool) -> Outcome {
     let cfg = match config::load(file) {
         Ok(cfg) => cfg,
         Err(error) => return Outcome::refused("config", error),
     };
-    match Cache::default_dir().and_then(|cache| RemoteGuard::acquire(&cache)) {
-        Ok(guard) => upload::adopt_asset(&cfg, &guard, cwd, asset, id),
-        Err(error) => Outcome::refused("guard", error),
+    let client = match open_cloud(&cfg.root) {
+        Ok(client) => client,
+        Err(refusal) => return refusal,
+    };
+    let guard = match Cache::default_dir().and_then(|cache| RemoteGuard::acquire(&cache)) {
+        Ok(guard) => guard,
+        Err(error) => return Outcome::refused("guard", error),
+    };
+    signals::install();
+    resources::provision(&cfg, &client, &guard, environment, allow_spend, &signals::STOP)
+}
+
+/// `opossum adopt`: offline, but it writes the lock, so it holds the guard.
+fn adopt(file: &Path, cwd: &Path, what: &Adopted, id: Option<u64>) -> Outcome {
+    let cfg = match config::load(file) {
+        Ok(cfg) => cfg,
+        Err(error) => return Outcome::refused("config", error),
+    };
+    let guard = match Cache::default_dir().and_then(|cache| RemoteGuard::acquire(&cache)) {
+        Ok(guard) => guard,
+        Err(error) => return Outcome::refused("guard", error),
+    };
+    match what {
+        Adopted::Asset(asset) => upload::adopt_asset(&cfg, &guard, cwd, asset, id),
+        Adopted::Resource { environment, kind, key } => {
+            resources::adopt(&cfg, &guard, environment.as_deref(), kind, key, id)
+        }
     }
 }
 

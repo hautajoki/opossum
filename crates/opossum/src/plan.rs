@@ -1,5 +1,6 @@
 //! `opossum plan`: what going outward would do, worked out offline with no credentials. Every asset file is hashed and
-//! compared with its record in `opossum.lock`, so the plan is also the dump of every id.
+//! compared with its record in `opossum.lock`, so the plan is also the dump of every id, and with an environment the
+//! resources it declares are compared with the records of its universe.
 
 use std::fmt::Write as _;
 
@@ -8,7 +9,7 @@ use serde_json::json;
 use crate::config::Config;
 use crate::diag::{Diag, Severity};
 use crate::lock::{self, Asset, Lock};
-use crate::{Outcome, assets};
+use crate::{Outcome, assets, resources};
 
 /// Where a file stands against its record in the lock.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -49,8 +50,8 @@ pub fn state(record: Option<&Asset>, hash: &str) -> State {
     }
 }
 
-/// `opossum plan [--environment e]`. Exit 1 when an upload is ambiguous (the user must act), 2 when the config, the
-/// lock or an asset root has errors.
+/// `opossum plan [--environment e]`. Exit 1 when an upload is ambiguous or a resource is blocked (the user must act),
+/// 2 when the config, the lock, an asset root or a resource image has errors.
 pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
     let root = &cfg.root;
     let environment = match cfg.build_environment(environment) {
@@ -105,21 +106,40 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
         text.push_str(&lines);
         sets.push(json!({ "set": set.name, "module": format!("opossum/{}", set.name), "files": files }));
     }
-    if cfg.assets.is_empty() {
-        text.push_str("nothing to plan: opossum.toml declares no [assets]\n");
+    if cfg.assets.is_empty() && environment.is_none() {
+        text.push_str("nothing to plan: opossum.toml declares no [assets] and no [environments]\n");
     }
-    let mut json = json!({ "ok": ambiguous == 0, "assets": sets });
-    if let Some(environment) = environment {
-        json["environment"] = environment.name.as_str().into();
+    let mut json = json!({ "ok": true, "assets": sets });
+    let mut blocked = 0;
+    if let Some(env) = environment {
+        let (_, ops) = match resources::survey(cfg, env, &lock) {
+            Ok(planned) => planned,
+            Err(refusal) => return refusal,
+        };
+        if !ops.is_empty() {
+            let _ = writeln!(text, "resources of {} (universe {}):", env.name, env.universe);
+            text.push_str(&resources::table(&ops));
+        }
+        blocked = resources::blocked(&ops);
+        json["environment"] = env.name.as_str().into();
+        json["resources"] = resources::ops_json(&ops);
     }
-    if ambiguous > 0 {
-        json["ran"] = true.into();
-        json["code"] = "asset.ambiguous".into();
+    let error = if ambiguous > 0 {
         let error =
             format!("uploads of {ambiguous} files may or may not have happened; `opossum adopt asset` settles each");
-        json["error"] = error.into();
-    }
-    Outcome { exit: u8::from(ambiguous > 0), json, text }
+        ("asset.ambiguous", error)
+    } else if blocked > 0 {
+        let error =
+            format!("creates of {blocked} resources may or may not have happened; `opossum adopt` settles each");
+        ("resource.blocked", error)
+    } else {
+        return Outcome { exit: 0, json, text };
+    };
+    json["ok"] = false.into();
+    json["ran"] = true.into();
+    json["code"] = error.0.into();
+    json["error"] = error.1.into();
+    Outcome { exit: 1, json, text }
 }
 
 /// The lock, every asset file and each file's input hash, for a command about to compare them. Errors in the lock or

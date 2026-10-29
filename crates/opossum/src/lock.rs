@@ -449,18 +449,29 @@ fn resource_fields(r: &Resource) -> Vec<(&'static str, String)> {
     f
 }
 
+/// The hash a resource create saves as `next` before its request: of the values it asks for, rendered as the record
+/// renders them without `id`, `ids`, `stale` and `next`, so `adopt` can tell whether the declaration changed since.
+pub fn intent(desired: &Resource) -> String {
+    let values = Resource { id: None, ids: None, stale: None, next: None, ..desired.clone() };
+    let mut h = blake3::Hasher::new();
+    h.update(b"opossum-resource-1\0");
+    h.update(inline(&resource_fields(&values)).as_bytes());
+    h.finalize().as_bytes()[..16].iter().map(|b| format!("{b:02x}")).collect()
+}
+
 fn record(out: &mut String, key: &str, fields: &[(&str, String)]) {
     let bare = !key.is_empty() && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
     let key = if bare { key.to_owned() } else { string(key) };
-    let fields: Vec<String> = fields.iter().map(|(k, v)| format!("{k} = {v}")).collect();
-    match fields.is_empty() {
-        true => {
-            let _ = writeln!(out, "{key} = {{}}");
-        }
-        false => {
-            let _ = writeln!(out, "{key} = {{ {} }}", fields.join(", "));
-        }
+    let _ = writeln!(out, "{key} = {}", inline(fields));
+}
+
+/// `{ a = 1, b = "x" }`, or `{}`.
+fn inline(fields: &[(&str, String)]) -> String {
+    if fields.is_empty() {
+        return "{}".into();
     }
+    let fields: Vec<String> = fields.iter().map(|(k, v)| format!("{k} = {v}")).collect();
+    format!("{{ {} }}", fields.join(", "))
 }
 
 /// A TOML basic string: `"`, `\`, `\n` and `\t` escaped, every other C0 control and U+007F as `\uXXXX`.
