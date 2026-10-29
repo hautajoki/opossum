@@ -398,7 +398,8 @@ export = ids
                 {{ "name": "Kind", "className": "Part", "properties": {{ "Size": {{ "$asset": "art/stone.png" }} }} }},
                 {{ "name": "Bare", "className": "MeshPart", "properties": {{ "MeshContent": {{ "$asset": "art/crate.glb" }} }} }},
                 {{ "name": "Pasted", "className": "Decal", "properties": {{ "Texture": "rbxassetid://12" }} }},
-                {{ "name": "Whole", "className": "Decal", "properties": {{ "Texture": "rbxassetid://10" }} }}
+                {{ "name": "Mesh", "className": "MeshPart", "properties": {{ "MeshId": "rbxassetid://11" }} }},
+                {{ "name": "Whole", "className": "MeshPart", "properties": {{ "MeshId": "rbxassetid://10" }} }}
             ] }}"#,
             lid = crate_("Lid"),
             lids = crate_("Lids"),
@@ -442,12 +443,18 @@ export = ids
             ("place.assetKind", "Kind.Size: Size is not a Content property, so it takes no `$asset`"),
             (
                 "place.pastedId",
+                "ReplicatedStorage/crate/Mesh.MeshContent = `rbxassetid://11` is art/crate.glb part Lid's mesh: write \
+                 `{\"$asset\": \"art/crate.glb\", \"part\": \"Lid\"}`",
+            ),
+            // a part's id where no part goes gets no advice place.assetKind would refuse
+            (
+                "place.pastedId",
                 "ReplicatedStorage/crate/Pasted.TextureContent = `rbxassetid://12` is art/crate.glb part Lid's color \
-                 map: write `{\"$asset\": \"art/crate.glb\", \"part\": \"Lid\"}`",
+                 map, which TextureContent can't hold: only a mesh and the four maps come from a glb",
             ),
             (
                 "place.pastedId",
-                "ReplicatedStorage/crate/Whole.TextureContent = `rbxassetid://10` is art/crate.glb's model: write \
+                "ReplicatedStorage/crate/Whole.MeshContent = `rbxassetid://10` is art/crate.glb's model: write \
                  `{\"$asset\": \"art/crate.glb\", \"part\": \"<name>\"}`, naming one of its parts: Lid",
             ),
             ("place.unknownAsset", "art/ston.png is no file under an asset root; did you mean art/stone.png?"),

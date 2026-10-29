@@ -548,31 +548,33 @@ impl Place {
                 if self.assets.contains_key(&(inst.referent(), *name)) {
                     continue;
                 }
-                let (what, write, tail) = match part {
-                    Some((part, Channel::Mesh)) => {
-                        (format!("{file} part {part}'s mesh"), format!(", \"part\": \"{part}\""), String::new())
-                    }
-                    Some((part, channel)) => {
-                        let what = format!("{file} part {part}'s {} map", channel.name());
-                        (what, format!(", \"part\": \"{part}\""), String::new())
-                    }
-                    // a model takes no `$asset` of its own (`place.assetKind`): one of its parts does
-                    None if crate::is_glb(file) => {
-                        let tail = match resolver.by_file.get(file) {
-                            Some(Asset::Parts(parts)) => {
-                                let names: Vec<&str> = parts.keys().map(String::as_str).collect();
-                                format!(", naming one of its parts: {}", names.join(", "))
-                            }
-                            _ => ", naming one of its parts once `opossum upload` reads them back".to_owned(),
-                        };
-                        (format!("{file}'s model"), ", \"part\": \"<name>\"".to_owned(), tail)
-                    }
-                    None => (file.clone(), String::new(), String::new()),
+                let what = match part {
+                    Some((part, Channel::Mesh)) => format!("{file} part {part}'s mesh"),
+                    Some((part, channel)) => format!("{file} part {part}'s {} map", channel.name()),
+                    None if crate::is_glb(file) => format!("{file}'s model"),
+                    None => file.clone(),
                 };
                 let at = self.path_of(inst.referent());
-                let message = format!(
-                    "{at}.{name} = `rbxassetid://{id}` is {what}: write `{{\"$asset\": \"{file}\"{write}}}`{tail}"
-                );
+                let pasted = format!("{at}.{name} = `rbxassetid://{id}` is {what}");
+                let message = match part {
+                    // only a mesh or a map takes a glb's part (`place.assetKind`), and a model nothing of its own
+                    _ if crate::is_glb(file) && Channel::of(name).is_none() => {
+                        format!("{pasted}, which {name} can't hold: only a mesh and the four maps come from a glb")
+                    }
+                    Some((part, _)) => format!("{pasted}: write `{{\"$asset\": \"{file}\", \"part\": \"{part}\"}}`"),
+                    None if crate::is_glb(file) => {
+                        let names = match resolver.by_file.get(file) {
+                            Some(Asset::Parts(parts)) => {
+                                let names: Vec<&str> = parts.keys().map(String::as_str).collect();
+                                format!(": {}", names.join(", "))
+                            }
+                            _ => " once `opossum upload` reads them back".to_owned(),
+                        };
+                        let write = format!("{{\"$asset\": \"{file}\", \"part\": \"<name>\"}}");
+                        format!("{pasted}: write `{write}`, naming one of its parts{names}")
+                    }
+                    None => format!("{pasted}: write `{{\"$asset\": \"{file}\"}}`"),
+                };
                 diags.push(Diag::error("place.pastedId", self.source_of(inst.referent()), message));
             }
         }
