@@ -70,6 +70,8 @@ enum Event {
 #[derive(Default)]
 struct Report {
     uploaded: usize,
+    /// Each uploaded file's new id.
+    ids: Vec<(String, u64)>,
     reused: usize,
     unchanged: usize,
     dropped: usize,
@@ -225,7 +227,7 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
                     }
                     break;
                 }
-                progress(g, &found);
+                progress(g, &found, sent, ready.len());
                 let (tx, i) = (tx.clone(), sent);
                 let audio = matches!(found[g.members[0]].ext.as_str(), ".ogg" | ".mp3" | ".wav" | ".flac");
                 s.spawn(move || {
@@ -338,7 +340,8 @@ fn save(lock: &mut Lock, root: &Path, guard: &RemoteGuard, broken: &mut Option<D
     }
 }
 
-fn progress(g: &Group, found: &[File]) {
+/// `[37/1,324] uploading <file>…` as group `n` of `total` goes out.
+fn progress(g: &Group, found: &[File], n: usize, total: usize) {
     let file = &found[g.members[0]].file;
     let verb = match g.job {
         Job::Send { update: Some(id), .. } => format!("updating {id} with"),
@@ -349,7 +352,7 @@ fn progress(g: &Group, found: &[File]) {
         1 => String::new(),
         n => format!(" (and {} identical)", n - 1),
     };
-    eprintln!("{verb} {file}{more}…");
+    eprintln!("[{}/{}] {verb} {file}{more}…", count(n + 1), count(total));
 }
 
 /// One group end to end on a worker thread: send it (unless a stop came first), then wait on its operation.
@@ -440,11 +443,11 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
             for file in files() {
                 let bound = Asset { id: Some(id), hash: Some(g.hash.clone()), ..Asset::default() };
                 lock.assets.insert(file.into(), bound);
+                report.ids.push((file.into(), id));
             }
             report.uploaded += g.members.len();
-            if reviewing {
-                eprintln!("{} is {id}, still in Roblox's moderation review", found[g.members[0]].file);
-            }
+            let review = if reviewing { ", still in Roblox's moderation review" } else { "" };
+            eprintln!("{} is rbxassetid://{id}{review}", found[g.members[0]].file);
         }
         Event::Terminal(code, message) => {
             // the same bytes would be refused again (and each moderation hit counts against the account)
@@ -512,6 +515,7 @@ fn outcome(r: Report, broken: Option<Diag>, halt: Option<Halt>, stopped: bool) -
         r.failed.iter().map(|(file, error, code)| json!({ "file": file, "error": error, "code": code })).collect();
     let json = json!({
         "ok": true, "uploaded": r.uploaded, "reused": r.reused, "unchanged": r.unchanged, "dropped": r.dropped,
+        "ids": r.ids.iter().map(|(file, id)| (file.clone(), json!(id))).collect::<serde_json::Map<_, _>>(),
         "pending": r.pending, "ambiguous": r.ambiguous.iter().map(|(file, _)| file).collect::<Vec<_>>(),
         "failed": failed,
     });
