@@ -20,6 +20,7 @@ use rbx_reflection::ClassTag;
 use serde_json::Value;
 
 use crate::properties::{self, PlaceEntry, is_properties_file, read_properties};
+use crate::props;
 use crate::tree::NESTED;
 use crate::value::{self, Resolved, db};
 use crate::{Diag, Severity};
@@ -565,9 +566,20 @@ impl Reader<'_> {
         Some(r)
     }
 
+    /// Sets `class.prop` from its JSON, stored under the name rbx_binary serializes (`MeshId` as `MeshContent`), with
+    /// the name it was written under removed: rbx_binary writes the newer name when an instance holds both, so an
+    /// overlay's `MeshId` would lose to the `MeshContent` an rbxm entry already holds.
     fn set_property(&mut self, r: Ref, class: &str, prop: &str, json: &Value, file: &Path) -> Result<(), String> {
         match value::property(class, prop, json)? {
-            (name, Resolved::Value(v)) => self.set(r, name, v),
+            (name, Resolved::Value(v)) => {
+                let stored = props::node_prop(class, ustr(name), v);
+                if let Some(inst) = self.place.dom.get_by_ref_mut(r) {
+                    inst.properties.remove(&ustr(name));
+                    if let Some((name, v)) = stored {
+                        inst.properties.insert(name, v);
+                    }
+                }
+            }
             (name, Resolved::Ref(path)) => {
                 self.refs.push(RefSpec { holder: r, property: name, path, file: file.to_path_buf(), error: None })
             }
@@ -767,6 +779,35 @@ mod tests {
         assert_eq!(prop("ReplicatedStorage/boat/hinge", "Part1"), None);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, "place.badRef");
+    }
+
+    #[test]
+    fn an_overlay_on_an_rbxm_writes_under_the_serialized_name() {
+        use rbx_dom_weak::types::Content;
+        let dir = std::env::temp_dir().join(format!("opossum-place-overlay-{}", std::process::id()));
+        let models = dir.join("replicated-storage");
+        fs::create_dir_all(&models).unwrap();
+        let uri = |id: u32| Variant::Content(Content::from_uri(format!("rbxassetid://{id}")));
+        let mut rbxm = WeakDom::new(InstanceBuilder::new("DataModel"));
+        let body = InstanceBuilder::new("MeshPart").with_name("Body").with_property("MeshContent", uri(1));
+        let body = rbxm.insert(rbxm.root_ref(), body);
+        rbxm.insert(body, InstanceBuilder::new("SurfaceAppearance").with_property("ColorMapContent", uri(2)));
+        let mut bytes = Vec::new();
+        rbx_binary::to_writer(&mut bytes, &rbxm, &[body]).unwrap();
+        fs::write(models.join("statue.rbxm"), bytes).unwrap();
+        let overlay = "[\"ReplicatedStorage/statue\"]\nMeshId = \"rbxassetid://3\"\n\n\
+                       [\"ReplicatedStorage/statue/SurfaceAppearance\"]\nColorMap = \"rbxassetid://4\"\n";
+        fs::write(dir.join("replicated-storage.toml"), overlay).unwrap();
+        let (mut place, diags) = read_place(&dir, &[]);
+        fs::remove_dir_all(&dir).unwrap();
+        assert!(diags.is_empty(), "{diags:?}");
+
+        let mut out = Vec::new();
+        crate::write_rbxl(&mut place, &Default::default(), &mut out).unwrap();
+        let back = rbx_binary::from_reader(&out[..]).unwrap();
+        let at = |class: &str| back.descendants().find(|i| i.class == class).unwrap();
+        assert_eq!(at("MeshPart").properties.get(&ustr("MeshContent")), Some(&uri(3)));
+        assert_eq!(at("SurfaceAppearance").properties.get(&ustr("ColorMapContent")), Some(&uri(4)));
     }
 
     /// The tree's hash at `path`, as `dev` would mount `place`.
