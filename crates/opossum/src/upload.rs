@@ -123,6 +123,7 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
             _ => None,
         })
         .collect();
+    let unsettled = plan::unsettled(&lock);
     let mut groups: Vec<(String, Vec<usize>, Option<String>)> = Vec::new();
     let mut by_hash: HashMap<String, usize> = HashMap::new();
     for (i, (a, hash)) in found.iter().zip(&hashes).enumerate() {
@@ -145,6 +146,10 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
             }
             // a later change waits for the next run: this one finishes what was started
             State::Pending => (record.next.clone().unwrap_or_default(), record.op.clone()),
+            State::New | State::Changed if unsettled.contains_key(hash) => {
+                report.ambiguous.push((a.file.clone(), plan::copy_of(&unsettled[hash])));
+                continue;
+            }
             State::New | State::Changed => match held.get(hash) {
                 Some(&id) => {
                     let bound = Asset { id: Some(id), hash: Some(hash.clone()), rejected: None, ..record };
@@ -728,13 +733,15 @@ mod tests {
         assert_eq!((out.exit, &out.json["ambiguous"]), (1, &json!(["art/a.glb"])));
         let lost = Asset { next: Some(hash("x")), ..Asset::default() };
         assert_eq!(record(&root, "art/a.glb"), Some(lost));
-        // nothing can say whether it happened, so nothing is sent until the user does
+        // nothing can say whether it happened, so nothing is sent until the user does, a copy of it included
+        std::fs::write(root.join("art/b.glb"), "x").unwrap();
         let out = run(&root, &mock, &stop);
         assert_eq!((out.exit, &out.json["code"], sent(&mock, "POST", "")), (1, &json!("asset.ambiguous"), 2));
+        assert_eq!(out.json["ambiguous"], json!(["art/a.glb", "art/b.glb"]));
 
         assert_eq!(adopt(&root, "art/a.glb", None).exit, 0);
         let out = run(&root, &mock, &stop);
-        assert_eq!((out.exit, &out.json["uploaded"], sent(&mock, "POST", "")), (0, &json!(1), 3));
+        assert_eq!((out.exit, &out.json["uploaded"], sent(&mock, "POST", "")), (0, &json!(2), 3));
         assert_eq!(adopt(&root, "art/a.glb", Some(5)).json["code"], "asset.adopt");
         let _ = std::fs::remove_dir_all(&root);
     }

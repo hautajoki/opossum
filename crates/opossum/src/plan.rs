@@ -2,6 +2,7 @@
 //! compared with its record in `opossum.lock`, so the plan is also the dump of every id, and with an environment the
 //! resources it declares are compared with the records of its universe.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use serde_json::json;
@@ -67,6 +68,7 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
         Ok(survey) => survey,
         Err(refusal) => return refusal,
     };
+    let unsettled = unsettled(&lock);
     let mut text = String::new();
     let mut sets = Vec::new();
     let (mut ambiguous, mut rejected) = (0, 0);
@@ -78,7 +80,11 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
                 eprintln!("{}", warning.human(root));
             }
             let record = lock.assets.get(&a.file);
-            let state = state(record, hash);
+            let mut state = state(record, hash);
+            let copy = unsettled.get(hash).filter(|_| matches!(state, State::New | State::Changed));
+            if copy.is_some() {
+                state = State::Ambiguous;
+            }
             counts[state as usize] += 1;
             let mut file = json!({ "file": a.file, "key": a.key, "state": state.name() });
             if let Some(id) = record.and_then(|r| r.id) {
@@ -87,6 +93,9 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
             files.push(file);
             let _ = match state {
                 State::Current => Ok(()),
+                State::Ambiguous if let Some(other) = copy => {
+                    writeln!(lines, "ambiguous {} ({})", a.file, copy_of(other))
+                }
                 State::Ambiguous => writeln!(
                     lines,
                     "ambiguous {0} (an upload may have happened: opossum adopt asset {0} <id>, or --none)",
@@ -151,6 +160,27 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
     json["code"] = error.0.into();
     json["error"] = error.1.into();
     Outcome { exit: 1, json, text }
+}
+
+/// Content an upload that may or may not have happened sent, and the file it was for: a new or changed file holding the
+/// same content is ambiguous too, since sending it could upload that content twice.
+pub fn unsettled(lock: &Lock) -> HashMap<String, String> {
+    let merged = lock.merged.iter().flat_map(|(file, all)| all.iter().map(move |a| (file, a)));
+    lock.assets
+        .iter()
+        .chain(merged)
+        .filter_map(|(file, a)| match a {
+            Asset { next: Some(next), op: None, .. } => Some((next.clone(), file.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What settles a file holding the content of `other`'s upload that may or may not have happened.
+pub fn copy_of(other: &str) -> String {
+    format!(
+        "{other} holds the same content and its upload may have happened; `opossum adopt asset {other}` settles both"
+    )
 }
 
 /// What to do about a file whose content Roblox refused.
