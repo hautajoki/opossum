@@ -1,8 +1,10 @@
 //! `opossum dev`: a full build, then the Studio sync server and a file watcher. Each settled burst of edits (~30 ms
 //! quiet) rebuilds what it touched: TypeScript edits reuse the program and re-lower only the files they can affect, a
 //! file a `$file` macro reads re-lowers its readers, added or removed files route `src/` again, a `place/` edit
-//! re-reads that entry (an edit to a properties file, the whole place), and an edit to `opossum.toml`, `package.json`,
-//! bun's lockfile or a `.env` file starts the session over.
+//! re-reads that entry (an edit to a properties file, the whole place), `opossum.lock` or a file coming or going under
+//! an asset root renders the id modules again (new ids only set sources, new keys load the program again), a file's
+//! new content there is an `assets` event and nothing else, and an edit to `opossum.toml`, `package.json`, bun's
+//! lockfile or a `.env` file starts the session over.
 //!
 //! The session keeps one [`place::Tree`] for its whole life. An edit that only changed sources sets them on it
 //! (a few µs); anything that changed the shape builds a fresh tree and pairs it in, then rewrites the sourcemap and
@@ -38,11 +40,11 @@ use rustc_hash::FxHashMap;
 use serde_json::{Value, json};
 use sync::{LogKind, Realm, Report};
 
-use crate::build::{LineMap, RUNTIME, Session, script_class, script_kind, slashed};
+use crate::build::{LineMap, MODULES, RUNTIME, Session, script_class, script_kind, slashed};
 use crate::config::{self, Config};
 use crate::diag::Severity;
 use crate::event::{Event, Out};
-use crate::{canonical_prefix, editor, project_path};
+use crate::{canonical_prefix, editor, lock, project_path};
 
 const QUIET: Duration = Duration::from_millis(30);
 /// How long a request waits for its fence: the watcher's latency plus the build of that burst.
@@ -125,13 +127,15 @@ fn fence_dir(root: &Path) -> PathBuf {
 }
 
 /// Runs the project found from `start` until a fatal error, which with `--json` is an event too, a broken config at
-/// startup included.
-pub fn run(start: &Path, json: bool) -> Result<bool, String> {
+/// startup included. `environment` (`--environment`, else the default) is the one whose ids `opossum/resources` holds.
+pub fn run(start: &Path, json: bool, environment: Option<&str>) -> Result<bool, String> {
     let mut out = Out { json, root: start.to_path_buf() };
     let result = config::find(start).and_then(|file| config::load(&file)).and_then(|cfg| {
         out.root = cfg.root.clone();
-        editor::write(&cfg.root, &cfg.ts)?;
-        session(cfg, &out)
+        cfg.build_environment(environment)?;
+        let dir = editor::dir(&cfg.root);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        session(cfg, &out, environment)
     });
     if let Err(message) = &result
         && json
@@ -141,7 +145,7 @@ pub fn run(start: &Path, json: bool) -> Result<bool, String> {
     result
 }
 
-fn session(cfg: Config, out: &Out) -> Result<bool, String> {
+fn session(cfg: Config, out: &Out, environment: Option<&str>) -> Result<bool, String> {
     let (report_tx, reports) = mpsc::channel();
     let (request_tx, requests) = mpsc::channel();
     let server = sync::Server::start(sync::Config {
@@ -203,10 +207,9 @@ fn session(cfg: Config, out: &Out) -> Result<bool, String> {
     };
     loop {
         watch(&mut watcher, &cfg)?;
-        let reload = serve(cfg, &mut dev, &events)?;
+        let reload = serve(cfg, &mut dev, &events, environment)?;
         cfg = reload;
         server.configure(cfg.name.clone(), cfg.place.unwrap_or(0), cfg.place.is_none(), cfg.hot_reload);
-        let _ = editor::write(&cfg.root, &cfg.ts);
     }
 }
 
@@ -222,7 +225,16 @@ fn watch(watcher: &mut notify::RecommendedWatcher, cfg: &Config) -> Result<(), S
     add(&fences, RecursiveMode::NonRecursive)?;
     add(&cfg.root, RecursiveMode::NonRecursive)?;
     add(&cfg.src(), RecursiveMode::Recursive)?;
-    add(&cfg.root.join("place"), RecursiveMode::Recursive)
+    let place = cfg.root.join("place");
+    add(&place, RecursiveMode::Recursive)?;
+    // asset roots elsewhere, the outermost of nested ones
+    let roots = cfg.asset_roots();
+    for root in &roots {
+        if !root.starts_with(&place) && !roots.iter().any(|r| r != root && root.starts_with(r)) {
+            add(root, RecursiveMode::Recursive)?;
+        }
+    }
+    Ok(())
 }
 
 /// The number of a fence file among the watcher's paths.
@@ -244,12 +256,18 @@ struct Dev<'a> {
 }
 
 /// Builds and serves one configuration until its config files change; returns the new configuration.
-fn serve(cfg: Config, dev: &mut Dev, events: &Receiver<notify::Result<notify::Event>>) -> Result<Config, String> {
+fn serve(
+    cfg: Config,
+    dev: &mut Dev,
+    events: &Receiver<notify::Result<notify::Event>>,
+    environment: Option<&str>,
+) -> Result<Config, String> {
     let start = Instant::now();
     let out = dev.out;
     // a fence written before this full build read the files is covered by it
     let covered = dev.fences.lock().unwrap_or_else(|e| e.into_inner()).next;
-    let mut session = Session::new(cfg, None)?;
+    let mut session = Session::new(cfg, None, environment)?;
+    editor::write(&session.cfg.root, &session.cfg.ts, &session.modules)?;
     let stats = session.build()?;
     dev.shown.clear();
     dev.reshape(&mut session);
@@ -262,8 +280,11 @@ fn serve(cfg: Config, dev: &mut Dev, events: &Receiver<notify::Result<notify::Ev
         let start = Instant::now();
         let root = session.cfg.root.clone();
         let src = session.cfg.src();
+        let asset_roots = session.cfg.asset_roots();
         let (mut changed, mut rescan, mut shape, mut luau, mut stale) =
             (Vec::new(), false, false, Vec::new(), Vec::new());
+        // `ids`: the lock changed, or an asset file came or went; `edited`: asset files whose content changed
+        let (mut ids, mut edited) = (false, Vec::new());
         // a full read of place/ already holds every later place/ event of the burst
         let mut place_read = false;
         for path in &paths {
@@ -282,6 +303,19 @@ fn serve(cfg: Config, dev: &mut Dev, events: &Receiver<notify::Result<notify::Ev
                     // keep serving the last good configuration until the file is fixed
                     Err(message) => out.emit(&Event::Error { message: &message, fatal: false }),
                 }
+            }
+            if name == lock::FILE {
+                ids = true;
+                continue;
+            }
+            if let Some(asset_root) = asset_roots.iter().find(|r| path.starts_with(r)) {
+                let file = name.to_string();
+                if path.is_file() && session.asset_files.contains(&file) {
+                    edited.push(file);
+                } else if !is_hidden(&path, asset_root) {
+                    ids = true;
+                }
+                continue;
             }
             if rel.starts_with("place") {
                 if !place_read {
@@ -306,7 +340,26 @@ fn serve(cfg: Config, dev: &mut Dev, events: &Receiver<notify::Result<notify::Ev
                 _ => {}
             }
         }
-        if changed.is_empty() && !rescan && !shape && luau.is_empty() && stale.is_empty() {
+        if !edited.is_empty() {
+            out.emit(&Event::Assets { changed: &edited });
+        }
+        // the id modules: new types load the program again, new sources (or warnings) only publish
+        let mut modules = false;
+        if ids {
+            match session.render_modules() {
+                Ok(None) => {}
+                Ok(Some(types)) => {
+                    rescan |= types;
+                    modules = true;
+                    let cfg = &session.cfg;
+                    if let Err(message) = editor::write(&cfg.root, &cfg.ts, &session.modules) {
+                        out.emit(&Event::Error { message: &message, fatal: false });
+                    }
+                }
+                Err(message) => out.emit(&Event::Error { message: &message, fatal: false }),
+            }
+        }
+        if changed.is_empty() && !rescan && !shape && luau.is_empty() && stale.is_empty() && !modules {
             dev.answer(fenced);
             continue;
         }
@@ -321,7 +374,7 @@ fn serve(cfg: Config, dev: &mut Dev, events: &Receiver<notify::Result<notify::Ev
         if shape {
             dev.reshape(&mut session);
         } else {
-            dev.edit(&mut session, &luau);
+            dev.edit(&mut session, &luau, modules);
         }
         let mut phases = stats.times;
         phases.push(("publish", t.elapsed().as_secs_f64() * 1000.0));
@@ -372,9 +425,10 @@ impl Dev<'_> {
         }
     }
 
-    /// Only sources changed: sets them on the tree, unless the shape changed after all: a module that had no output
-    /// gained one (its node is a folder, or nothing), or the runtime library came or went.
-    fn edit(&mut self, session: &mut Session, luau: &[PathBuf]) {
+    /// Only sources changed (with `modules`, the id modules' too): sets them on the tree, unless the shape changed
+    /// after all: a module that had no output gained one (its node is a folder, or nothing), or the runtime library
+    /// came or went.
+    fn edit(&mut self, session: &mut Session, luau: &[PathBuf], modules: bool) {
         let mut files: Vec<PathBuf> = session.rendered.drain(..).map(PathBuf::from).collect();
         files.extend(luau.iter().cloned());
         let root = session.cfg.root.clone();
@@ -399,6 +453,13 @@ impl Dev<'_> {
                 _ => return self.reshape(session),
             }
             entries.push((m.full_name(), log_entry(session, &root, file)));
+        }
+        for m in session.modules.iter().filter(|_| modules) {
+            let Some(luau) = &m.luau else { continue };
+            match self.tree.find(&format!("{MODULES}/{}", m.name)) {
+                Some(id) => edits.push((id, place::Source::new(luau.as_str().into()))),
+                None => return self.reshape(session),
+            }
         }
         self.tree.set_sources(edits);
         self.index.lock().unwrap_or_else(|e| e.into_inner()).extend(entries);

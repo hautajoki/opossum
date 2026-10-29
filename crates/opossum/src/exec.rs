@@ -276,8 +276,8 @@ pub fn test_cloud(
     if options.timeout.is_some_and(|t| t > CLOUD_TIMEOUT) {
         return Err(refused(format!("--timeout with --cloud is at most {CLOUD_TIMEOUT} s, Open Cloud's limit")));
     }
-    editor::write(&cfg.root, &cfg.ts).map_err(refused)?;
-    let mut session = Session::new(cfg, None).map_err(refused)?;
+    let mut session = Session::new(cfg, None, environment).map_err(refused)?;
+    editor::write(&session.cfg.root, &session.cfg.ts, &session.modules).map_err(refused)?;
     session.build().map_err(refused)?;
     session.tree(false);
     let root = session.cfg.root.clone();

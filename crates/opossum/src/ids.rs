@@ -8,8 +8,76 @@ use std::path::Path;
 
 use luau::{is_valid_identifier, luau_string};
 
+use crate::assets;
+use crate::config::{self, Config, Environment};
 use crate::diag::{Diag, Severity};
-use crate::lock::Asset;
+use crate::editor::{self, Module};
+use crate::lock::{Asset, Lock};
+
+/// The project's virtual modules for a build in `environment` (None without `[environments]`): `opossum/<set>` for
+/// each asset set from the files discovery `found` and their records in `lock`, `opossum/resources`, and the suite
+/// types. With the warnings that say where the ids are not yet what the files and the config hold: `asset.*`,
+/// `lock.merged`, `lock.conflict` and `resource.notProvisioned`.
+pub fn modules(
+    cfg: &Config,
+    environment: Option<&Environment>,
+    lock: &Lock,
+    found: &[assets::Asset],
+) -> (Vec<Module>, Vec<Diag>) {
+    let root = &cfg.root;
+    let mut diags = lock.merge_warnings(root);
+    diags.extend(lock.conflicts(root, Severity::Warning));
+    let mut modules = Vec::new();
+    for (i, set) in cfg.assets.iter().enumerate() {
+        let mut values = Vec::new();
+        for a in found.iter().filter(|a| a.set == i) {
+            let (value, warning) = value(root, &a.file, lock.assets.get(&a.file));
+            diags.extend(warning);
+            values.push((a.key.clone(), value));
+        }
+        let (luau, types) = render_set(&set.name, &values);
+        modules.push(Module { name: set.name.clone(), types, luau: Some(luau) });
+    }
+    if let Some(env) = environment {
+        let records = lock.universes.get(&env.universe);
+        let file = root.join(config::FILE);
+        let mut ids = |kind: &str, keys: Vec<&str>| -> Vec<(String, Option<u64>)> {
+            let mut out = Vec::new();
+            for key in keys {
+                let resource = format!("{kind}/{key}");
+                let conflict = lock.conflicts.contains(&(env.universe, resource.clone()));
+                let id = records.and_then(|r| r.get(&resource)).and_then(|r| r.id).filter(|_| !conflict);
+                if id.is_none() && !conflict {
+                    let message = format!(
+                        "{resource} has no id in universe {} yet, so opossum/resources leaves it out; run `opossum \
+                         provision`",
+                        env.universe
+                    );
+                    diags.push(Diag::new("resource.notProvisioned", Severity::Warning, Some(&file), message));
+                }
+                out.push((key.to_owned(), id));
+            }
+            out
+        };
+        let passes = ids("pass", cfg.passes.iter().map(|p| p.key.as_str()).collect());
+        let products = ids("product", cfg.products.iter().map(|p| p.key.as_str()).collect());
+        let badges = ids("badge", cfg.badges.iter().map(|b| b.key.as_str()).collect());
+        let thumbnails = cfg.experience.iter().flat_map(|e| e.thumbnails.iter().map(|t| t.key.as_str())).collect();
+        let thumbnails = ids("thumbnail", thumbnails);
+        let (luau, types) = render_resources(&Resources {
+            environment: &env.name,
+            universe: env.universe,
+            places: &env.places,
+            passes: &passes,
+            products: &products,
+            badges: &badges,
+            thumbnails: &thumbnails,
+        });
+        modules.push(Module { name: "resources".to_owned(), types, luau: Some(luau) });
+    }
+    modules.push(editor::test_module());
+    (modules, diags)
+}
 
 /// What a build puts in its set's module for `file`: its id from the lock, or `""` before its first upload, with the
 /// warning that says why it is not yet what the files hold.

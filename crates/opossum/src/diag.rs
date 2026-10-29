@@ -16,7 +16,7 @@ pub enum Severity {
     Note,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Diag {
     pub code: String,
     pub severity: Severity,

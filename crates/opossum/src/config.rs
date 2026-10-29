@@ -137,6 +137,15 @@ impl Config {
         found.ok_or_else(|| format!("environment `{name}` is not declared; choose one of: {names}"))
     }
 
+    /// The environment whose ids a build's `opossum/resources` holds: `--environment`, else the default one; None
+    /// without `[environments]` and a flag.
+    pub fn build_environment(&self, name: Option<&str>) -> Result<Option<&Environment>, String> {
+        match name {
+            None if self.environments.is_empty() => Ok(None),
+            name => self.environment(name).map(Some),
+        }
+    }
+
     /// Every asset set's root, which the place reader leaves out of `place/`.
     pub fn asset_roots(&self) -> Vec<PathBuf> {
         self.assets.iter().map(|s| self.root.join(&s.root)).collect()

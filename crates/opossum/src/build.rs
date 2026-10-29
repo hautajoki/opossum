@@ -16,12 +16,15 @@ use tsrs_core::P;
 
 use crate::config::Config;
 use crate::diag::{self, Diag, Severity};
-use crate::editor;
+use crate::editor::{self, Module};
 use crate::inputs;
 use crate::packages::{self, Package};
+use crate::{assets, ids, lock};
 
 /// Where the runtime library and its Promise mount.
 pub const RUNTIME: &str = "ReplicatedStorage/rbxts";
+/// Where the virtual module `opossum/<name>` mounts, under the runtime's folder.
+pub const MODULES: &str = "ReplicatedStorage/rbxts/opossum";
 const RUNTIME_LIB: &str = include_str!("../../../runtime/RuntimeLib.luau");
 const PROMISE: &str = include_str!("../../../runtime/Promise.luau");
 
@@ -69,6 +72,15 @@ impl Stats {
 
 pub struct Session {
     pub cfg: Config,
+    /// The environment whose ids `opossum/resources` holds; None without `[environments]`.
+    environment: Option<String>,
+    /// The virtual modules `opossum/<name>`, rendered from the lock and the asset roots' files.
+    pub modules: Vec<Module>,
+    /// What rendering them reported: asset discovery, the lock, resources not provisioned, the O2 gate.
+    module_diags: Vec<Diag>,
+    /// The asset files discovery found, relative to the root: an event on one that is still there changed its
+    /// content, never the modules.
+    pub asset_files: FxHashSet<String>,
     exclude: GlobSet,
     native: GlobSet,
     pub routes: route::Routes,
@@ -151,8 +163,10 @@ fn requires_runtime(ast: &[Stmt], runtime: &ModulePath) -> bool {
 }
 
 impl Session {
-    /// A session for `cfg`, with the `[profile.<name>]` excludes when a profile is given.
-    pub fn new(cfg: Config, profile: Option<&str>) -> Result<Session, String> {
+    /// A session for `cfg`, with the `[profile.<name>]` excludes when a profile is given, its id modules holding
+    /// `environment`'s ids (`--environment`: the default one when None).
+    pub fn new(cfg: Config, profile: Option<&str>, environment: Option<&str>) -> Result<Session, String> {
+        let environment = cfg.build_environment(environment)?.map(|e| e.name.clone());
         // from the real source directory: the repository is the one that holds the code, even through a link
         let git = inputs::start_git(&cfg.src().canonicalize().unwrap_or_else(|_| cfg.root.clone()));
         let exclude = match profile {
@@ -167,8 +181,12 @@ impl Session {
             build_time: inputs::build_time(),
             ..lower::Options::default()
         };
-        Ok(Session {
+        let mut session = Session {
             cfg,
+            environment,
+            modules: Vec::new(),
+            module_diags: Vec::new(),
+            asset_files: FxHashSet::default(),
             exclude,
             native,
             routes,
@@ -192,7 +210,42 @@ impl Session {
             place: None,
             runtime: [RUNTIME_LIB, PROMISE].map(|text| place::Source::new(text.into())),
             rendered: Vec::new(),
-        })
+        };
+        session.render_modules()?;
+        Ok(session)
+    }
+
+    /// Renders the virtual modules again from the lock and the asset roots as they are now. Returns None when nothing
+    /// changed, Some(false) when only their sources or diagnostics did (a new id: the tree takes the sources),
+    /// Some(true) when their types did (a file came or went: the program loads again, and the tree changes shape).
+    /// Fails only when the lock cannot be read.
+    pub fn render_modules(&mut self) -> Result<Option<bool>, String> {
+        let root = &self.cfg.root;
+        let environment = self.cfg.build_environment(self.environment.as_deref())?;
+        let (lock, mut diags) = lock::read(root)?;
+        let (found, discovered) = assets::discover(root, &self.cfg.assets);
+        diags.extend(discovered);
+        let (modules, warnings) = ids::modules(&self.cfg, environment, &lock, &found);
+        diags.extend(warnings);
+        for m in &modules {
+            if let Some(Err(e)) = m.luau.as_deref().map(|luau| luau::gate::compile(luau, 2, 1)) {
+                let file = editor::module_luau(&self.cfg.root, &m.name);
+                let mut d = Diag::new("luau.gate", Severity::Error, Some(&file), e.message);
+                (d.line, d.col) = (e.line, 1);
+                diags.push(d);
+            }
+        }
+        self.asset_files = found.into_iter().map(|a| a.file).collect();
+        let types = |m: &[Module]| m.iter().map(|m| (m.name.clone(), m.types.clone())).collect::<Vec<_>>();
+        let sources = |m: &[Module]| m.iter().map(|m| m.luau.clone()).collect::<Vec<_>>();
+        let changed = if types(&modules) != types(&self.modules) {
+            Some(true)
+        } else {
+            (sources(&modules) != sources(&self.modules) || diags != self.module_diags).then_some(false)
+        };
+        self.modules = modules;
+        self.module_diags = diags;
+        Ok(changed)
     }
 
     /// Routes `src/` again: the module list, route diagnostics, the source part of the locator and the `@native`
@@ -231,13 +284,18 @@ impl Session {
                 native.insert(slashed(&m.file));
             }
         }
-        // the runtime library is a module of its own route root
-        let runtime = ModulePath {
-            names: vec!["ReplicatedStorage".into(), "rbxts".into(), "RuntimeLib".into()],
-            root: 2,
-            init: false,
+        // the runtime library and the virtual modules are modules of their own route root
+        let root = slashed(&self.cfg.root);
+        let shared = |names: Vec<String>| Location {
+            module: ModulePath { names, root: 2, init: false },
+            realm: lower::Realm::Shared,
         };
-        self.locator = Locator { files, runtime_lib: Some(Location { module: runtime, realm: lower::Realm::Shared }) };
+        for m in self.modules.iter().filter(|m| m.luau.is_some()) {
+            let names = MODULES.split('/').map(str::to_owned).chain([m.name.clone()]).collect();
+            files.insert(lower::program::module_file(&root, &m.name), shared(names));
+        }
+        let runtime = shared(vec!["ReplicatedStorage".into(), "rbxts".into(), "RuntimeLib".into()]);
+        self.locator = Locator { files, runtime_lib: Some(runtime) };
         self.options.native_files = native;
         self.scan = scan;
     }
@@ -262,7 +320,7 @@ impl Session {
         let checkers = std::thread::available_parallelism().map_or(4, usize::from);
         let root = slashed(&self.cfg.root);
         let options = LoadOptions {
-            overlay: editor::overlay(&root, &editor::modules()),
+            overlay: editor::overlay(&root, &self.modules),
             root,
             files: self.root_files(),
             checkers,
@@ -492,6 +550,7 @@ impl Session {
     /// Every diagnostic: routing, the place, then each file's (by file, then line), then the program's.
     pub fn diagnostics(&self) -> Vec<Diag> {
         let mut out: Vec<Diag> = self.route_diags.clone();
+        out.extend(self.module_diags.iter().cloned());
         out.extend(self.place_diags.iter().cloned());
         out.extend(self.mount_diags.iter().cloned());
         let mut files: Vec<&String> = self.file_diags.keys().collect();
@@ -593,6 +652,16 @@ impl Session {
                 diags.push(diag::from_place(&d));
             }
         }
+        for m in &self.modules {
+            let Some(luau) = &m.luau else { continue };
+            let file: Arc<Path> = Arc::from(editor::module_luau(&self.cfg.root, &m.name).as_path());
+            let source = place::Source::new(luau.as_str().into());
+            if let Err(d) =
+                tree.set_script(&format!("{MODULES}/{}", m.name), place::ScriptKind::Module, source, Some(file))
+            {
+                diags.push(diag::from_place(&d));
+            }
+        }
         if runtime || shapes {
             for (name, source) in ["RuntimeLib", "Promise"].iter().zip(&self.runtime) {
                 let path = format!("{RUNTIME}/{name}");
@@ -621,7 +690,7 @@ impl Session {
             || self.packages.iter().any(|(_, files)| files.iter().any(|f| f.source.text.contains(packages::TS_REQUIRE)))
     }
 
-    /// The Luau of every routed module (compiled or source), by instance path.
+    /// The Luau of every routed module (compiled or source) and of the id modules, by instance path.
     pub fn outputs(&self) -> BTreeMap<String, String> {
         let mut out = BTreeMap::new();
         for m in &self.scan.modules {
@@ -631,6 +700,11 @@ impl Session {
             };
             if let Some(source) = source {
                 out.insert(m.instance.join("/"), source);
+            }
+        }
+        for m in &self.modules {
+            if let Some(luau) = &m.luau {
+                out.insert(format!("{MODULES}/{}", m.name), luau.clone());
             }
         }
         out
@@ -647,4 +721,60 @@ pub fn emit(dir: &Path, outputs: &BTreeMap<String, String>) -> Result<(), String
         std::fs::write(&file, source).map_err(|e| format!("{}: {e}", file.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The id modules build like any module, and what an edit under an asset root or to the lock changes decides how
+    /// dev takes it: a new id only sets sources, a file coming or going loads the program again, new bytes nothing.
+    #[test]
+    fn id_modules_build_and_say_what_an_edit_changed() {
+        let root = std::env::temp_dir().join(format!("opossum-build-ids-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for dir in ["src/shared", "art/sfx"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        let write = |file: &str, text: &str| std::fs::write(root.join(file), text).unwrap();
+        write(
+            "opossum.toml",
+            "name = \"ids\"\ncreator = { user = 1 }\n[routes]\nshared = \"ReplicatedStorage/shared\"\n\
+             [assets]\nsfx = \"art/sfx\"\n",
+        );
+        write("art/sfx/boom.ogg", "ogg");
+        let lock = |id: u64| {
+            format!("version = 1\n[assets]\n\"art/sfx/boom.ogg\" = {{ id = {id}, hash = \"{}\" }}\n", "0".repeat(32))
+        };
+        write("opossum.lock", &lock(5));
+        write("src/shared/a.ts", "import sfx from \"opossum/sfx\";\nexport const boom: string = sfx.boom;\n");
+        let cfg = crate::config::load(&root.join("opossum.toml")).unwrap();
+        let (mut session, errors, tree) = std::thread::Builder::new()
+            .stack_size(lower::STACK_SIZE)
+            .spawn(move || {
+                let mut session = Session::new(cfg, None, None).unwrap();
+                session.build().unwrap();
+                let tree = session.tree(false);
+                // without node_modules the program lacks the global types, which only the program's own errors say
+                let errors: Vec<Diag> =
+                    session.diagnostics().into_iter().filter(|d| d.is_error() && d.file.is_some()).collect();
+                (session, errors, tree)
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        let module = tree.get(tree.find(&format!("{MODULES}/sfx")).unwrap()).unwrap();
+        assert!(module.source.as_ref().unwrap().text.contains("boom = \"rbxassetid://5\""));
+        let a = &session.compiled[&slashed(&session.cfg.root.join("src/shared/a.ts"))].source.text;
+        assert!(a.contains("require(\"@game/ReplicatedStorage/rbxts/opossum/sfx\")"), "{a}");
+
+        write("art/sfx/boom.ogg", "new bytes");
+        assert_eq!(session.render_modules().unwrap(), None);
+        write("opossum.lock", &lock(6));
+        assert_eq!(session.render_modules().unwrap(), Some(false));
+        write("art/sfx/bang.ogg", "ogg");
+        assert_eq!(session.render_modules().unwrap(), Some(true));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

@@ -20,9 +20,14 @@ pub struct Module {
     pub luau: Option<String>,
 }
 
-/// The project's virtual modules.
-pub fn modules() -> Vec<Module> {
-    vec![Module { name: "test".to_owned(), types: include_str!("test.d.ts").to_owned(), luau: None }]
+/// `opossum/test`: the suite types, with no runtime module.
+pub fn test_module() -> Module {
+    Module { name: "test".to_owned(), types: include_str!("test.d.ts").to_owned(), luau: None }
+}
+
+/// The editor's copy of a module's Luau source, which the sourcemap points luau-lsp at.
+pub fn module_luau(root: &Path, name: &str) -> PathBuf {
+    dir(root).join("modules").join(format!("{name}.luau"))
 }
 
 /// What every program of the project at `root` reads from memory: lowering's declarations and the modules' types.
@@ -32,20 +37,19 @@ pub fn overlay(root: &str, modules: &[Module]) -> Vec<(String, String)> {
     files
 }
 
-/// Writes `tsconfig.json`, the injected declarations and the modules, leaving files whose text is already right
-/// alone, and removes what `modules/` holds of a module the project no longer has.
-pub fn write(root: &Path, flags: &[(String, bool)]) -> Result<(), String> {
+/// Writes `tsconfig.json`, the injected declarations and `modules`, leaving files whose text is already right alone,
+/// and removes what `modules/` holds of a module the project no longer has.
+pub fn write(root: &Path, flags: &[(String, bool)], modules: &[Module]) -> Result<(), String> {
     let dir = dir(root);
     let modules_dir = dir.join("modules");
     std::fs::create_dir_all(&modules_dir).map_err(|e| format!("{}: {e}", modules_dir.display()))?;
-    let modules = modules();
-    let overlay = overlay(&root.to_string_lossy(), &modules);
+    let overlay = overlay(&root.to_string_lossy(), modules);
     write_if_changed(&dir.join("tsconfig.json"), &tsconfig(root, flags, &overlay))?;
     for (path, text) in &overlay {
         write_if_changed(Path::new(path), text)?;
     }
     let mut keep = Vec::new();
-    for m in &modules {
+    for m in modules {
         keep.push(format!("{}.d.ts", m.name));
         if let Some(luau) = &m.luau {
             let file = format!("{}.luau", m.name);
@@ -124,7 +128,7 @@ mod tests {
     #[test]
     fn tsconfig_agrees_with_the_compiler_options() {
         let root = "/project";
-        let overlay = super::overlay(root, &super::modules());
+        let overlay = super::overlay(root, &[super::test_module()]);
         let config: serde_json::Value = serde_json::from_str(&super::tsconfig(Path::new(root), &[], &overlay)).unwrap();
         let editor = "/project/.opossum";
 

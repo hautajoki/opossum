@@ -1,6 +1,6 @@
 //! opossum: one binary from a TypeScript + Luau Roblox project to a Studio session or a place. See DESIGN.md.
 
-#[allow(dead_code)] // until the asset commands use it
+#[allow(dead_code)] // until the asset commands use all of it
 mod assets;
 mod build;
 mod config;
@@ -11,10 +11,9 @@ mod event;
 mod exec;
 #[allow(dead_code)] // until the asset commands use it
 mod guard;
-#[allow(dead_code)] // until the asset commands use it
 mod ids;
 mod inputs;
-#[allow(dead_code)] // until the asset commands use it
+#[allow(dead_code)] // until the asset commands use all of it
 mod lock;
 mod packages;
 #[allow(dead_code)] // until the asset commands use it
@@ -33,9 +32,10 @@ use diag::Diag;
 static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 
 const USAGE: &str = "usage: opossum [-C <dir>] <command>
-  build [--profile <name>] [-o <file.rbxl>] [--emit <dir>]   build the place (.opossum/place.rbxl)
-  check [--profile <name>] [--json]                          diagnostics, no output
-  dev [--json]                                               watch, rebuild and sync to Studio
+  build [--profile <name>] [--environment <e>] [-o <file.rbxl>] [--emit <dir>]
+                                                             build the place (.opossum/place.rbxl)
+  check [--profile <name>] [--environment <e>] [--json]      diagnostics, no output
+  dev [--environment <e>] [--json]                           watch, rebuild and sync to Studio
   exec [<target>] [--timeout <s>] [--json] (<file.luau> | -e <code> | -)
                                                              run Luau (Studio or --local)
   test [<target>] [--timeout <s>] [--allow-focused] [--json] [<filter>]
@@ -56,9 +56,9 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
   migrate                                                    convert Rojo meta files and refs, and [place]";
 
 enum Command {
-    Build { profile: Option<String>, out: Option<PathBuf>, emit: Option<PathBuf> },
-    Check { profile: Option<String>, json: bool },
-    Dev { json: bool },
+    Build { profile: Option<String>, environment: Option<String>, out: Option<PathBuf>, emit: Option<PathBuf> },
+    Check { profile: Option<String>, environment: Option<String>, json: bool },
+    Dev { environment: Option<String>, json: bool },
     Exec(exec::Options, exec::Target, exec::Source),
     Test(exec::Options, exec::Target, exec::Tests),
     Play(exec::Options, bool),
@@ -132,8 +132,13 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         _ => None,
     };
     let timed = runs || matches!(verb, Some("play" | "stop" | "pull" | "attach"));
-    let targeted = realm.is_some() || local || interpreted || cloud || place.is_some() || environment.is_some();
-    let stray = targeted && !runs || timeout.is_some() && !timed || allow_focused && !tests;
+    let targeted = realm.is_some() || local || interpreted || cloud || place.is_some();
+    // the ids `opossum/resources` holds, or where a cloud run runs
+    let environed = tests || matches!(verb, Some("build" | "check" | "dev"));
+    let stray = targeted && !runs
+        || environment.is_some() && !environed
+        || timeout.is_some() && !timed
+        || allow_focused && !tests;
     if stray || code.is_some() && verb != Some("exec") || run && verb != Some("play") || force && verb != Some("attach")
     {
         return Err(USAGE.to_owned());
@@ -141,9 +146,9 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     let options = || exec::Options { json, timeout };
     let built = profile.is_some() || out.is_some() || emit.is_some();
     let command = match (verb, positional.as_slice(), target) {
-        (Some("build"), [], _) if !json => Command::Build { profile, out, emit },
-        (Some("check"), [], _) if out.is_none() && emit.is_none() => Command::Check { profile, json },
-        (Some("dev"), [], _) if !built => Command::Dev { json },
+        (Some("build"), [], _) if !json => Command::Build { profile, environment, out, emit },
+        (Some("check"), [], _) if out.is_none() && emit.is_none() => Command::Check { profile, environment, json },
+        (Some("dev"), [], _) if !built => Command::Dev { environment, json },
         (Some("exec"), [], Some(target)) if code.is_some() && !built => {
             Command::Exec(options(), target, exec::Source::Code(code.clone().unwrap_or_default()))
         }
@@ -216,7 +221,7 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         // before loading: the config it fixes does not load
         Command::Migrate => return migrate(&config::find(&start)?),
         // loads it itself, so a broken one is an event too
-        Command::Dev { json } => return dev::run(&start, json),
+        Command::Dev { environment, json } => return dev::run(&start, json, environment.as_deref()),
         _ => {}
     }
     let file = config::find(&start)?;
@@ -251,12 +256,13 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Command::Attach(options, force) => return exec::attach(&cfg, &options, force),
         _ => {}
     }
-    editor::write(&cfg.root, &cfg.ts)?;
     match command {
-        Command::Build { profile, out, emit } => build(cfg, profile.as_deref(), out, emit),
-        Command::Check { profile, json } => check(cfg, profile.as_deref(), json),
-        Command::Where(target) => where_(cfg, &cwd, &target),
-        Command::Sourcemap => sourcemap(cfg),
+        Command::Build { profile, environment, out, emit } => {
+            build(cfg, profile.as_deref(), environment.as_deref(), out, emit)
+        }
+        Command::Check { profile, environment, json } => check(cfg, profile.as_deref(), environment.as_deref(), json),
+        Command::Where(target) => where_(session(cfg, None, None)?, &cwd, &target),
+        Command::Sourcemap => sourcemap(session(cfg, None, None)?),
         Command::Plugin(_)
         | Command::Migrate
         | Command::Dev { .. }
@@ -268,6 +274,13 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         | Command::Status(..)
         | Command::Attach(..) => unreachable!("handled above"),
     }
+}
+
+/// A session for the one-shot commands, with the editor's files written for its modules.
+fn session(cfg: Config, profile: Option<&str>, environment: Option<&str>) -> Result<Session, String> {
+    let session = Session::new(cfg, profile, environment)?;
+    editor::write(&session.cfg.root, &session.cfg.ts, &session.modules)?;
+    Ok(session)
 }
 
 /// Prints the diagnostics and a count per code; returns whether there were no errors.
@@ -296,9 +309,15 @@ fn ms(since: Instant) -> f64 {
     since.elapsed().as_secs_f64() * 1000.0
 }
 
-fn build(cfg: Config, profile: Option<&str>, out: Option<PathBuf>, emit: Option<PathBuf>) -> Result<bool, String> {
+fn build(
+    cfg: Config,
+    profile: Option<&str>,
+    environment: Option<&str>,
+    out: Option<PathBuf>,
+    emit: Option<PathBuf>,
+) -> Result<bool, String> {
     let start = Instant::now();
-    let mut session = Session::new(cfg, profile)?;
+    let mut session = session(cfg, profile, environment)?;
     let stats = session.build()?;
     let t = Instant::now();
     let tree = session.tree(false);
@@ -327,9 +346,9 @@ fn build(cfg: Config, profile: Option<&str>, out: Option<PathBuf>, emit: Option<
     Ok(ok)
 }
 
-fn check(cfg: Config, profile: Option<&str>, json: bool) -> Result<bool, String> {
+fn check(cfg: Config, profile: Option<&str>, environment: Option<&str>, json: bool) -> Result<bool, String> {
     let start = Instant::now();
-    let mut session = Session::new(cfg, profile)?;
+    let mut session = session(cfg, profile, environment)?;
     let stats = session.build()?;
     session.tree(false);
     let diags = session.diagnostics();
@@ -344,8 +363,7 @@ fn check(cfg: Config, profile: Option<&str>, json: bool) -> Result<bool, String>
     Ok(ok)
 }
 
-fn sourcemap(cfg: Config) -> Result<bool, String> {
-    let mut session = Session::new(cfg, None)?;
+fn sourcemap(mut session: Session) -> Result<bool, String> {
     session.shapes()?;
     let tree = session.tree(true);
     let root = &session.cfg.root;
@@ -429,9 +447,9 @@ pub fn canonical_prefix(path: &Path) -> std::io::Result<PathBuf> {
     }
 }
 
-fn where_(cfg: Config, cwd: &Path, target: &str) -> Result<bool, String> {
-    let file = [cwd.join(target), cfg.root.join(target)].into_iter().find(|f| f.exists()).unwrap_or_default();
-    let mut session = Session::new(cfg, None)?;
+fn where_(mut session: Session, cwd: &Path, target: &str) -> Result<bool, String> {
+    let root = &session.cfg.root;
+    let file = [cwd.join(target), root.join(target)].into_iter().find(|f| f.exists()).unwrap_or_default();
     session.rescan();
     let root = session.cfg.root.clone();
     if file.is_file() {

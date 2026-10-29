@@ -69,6 +69,10 @@ pub enum Event<'a> {
         ms: f64,
         error: Option<&'a str>,
     },
+    /// Asset files whose content changed: their ids still hold what was uploaded, until `opossum upload`.
+    Assets {
+        changed: &'a [String],
+    },
     /// A config file changed: the session starts over.
     Restart {
         file: &'a str,
@@ -156,6 +160,13 @@ impl Event<'_> {
                 let error = error.unwrap_or("failed").lines().next().unwrap_or("");
                 format!("[{}] {name} failed, generation {generation}: {error}", realm.name())
             }
+            Event::Assets { changed } => {
+                let (them, files) = if changed.len() == 1 { ("it", "") } else { ("them", "s") };
+                format!(
+                    "asset{files} changed since upload: {}; `opossum upload` to see {them} in game",
+                    changed.join(", ")
+                )
+            }
             Event::Restart { file } => format!("{file} changed, starting over"),
             Event::Error { message, .. } => format!("opossum: {message}"),
         }
@@ -225,6 +236,7 @@ impl Event<'_> {
                 "ms": ms,
                 "error": error,
             }),
+            Event::Assets { changed } => json!({"t": "assets", "changed": changed, "run": "opossum upload"}),
             Event::Restart { file } => json!({"t": "restart", "file": file}),
             Event::Error { message, fatal } => json!({"t": "error", "message": message, "fatal": fatal}),
         }
