@@ -468,7 +468,7 @@ require of it" runs saw the new value, for a `.luau` module and for a TypeScript
 (46 ms median with nothing saved, the fence's wait); new files 85–94 ms; the play server with hot reload 20 of 20. 20
 of 20 "write a module and a spec expecting its value, immediately `opossum test` it" runs passed, 155 ms each in edit
 (1.26 s while every run compiled every module afresh). `opossum test` over a large project's 1,203 cases: 13.7 s in edit, steady
-over 15 runs in a row, 24 s in the play server; the 176 suites hexagon also runs locally hold the same 1,107 cases.
+over 15 runs in a row, 24 s in the play server; its 176 suites that also run locally hold the same 1,107 cases.
 
 ## Pull
 
