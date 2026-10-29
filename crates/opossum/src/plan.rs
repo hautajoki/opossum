@@ -71,6 +71,9 @@ pub fn classify(root: &Path, lock: &mut Lock, found: &[assets::Asset], hashes: &
         })
         .collect();
     let unsettled = unsettled(lock);
+    // content Roblox refused, under whatever file sent it: a rename or a copy never sends it again
+    let refused: HashSet<String> =
+        lock.assets.values().chain(lock.merged.values().flatten()).filter_map(|a| a.rejected.clone()).collect();
     let mut classes = Vec::with_capacity(found.len());
     for (a, hash) in found.iter().zip(hashes) {
         if let Some(warning) = lock.settle(root, &a.file, hash) {
@@ -85,6 +88,7 @@ pub fn classify(root: &Path, lock: &mut Lock, found: &[assets::Asset], hashes: &
             record => {
                 let changed = record.is_some_and(|r| r.id.is_some());
                 match (unsettled.get(hash), held.get(hash)) {
+                    _ if refused.contains(hash) => Class::Rejected,
                     _ if !shares(a) => Class::Send { changed },
                     (Some(other), _) => Class::Ambiguous(copy_of(other)),
                     (None, Some(&id)) => Class::Reuses(id),

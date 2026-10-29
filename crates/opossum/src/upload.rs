@@ -118,7 +118,11 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
         match class {
             Class::Current => report.unchanged += 1,
             Class::Ambiguous(how) => report.ambiguous.push((a.file.clone(), how.clone())),
-            Class::Rejected => report.failed.push((a.file.clone(), plan::refused(&a.file), "asset.rejected".into())),
+            Class::Rejected => {
+                // the refusal follows the content to this file, so it outlives the record of the file that sent it
+                lock.assets.entry(a.file.clone()).or_default().rejected = Some(hashes[i].clone());
+                report.failed.push((a.file.clone(), plan::refused(&a.file), "asset.rejected".into()));
+            }
             Class::Reuses(id) => {
                 let record = lock.assets.entry(a.file.clone()).or_default();
                 (record.id, record.hash, record.rejected) = (Some(*id), Some(hashes[i].clone()), None);
@@ -563,9 +567,11 @@ pub fn adopt_asset(cfg: &Config, guard: &RemoteGuard, cwd: &Path, file: &str, id
             format!("adopted {key} as {id}\n")
         }
         (None, next, _) if next.is_some() || record.rejected.is_some() => {
-            if let Some(r) = lock.assets.get_mut(&key) {
+            // a refusal is of content, so it is forgotten for every file holding it
+            for r in lock.assets.values_mut().filter(|r| r.rejected.is_some() && r.rejected == record.rejected) {
                 r.rejected = None;
             }
+            lock.assets.retain(|file, r| *file == key || r.id.is_some() || r.next.is_some() || r.rejected.is_some());
             forget(&mut lock, &key, true);
             let what = if next.is_some() { "the upload" } else { "Roblox's refusal" };
             format!("forgot {what} of {key}; `opossum upload` sends it again\n")
@@ -912,8 +918,15 @@ mod tests {
             (out.exit, &out.json["failed"][0]["code"], sent(&mock, "POST", "")),
             (1, &json!("asset.rejected"), 1)
         );
-        assert_eq!(adopt(&root, "art/a.glb", None).exit, 0);
-        assert_eq!(record(&root, "art/a.glb"), None);
+        // the refusal is the content's: a rename or a copy carries it, and forgetting it on one forgets it for all
+        std::fs::rename(root.join("art/a.glb"), root.join("art/b.glb")).unwrap();
+        std::fs::write(root.join("art/c.glb"), "x").unwrap();
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!((out.exit, &out.json["dropped"], sent(&mock, "POST", "")), (1, &json!(1), 1), "{}", out.json);
+        assert_eq!(out.json["failed"].as_array().unwrap().len(), 2);
+        std::fs::remove_file(root.join("art/c.glb")).unwrap();
+        assert_eq!(adopt(&root, "art/b.glb", None).exit, 0);
+        assert_eq!(record(&root, "art/b.glb"), None);
         let out = run(&root, &mock, &stop_flag());
         assert_eq!((out.exit, sent(&mock, "POST", "")), (0, 2));
         let _ = std::fs::remove_dir_all(&root);
