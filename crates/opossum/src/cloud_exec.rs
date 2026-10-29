@@ -75,23 +75,31 @@ pub fn build(cfg: Config, profile: Option<&str>, environment: &str) -> Result<(S
     let mut session = Session::new(cfg, profile, Some(environment)).map_err(|e| refused("config", e))?;
     editor::write(&session.cfg.root, &session.cfg.ts, &session.modules).map_err(|e| refused("build", e))?;
     session.build().map_err(|e| refused("build", e))?;
+    let (rbxl, _) = rbxl(&mut session)?;
+    Ok((session, rbxl))
+}
+
+/// A built session's place as rbxl bytes with texture packs, and what the packs covered. Refused when the build has
+/// errors (printed on stderr) or the place is over Roblox's limit.
+pub fn rbxl(session: &mut Session) -> Result<(Vec<u8>, place::PackStats), Failure> {
+    let refused = |code, error| Failure { code, error, ran: false };
     let tree = session.tree(false);
-    let root = session.cfg.root.clone();
+    let root = &session.cfg.root;
     let errors: Vec<Diag> = session.diagnostics().into_iter().filter(Diag::is_error).collect();
     if !errors.is_empty() {
         for d in &errors {
-            eprintln!("{}", d.human(&root));
+            eprintln!("{}", d.human(root));
         }
         return Err(refused("build", "the project does not compile, so nothing was sent to Open Cloud".into()));
     }
     let packs = place::read_texture_packs(&root.join("place/texture-packs.json")).map_err(|e| refused("build", e))?;
     let mut rbxl = Vec::new();
-    place::write_rbxl(&mut tree.to_place(), &packs, &mut rbxl).map_err(|e| refused("build", e))?;
+    let stats = place::write_rbxl(&mut tree.to_place(), &packs, &mut rbxl).map_err(|e| refused("build", e))?;
     if rbxl.len() > cloud::MAX_PLACE {
         let error = format!("the place is {} MiB, over Roblox's 100 MiB", rbxl.len() >> 20);
         return Err(refused("place.tooLarge", error));
     }
-    Ok((session, rbxl))
+    Ok((rbxl, stats))
 }
 
 /// Runs `script` on `at` for at most `timeout`: on the saved version holding `rbxl` (the one the cache names, or one
@@ -105,7 +113,7 @@ pub fn run(
     script: &str,
     timeout: Duration,
 ) -> Result<Ran, Failure> {
-    let file = cache.dir.join("versions").join(format!("{}-{}", at.universe, at.id));
+    let file = versions(cache, at);
     let hash = rbxl.map(|bytes| blake3::hash(bytes).to_hex().to_string());
     let (mut version, mut saved) = (None, false);
     if let (Some(bytes), Some(hash)) = (rbxl, &hash) {
@@ -167,11 +175,22 @@ fn saved_version(
             (saved.map_err(|e| Failure { code: e.diag(), error: e.to_string(), ran: false })?, true)
         }
     };
+    remember(file, hash, version);
+    Ok((version, saved))
+}
+
+/// The cache file of `at`'s saved versions, shared by every worktree on the machine.
+pub fn versions(cache: &Cache, at: &Placed) -> PathBuf {
+    cache.dir.join("versions").join(format!("{}-{}", at.universe, at.id))
+}
+
+/// Makes `version` the cache's most recent line for the build hashed `hash`: a save (`deploy`'s too) that a cloud run
+/// of the same bytes then reuses.
+pub fn remember(file: &Path, hash: &str, version: u64) {
     warn(edit(file, |lines| {
         lines.retain(|(h, _)| h != hash);
         lines.insert(0, (hash.to_owned(), version));
     }));
-    Ok((version, saved))
 }
 
 /// A place's cache file: `<hash> <version>` lines, most recent first. Lines it cannot read are skipped.

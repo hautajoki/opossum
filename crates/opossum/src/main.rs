@@ -4,6 +4,7 @@ mod assets;
 mod build;
 mod cloud_exec;
 mod config;
+mod deploy;
 mod dev;
 mod diag;
 mod editor;
@@ -57,6 +58,9 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
   upload [--json]                                            upload new and changed assets, ids into opossum.lock
   provision [--environment <e>] [--allow-spend] [--json]     create and update passes, products, badges and the
                                                              experience; --allow-spend lets badge creates pay
+  deploy [--environment <e>] [--saved] [--allow-spend] [--json] [<place>...]
+                                                             upload, provision, then build and publish the places
+                                                             (--saved: save them unpublished)
   adopt [--json] asset <file> (<id> | --none)                settle an upload that may or may not have happened
   adopt [--environment <e>] [--json] (pass | product | badge | thumbnail) <key> (<id> | --none)
                                                              settle a create, or bind one made elsewhere
@@ -78,6 +82,7 @@ enum Command {
     Plan { environment: Option<String>, json: bool },
     Upload { json: bool },
     Provision { environment: Option<String>, allow_spend: bool, json: bool },
+    Deploy { environment: Option<String>, places: Vec<String>, saved: bool, allow_spend: bool, json: bool },
     Adopt { json: bool, what: Adopted, id: Option<u64> },
     Exec(exec::Options, exec::Target, exec::Source),
     Test(exec::Options, exec::Target, exec::Tests),
@@ -112,6 +117,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     let (mut realm, mut timeout, mut code, mut run) = (None, None, None, false);
     let (mut local, mut interpreted, mut cloud, mut place, mut environment) = (false, false, false, None, None);
     let (mut force, mut allow_focused, mut none, mut head, mut allow_spend) = (false, false, false, false, false);
+    let mut saved = false;
     let mut positional: Vec<&str> = Vec::new();
     let mut it = rest.iter().copied().skip(1);
     while let Some(arg) = it.next() {
@@ -139,6 +145,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
             "--none" => none = true,
             "--head" => head = true,
             "--allow-spend" => allow_spend = true,
+            "--saved" => saved = true,
             "-" => positional.push(arg),
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}")),
             _ => positional.push(arg),
@@ -165,7 +172,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     let timed = runs || matches!(verb, Some("play" | "stop" | "pull" | "attach"));
     let targeted = realm.is_some() || local || interpreted || cloud || place.is_some() || head;
     // the ids `opossum/resources` holds, or where a cloud run runs
-    let environed = runs || matches!(verb, Some("build" | "check" | "dev" | "plan" | "provision" | "adopt"));
+    let environed = runs || matches!(verb, Some("build" | "check" | "dev" | "plan" | "provision" | "deploy" | "adopt"));
     let stray = targeted && !runs
         || environment.is_some() && !environed
         || timeout.is_some() && !timed
@@ -175,7 +182,8 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         || run && verb != Some("play")
         || force && verb != Some("attach")
         || none && verb != Some("adopt")
-        || allow_spend && verb != Some("provision")
+        || allow_spend && !matches!(verb, Some("provision" | "deploy"))
+        || saved && verb != Some("deploy")
     {
         return Err(USAGE.to_owned());
     }
@@ -188,6 +196,10 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         (Some("plan"), [], _) if !built => Command::Plan { environment, json },
         (Some("upload"), [], _) if !built => Command::Upload { json },
         (Some("provision"), [], _) if !built => Command::Provision { environment, allow_spend, json },
+        (Some("deploy"), places, _) if !built => {
+            let places = places.iter().map(|p| (*p).to_owned()).collect();
+            Command::Deploy { environment, places, saved, allow_spend, json }
+        }
         (Some("adopt"), [kind @ ("asset" | "pass" | "product" | "badge" | "thumbnail"), name, id @ ..], _)
             if !built && id.len() == usize::from(!none) && (*kind != "asset" || environment.is_none()) =>
         {
@@ -315,6 +327,9 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Command::Provision { environment, allow_spend, json } => {
             return finish(provision(&file, environment.as_deref(), *allow_spend), *json);
         }
+        Command::Deploy { environment, places, saved, allow_spend, json } => {
+            return finish(deploy(&file, environment.as_deref(), places, *saved, *allow_spend), *json);
+        }
         Command::Adopt { json, what, id } => return finish(adopt(&file, &cwd, what, *id), *json),
         _ => {}
     }
@@ -347,6 +362,7 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         | Command::Plan { .. }
         | Command::Upload { .. }
         | Command::Provision { .. }
+        | Command::Deploy { .. }
         | Command::Adopt { .. }
         | Command::Exec(..)
         | Command::Test(..)
@@ -431,6 +447,28 @@ fn provision(file: &Path, environment: Option<&str>, allow_spend: bool) -> Outco
     };
     signals::install();
     resources::provision(&cfg, &client, &guard, environment, allow_spend, &signals::STOP)
+}
+
+/// `opossum deploy`, with the guard held and Ctrl-C asking it to stop.
+fn deploy(file: &Path, environment: Option<&str>, places: &[String], saved: bool, allow_spend: bool) -> Outcome {
+    let cfg = match config::load(file) {
+        Ok(cfg) => cfg,
+        Err(error) => return Outcome::refused("config", error),
+    };
+    let client = match open_cloud(&cfg.root) {
+        Ok(client) => client,
+        Err(refusal) => return refusal,
+    };
+    let cache = match Cache::default_dir() {
+        Ok(cache) => cache,
+        Err(error) => return Outcome::refused("cache", error),
+    };
+    let guard = match RemoteGuard::acquire(&cache) {
+        Ok(guard) => guard,
+        Err(error) => return Outcome::refused("guard", error),
+    };
+    signals::install();
+    deploy::deploy(&cfg, &client, &guard, &cache, environment, places, saved, allow_spend, &signals::STOP)
 }
 
 /// `opossum adopt`: offline, but it writes the lock, so it holds the guard.

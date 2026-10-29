@@ -68,23 +68,44 @@ struct Report {
     failed: Vec<(String, String, String)>,
 }
 
+/// An upload worked out and checked with nothing sent: the lock as read, with files bound to the ids it already holds
+/// for their content, the files, what classifying them found, and the groups to send, each compiled.
+pub struct Prepared {
+    lock: Lock,
+    found: Vec<File>,
+    creator: cloud::Creator,
+    report: Report,
+    groups: Vec<Group>,
+}
+
 /// `opossum upload`: hash every asset file, bind files whose content the lock already has an id for, upload the rest
 /// (an FBX whose id no other file holds is updated in place), resume uploads earlier runs left in flight, and drop
 /// the records of files that are gone. A file that fails its checks or its upload fails alone. Exit 1 when anything
 /// failed, stayed pending or is ambiguous; 2 when nothing was sent (errors in the config, the lock or the roots).
 pub fn upload(cfg: &Config, client: &Client, guard: &RemoteGuard, stop: &AtomicBool) -> Outcome {
+    match prepare(cfg) {
+        Ok(Some(prepared)) => send(cfg, client, guard, prepared, stop),
+        Ok(None) => idle(),
+        Err(refusal) => refusal,
+    }
+}
+
+/// An upload with no `[assets]`: nothing to do.
+pub fn idle() -> Outcome {
+    let json = json!({ "ok": true, "uploaded": 0, "reused": 0, "unchanged": 0, "dropped": 0, "pending": [],
+                        "ambiguous": [], "failed": [] });
+    Outcome { exit: 0, json, text: "nothing to upload: opossum.toml declares no [assets]\n".into() }
+}
+
+/// Everything an upload does before its first request: hash and classify every file against the lock, bind content
+/// it already has an id for, and group and compile what needs sending. None without `[assets]`; refused when the
+/// lock or a root has errors or the lock's assets belong to another creator.
+pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
     let root = &cfg.root;
-    let Some(creator) = cfg.creator.filter(|_| !cfg.assets.is_empty()) else {
-        let json = json!({ "ok": true, "uploaded": 0, "reused": 0, "unchanged": 0, "dropped": 0, "pending": [],
-                            "ambiguous": [], "failed": [] });
-        return Outcome { exit: 0, json, text: "nothing to upload: opossum.toml declares no [assets]\n".into() };
-    };
-    let (mut lock, found, hashes) = match plan::survey(cfg, "uploaded") {
-        Ok(survey) => survey,
-        Err(refusal) => return refusal,
-    };
+    let Some(creator) = cfg.creator.filter(|_| !cfg.assets.is_empty()) else { return Ok(None) };
+    let (mut lock, found, hashes) = plan::survey(cfg, "uploaded")?;
     if let Some(d) = lock.check_creator(root, creator) {
-        return Outcome::refused(&d.code, d.message);
+        return Err(Outcome::refused(&d.code, d.message));
     }
     let mut report = Report::default();
 
@@ -160,7 +181,35 @@ pub fn upload(cfg: &Config, client: &Client, guard: &RemoteGuard, stop: &AtomicB
     if lock.creator.is_none() && (report.reused > 0 || !ready.is_empty()) {
         lock.creator = Some(creator);
     }
+    Ok(Some(Prepared { lock, found, creator, report, groups: ready }))
+}
 
+impl Prepared {
+    /// What would stop a deploy after it sent something: a file that failed its checks, or an upload that may or may
+    /// not have happened. Deploy refuses on it first, each file printed on stderr.
+    pub fn refusal(&self) -> Option<Outcome> {
+        let r = &self.report;
+        for (file, error, _) in &r.failed {
+            eprintln!("{file}: {error}");
+        }
+        for (file, how) in &r.ambiguous {
+            eprintln!("{file}: {how}");
+        }
+        if let Some((_, _, code)) = r.failed.first() {
+            let error = format!("{} asset files fail their checks, so nothing was sent", count(r.failed.len()));
+            return Some(Outcome::refused(code, error));
+        }
+        let n = r.ambiguous.len();
+        let error =
+            format!("uploads of {} files may or may not have happened; `opossum adopt asset` settles each", count(n));
+        (n > 0).then(|| Outcome::refused("asset.ambiguous", error))
+    }
+}
+
+/// Sends a prepared upload, resuming what earlier runs left in flight, and drops the records of files that are gone.
+pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepared, stop: &AtomicBool) -> Outcome {
+    let root = &cfg.root;
+    let Prepared { mut lock, found, creator, mut report, groups: ready } = prepared;
     let mut broken = None;
     let mut auth = false;
     let (tx, rx) = mpsc::channel();

@@ -406,6 +406,15 @@ pub struct Target<'a> {
     pub creator: Option<Creator>,
 }
 
+impl<'a> Target<'a> {
+    /// `env`'s universe and root place, saved into `cfg`'s lock.
+    pub fn new(cfg: &'a Config, env: &Environment, client: &'a Client, guard: &'a RemoteGuard) -> Target<'a> {
+        let root = cfg.places.iter().find(|p| p.root).map(|p| p.name.as_str());
+        let place = env.places.iter().find(|(name, _)| Some(name.as_str()) == root).map_or(0, |&(_, id)| id);
+        Target { client, root: &cfg.root, guard, universe: env.universe, place, creator: cfg.creator }
+    }
+}
+
 #[derive(Default)]
 pub struct Tally {
     pub applied: usize,
@@ -806,13 +815,15 @@ pub fn provision(
         Ok(images) => images,
         Err((code, error)) => return Outcome::refused(code, error),
     };
-    let root_place = cfg.places.iter().find(|p| p.root).map(|p| p.name.as_str());
-    let place = env.places.iter().find(|(name, _)| Some(name.as_str()) == root_place).map_or(0, |&(_, id)| id);
-    let target = Target { client, root: &cfg.root, guard, universe: env.universe, place, creator: cfg.creator };
-    let (tally, fail) = apply(&target, &mut lock, &wants, &ops, &images, stop);
+    let (tally, fail) = apply(&Target::new(cfg, env, client, guard), &mut lock, &wants, &ops, &images, stop);
+    outcome(env, &ops, &tally, fail)
+}
+
+/// What provision did, as `provision` and `deploy` report it: exit 1 with the failure when it stopped part way.
+pub fn outcome(env: &Environment, ops: &[Op], tally: &Tally, fail: Option<Fail>) -> Outcome {
     let mut json = json!({
         "ok": fail.is_none(), "environment": env.name, "universeId": env.universe, "applied": tally.applied,
-        "noop": tally.noop, "retained": tally.retained, "deleted": tally.deleted, "operations": ops_json(&ops),
+        "noop": tally.noop, "retained": tally.retained, "deleted": tally.deleted, "operations": ops_json(ops),
     });
     let mut text = format!(
         "{}: {} applied, {} noop, {} retained, {} deleted\n",
@@ -827,7 +838,7 @@ pub fn provision(
 }
 
 /// The lock, refused when it cannot be read or has errors.
-fn read(cfg: &Config) -> Result<Lock, Outcome> {
+pub fn read(cfg: &Config) -> Result<Lock, Outcome> {
     let (lock, diags) = lock::read(&cfg.root).map_err(|error| Outcome::refused("lock.io", error))?;
     match diags.iter().find(|d| d.is_error()) {
         Some(d) => Err(Outcome::refused(&d.code, d.human(&cfg.root))),
