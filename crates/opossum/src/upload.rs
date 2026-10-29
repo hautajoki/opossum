@@ -578,9 +578,14 @@ pub fn adopt_asset(cfg: &Config, guard: &RemoteGuard, cwd: &Path, file: &str, id
         return Outcome::refused(&d.code, d.human(root));
     }
     let refuse = |error: String| Outcome::refused("asset.adopt", error);
-    let Some(record) = lock.assets.get(&key).cloned() else {
+    // after a merge, the record with the upload to settle, which a build's pick (the highest id) hides
+    let merged = lock.merged.get(&key).into_iter().flatten();
+    let in_flight =
+        merged.clone().find(|a| a.next.is_some() && a.op.is_none()).or(merged.clone().find(|a| a.next.is_some()));
+    let Some(record) = in_flight.or(lock.assets.get(&key)).cloned() else {
         return refuse(format!("{key} has no record in opossum.lock"));
     };
+    lock.assets.insert(key.clone(), record.clone());
     let text = match (id, record.next, &record.op) {
         (Some(_), Some(_), Some(op)) => {
             return refuse(format!("{key}'s upload has an operation ({op}) to ask; `opossum upload` resumes it"));
@@ -736,6 +741,24 @@ mod tests {
         let out = run(&root, &mock, &stop);
         assert_eq!((out.exit, &out.json["uploaded"], sent(&mock, "POST", "")), (0, &json!(2), 3));
         assert_eq!(adopt(&root, "art/a.glb", Some(5)).json["code"], "asset.adopt");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A merge's ambiguous create hides behind the other branch's id until something picks it; adopt finds it anyway.
+    #[test]
+    fn adopt_settles_an_ambiguous_create_a_merge_left_beside_an_older_id() {
+        let root = project("adopt-merged", &[("a.glb", "y")]);
+        let (x, y) = (hash("x"), hash("y"));
+        let lock = format!(
+            "version = 1\ncreator = {{ user = 1 }}\nassets.\"art/a.glb\" = {{ id = 5, hash = \"{x}\" }}\n\
+             assets.\"art/a.glb\" = {{ next = \"{y}\" }}\n"
+        );
+        std::fs::write(root.join(lock::FILE), lock).unwrap();
+        assert_eq!(adopt(&root, "art/a.glb", Some(77)).exit, 0);
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!((out.exit, &out.json["unchanged"], mock.requests().len()), (0, &json!(1), 0), "{}", out.json);
+        assert_eq!(record(&root, "art/a.glb").and_then(|r| r.id), Some(77));
         let _ = std::fs::remove_dir_all(&root);
     }
 
