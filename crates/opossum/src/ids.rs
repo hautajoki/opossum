@@ -397,7 +397,8 @@ export = ids
                 {{ "name": "Typo", "className": "Decal", "properties": {{ "Texture": {{ "$asset": "art/ston.png" }} }} }},
                 {{ "name": "Kind", "className": "Part", "properties": {{ "Size": {{ "$asset": "art/stone.png" }} }} }},
                 {{ "name": "Bare", "className": "MeshPart", "properties": {{ "MeshContent": {{ "$asset": "art/crate.glb" }} }} }},
-                {{ "name": "Pasted", "className": "Decal", "properties": {{ "Texture": "rbxassetid://12" }} }}
+                {{ "name": "Pasted", "className": "Decal", "properties": {{ "Texture": "rbxassetid://12" }} }},
+                {{ "name": "Whole", "className": "Decal", "properties": {{ "Texture": "rbxassetid://10" }} }}
             ] }}"#,
             lid = crate_("Lid"),
             lids = crate_("Lids"),
@@ -443,6 +444,11 @@ export = ids
                 "place.pastedId",
                 "ReplicatedStorage/crate/Pasted.TextureContent = `rbxassetid://12` is art/crate.glb part Lid's color \
                  map: write `{\"$asset\": \"art/crate.glb\", \"part\": \"Lid\"}`",
+            ),
+            (
+                "place.pastedId",
+                "ReplicatedStorage/crate/Whole.TextureContent = `rbxassetid://10` is art/crate.glb's model: write \
+                 `{\"$asset\": \"art/crate.glb\", \"part\": \"<name>\"}`, naming one of its parts: Lid",
             ),
             ("place.unknownAsset", "art/ston.png is no file under an asset root; did you mean art/stone.png?"),
             (

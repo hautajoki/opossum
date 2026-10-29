@@ -548,18 +548,31 @@ impl Place {
                 if self.assets.contains_key(&(inst.referent(), *name)) {
                     continue;
                 }
-                let (what, write) = match part {
+                let (what, write, tail) = match part {
                     Some((part, Channel::Mesh)) => {
-                        (format!("{file} part {part}'s mesh"), format!(", \"part\": \"{part}\""))
+                        (format!("{file} part {part}'s mesh"), format!(", \"part\": \"{part}\""), String::new())
                     }
                     Some((part, channel)) => {
-                        (format!("{file} part {part}'s {} map", channel.name()), format!(", \"part\": \"{part}\""))
+                        let what = format!("{file} part {part}'s {} map", channel.name());
+                        (what, format!(", \"part\": \"{part}\""), String::new())
                     }
-                    None => (file.clone(), String::new()),
+                    // a model takes no `$asset` of its own (`place.assetKind`): one of its parts does
+                    None if crate::is_glb(file) => {
+                        let tail = match resolver.by_file.get(file) {
+                            Some(Asset::Parts(parts)) => {
+                                let names: Vec<&str> = parts.keys().map(String::as_str).collect();
+                                format!(", naming one of its parts: {}", names.join(", "))
+                            }
+                            _ => ", naming one of its parts once `opossum upload` reads them back".to_owned(),
+                        };
+                        (format!("{file}'s model"), ", \"part\": \"<name>\"".to_owned(), tail)
+                    }
+                    None => (file.clone(), String::new(), String::new()),
                 };
                 let at = self.path_of(inst.referent());
-                let message =
-                    format!("{at}.{name} = `rbxassetid://{id}` is {what}: write `{{\"$asset\": \"{file}\"{write}}}`");
+                let message = format!(
+                    "{at}.{name} = `rbxassetid://{id}` is {what}: write `{{\"$asset\": \"{file}\"{write}}}`{tail}"
+                );
                 diags.push(Diag::error("place.pastedId", self.source_of(inst.referent()), message));
             }
         }
