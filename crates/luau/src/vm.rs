@@ -3,7 +3,12 @@
 //!
 //! A [`Vm`] is one `lua_State` with the standard libraries, `print` captured into [`Vm::take_output`], sandboxed
 //! globals and a [`MEMORY_LIMIT`]. Host chunks ([`Vm::eval`]) run on one sandboxed thread. Bytecode is cached per
-//! process by source, so a module that many VMs load compiles once. A VM runs on one thread at a time; it may move
+//! process by source, so a module that many VMs load compiles once.
+//!
+//! `require` resolves by string from the file system as the `luau` CLI does (`./`, `../`, `@self`, `init.luau`
+//! directories, `.luaurc` aliases), each module on its own sandboxed thread with the chunk name `@<path from the
+//! root>`, so traces read `src/x.luau:12`. A host chunk `c` stands at `<root>/c`: its `./x` is `<root>/x`. The global
+//! `__load(file)` requires a path relative to the root (`__load("src/a.local.spec.luau")`) through the same cache. A VM runs on one thread at a time; it may move
 //! between threads, and [`Vm::interrupter`] stops it from another.
 
 use std::ffi::{CString, c_char, c_int};
@@ -69,6 +74,7 @@ impl Vm {
 
     fn with_limit(root: &Path, limit: usize) -> Result<Vm, String> {
         crate::gate::init();
+        let root = std::path::absolute(root).map_err(|e| format!("{}: {e}", root.display()))?;
         let root = CString::new(root.to_string_lossy().as_bytes()).map_err(|_| "the root holds a NUL".to_owned())?;
         // SAFETY: `root` is a valid C string the VM copies.
         let raw = unsafe { opossum_vm_new(root.as_ptr(), limit) };
@@ -167,6 +173,53 @@ mod tests {
         let error = vm.eval("host", "while true do pcall(function() while true do end end) end").unwrap_err();
         watchdog.join().unwrap();
         assert!(error.contains("timed out"), "{error}");
+    }
+
+    /// A project in a fresh temporary directory, from `(path, contents)` pairs.
+    fn project(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("opossum-vm-{name}-{}", std::process::id()));
+        for (path, text) in files {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn requires_resolve_like_the_luau_cli() {
+        let root = project(
+            "require",
+            &[
+                // an alias declared but never used may point nowhere
+                (".luaurc", r#"{ "aliases": { "lib": "./src/lib", "std": "~/.lute/typedefs/std" } }"#),
+                ("src/a/init.luau", "return { b = require('@self/b'), lib = require('@lib/c') }"),
+                ("src/a/b.luau", "return 'b'"),
+                ("src/lib/c.lua", "return 'c'"),
+                ("src/d.local.spec.luau", "local a = require('./a') return a.b .. a.lib"),
+            ],
+        );
+        let mut vm = Vm::new(&root).unwrap();
+        let result = vm.eval("host", "return __load('src/d.local.spec.luau') .. require('./src/a').b");
+        let missing = vm.eval("host", "require('./src/nope')");
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(result, Ok("bcb".to_owned()));
+        assert!(missing.unwrap_err().contains("could not resolve child component \"nope\""));
+    }
+
+    #[test]
+    fn an_error_deep_in_requires_names_its_file_and_line() {
+        let root = project(
+            "deep",
+            &[
+                ("src/a.luau", "return require('./b')"),
+                ("src/b.luau", "return require('./c')"),
+                ("src/c.luau", "local x = 1\nerror('boom')\nreturn x"),
+            ],
+        );
+        let error = Vm::new(&root).unwrap().eval("host", "require('./src/a')").unwrap_err();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(error.contains("src/c.luau:2: boom"), "{error}");
     }
 
     #[test]
