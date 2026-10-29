@@ -62,7 +62,8 @@ pub struct Lock {
     pub creator: Option<Creator>,
     /// By source file path relative to the project root, with its extension, so renaming a set orphans nothing.
     pub assets: BTreeMap<String, Asset>,
-    /// Every different record a merge left for one file. `assets` holds the build's pick until [`Lock::settle`].
+    /// Every different record a merge left for one file, each written back until a command that hashed the file
+    /// [`Lock::settle`]s it; `assets` holds the build's pick meanwhile.
     pub merged: BTreeMap<String, Vec<Asset>>,
     /// By universe id, then `<kind>/<key>` (`pass/vip`, `experience/icon`).
     pub universes: BTreeMap<u64, BTreeMap<String, Resource>>,
@@ -219,12 +220,19 @@ fn pick<'a>(all: &'a [Asset], hash: Option<&str>) -> &'a Asset {
         .unwrap_or(&all[0])
 }
 
-fn merged_warning(root: &Path, file: &str, a: &Asset) -> Diag {
+/// `lock.merged` for a file with several records after a merge: what builds use meanwhile, or (`settled`) the one a
+/// command that hashed the file keeps.
+fn merged_warning(root: &Path, file: &str, a: &Asset, settled: bool) -> Diag {
     let used = match a.id {
         Some(id) => format!("id {id}"),
         None => "the upload in flight".to_owned(),
     };
-    let message = format!("{file} has several records after a merge; using {used}, and the next write keeps only it");
+    let message = match settled {
+        true => format!("{file} had several records after a merge; keeping {used}"),
+        false => {
+            format!("{file} has several records after a merge; builds use {used} until `opossum upload` settles it")
+        }
+    };
     Diag::new("lock.merged", Severity::Warning, Some(&root.join(FILE)), message)
 }
 
@@ -234,14 +242,14 @@ impl Lock {
     pub fn settle(&mut self, root: &Path, file: &str, hash: &str) -> Option<Diag> {
         let all = self.merged.remove(file)?;
         let a = pick(&all, Some(hash)).clone();
-        let warning = merged_warning(root, file, &a);
+        let warning = merged_warning(root, file, &a, true);
         self.assets.insert(file.to_owned(), a);
         Some(warning)
     }
 
     /// `lock.merged` for every file a merge left several records for, naming the id a build uses.
     pub fn merge_warnings(&self, root: &Path) -> Vec<Diag> {
-        self.merged.keys().map(|file| merged_warning(root, file, &self.assets[file])).collect()
+        self.merged.keys().map(|file| merged_warning(root, file, &self.assets[file], false)).collect()
     }
 
     /// `lock.conflict` for every resource a merge left twice: a warning in builds (the resource is left out of
@@ -396,17 +404,15 @@ pub fn render(lock: &Lock) -> String {
     }
     if !lock.assets.is_empty() {
         out.push('\n');
-        for (key, a) in &lock.assets {
-            let mut fields = Vec::new();
-            if let Some(id) = a.id {
-                fields.push(("id", id.to_string()));
-            }
-            for (name, value) in [("hash", &a.hash), ("next", &a.next), ("op", &a.op)] {
-                if let Some(s) = value {
-                    fields.push((name, string(s)));
-                }
-            }
-            record(&mut out, &format!("assets.{}", self::key(key)), &fields);
+    }
+    for (key, a) in &lock.assets {
+        let mut lines: Vec<String> = match lock.merged.get(key) {
+            Some(all) => all.iter().map(asset_fields).collect(),
+            None => vec![asset_fields(a)],
+        };
+        lines.sort();
+        for fields in lines {
+            let _ = writeln!(out, "assets.{} = {fields}", self::key(key));
         }
     }
     for (u, records) in lock.universes.iter().filter(|(_, r)| !r.is_empty()) {
@@ -419,6 +425,20 @@ pub fn render(lock: &Lock) -> String {
         }
     }
     out
+}
+
+/// An asset record's inline table.
+fn asset_fields(a: &Asset) -> String {
+    let mut fields = Vec::new();
+    if let Some(id) = a.id {
+        fields.push(("id", id.to_string()));
+    }
+    for (name, value) in [("hash", &a.hash), ("next", &a.next), ("op", &a.op)] {
+        if let Some(s) = value {
+            fields.push((name, string(s)));
+        }
+    }
+    inline(&fields)
 }
 
 fn resource_fields(r: &Resource) -> Vec<(&'static str, String)> {
@@ -651,9 +671,11 @@ universes.15302144394."thumbnail/main" = { id = 55, altText = "Lobby", image = "
         assert_eq!(lock.assets["y.png"].id, Some(8));
         assert!(!lock.merged.contains_key("same.png"));
         assert_eq!(lock.merge_warnings(Path::new("/p")).len(), 2);
+        // a write that hashed nothing keeps every candidate: the highest id need not be the one holding the file
+        assert_eq!(render(&lock).matches("assets.\"x.png\"").count(), 3);
         // a command that hashed the file takes the id holding its content, and writes only that record
         let warning = lock.settle(Path::new("/p"), "x.png", &"a".repeat(32)).unwrap();
-        assert!(warning.message.contains("using id 5"), "{}", warning.message);
+        assert!(warning.message.contains("keeping id 5"), "{}", warning.message);
         assert!(lock.settle(Path::new("/p"), "x.png", &"a".repeat(32)).is_none());
         assert_eq!(lock.assets["x.png"].id, Some(5));
         assert!(render(&lock).contains(&format!("assets.\"x.png\" = {}\n", a(5, 'a'))));

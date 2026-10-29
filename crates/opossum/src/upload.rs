@@ -109,10 +109,12 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
     }
     let mut report = Report::default();
 
-    // classify against the lock as it was, binding content it already has an id for (renames, moves, copies)
+    // classify against the lock as it was, binding content it already has an id for (renames, moves, copies), a
+    // merge's every candidate included
     let held: HashMap<String, u64> = lock
         .assets
         .values()
+        .chain(lock.merged.values().flatten())
         .filter_map(|a| match a {
             Asset { id: Some(id), hash: Some(hash), next: None, .. } => Some((hash.clone(), *id)),
             _ => None,
