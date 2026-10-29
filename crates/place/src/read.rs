@@ -19,7 +19,7 @@ use rbx_dom_weak::{InstanceBuilder, WeakDom};
 use rbx_reflection::ClassTag;
 use serde_json::Value;
 
-use crate::properties::{PlaceEntry, is_properties_file, read_properties};
+use crate::properties::{self, PlaceEntry, is_properties_file, read_properties};
 use crate::tree::NESTED;
 use crate::value::{self, Resolved, db};
 use crate::{Diag, Severity};
@@ -215,6 +215,7 @@ pub fn read_place(dir: &Path, skip: &[PathBuf]) -> (Place, Vec<Diag>) {
             Err(e) => r.diags.push(Diag::error("place.unknownService", &path, e)),
         }
     }
+    r.apply(properties::base());
     r.apply(&props.entries);
     r.resolve_refs();
     let mut diags = r.diags;
@@ -323,6 +324,7 @@ impl Place {
         // what pointed into the forgotten instances now dangles; properties refs are read again with their files
         r.place.refs.retain(|s| s.file.parent() != Some(dir) && r.place.dom.get_by_ref(s.holder).is_some());
         let props = read_properties(dir, &mut r.diags);
+        r.apply(properties::base());
         r.apply(&props.entries);
         r.resolve_refs();
         scopes.extend(props.files);
@@ -804,5 +806,22 @@ mod tests {
         assert_eq!(part1, Some(Variant::Ref(place.find("ReplicatedStorage/models/frame").unwrap())));
         // same order, same refs: the root's stamp is the one a restarted session computes
         assert_eq!(hash_at(&place, "ReplicatedStorage/models"), hash_at(&full, "ReplicatedStorage/models"));
+    }
+
+    #[test]
+    fn a_place_starts_from_studio_new_place_settings_that_properties_files_override() {
+        let dir = std::env::temp_dir().join(format!("opossum-place-base-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("lighting.toml"), "[Lighting]\nBrightness = 1.5\n").unwrap();
+        let (place, diags) = read_place(&dir, &[]);
+        fs::remove_dir_all(&dir).unwrap();
+        // every base setting resolves to a real property and value
+        assert!(diags.is_empty(), "{diags:?}");
+        let prop = |path: &str, name: &str| {
+            place.dom.get_by_ref(place.find(path).unwrap()).unwrap().properties.get(&ustr(name)).cloned()
+        };
+        assert_eq!(prop("Lighting", "Brightness"), Some(Variant::Float32(1.5)));
+        assert_eq!(prop("Lighting", "Technology"), Some(Variant::Enum(rbx_dom_weak::types::Enum::from_u32(3))));
+        assert_eq!(prop("Lighting", "GlobalShadows"), Some(Variant::Bool(true)));
     }
 }

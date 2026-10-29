@@ -41,6 +41,16 @@ pub struct Properties {
     pub entries: Vec<PlaceEntry>,
 }
 
+/// What a new place in Studio sets (`base.toml`), applied before a project's properties files so a property they leave
+/// out is Studio's modern default rather than Roblox's legacy class default.
+pub fn base() -> &'static [PlaceEntry] {
+    static BASE: std::sync::LazyLock<Vec<PlaceEntry>> = std::sync::LazyLock::new(|| {
+        let table: toml::Table = include_str!("base.toml").parse().expect("base.toml parses");
+        entries_from_toml(&table, Path::new("base.toml")).expect("base.toml holds tables of properties")
+    });
+    &BASE
+}
+
 /// Whether `name`, an entry directly under `place/`, is a properties file.
 pub fn is_properties_file(name: &str) -> bool {
     name.ends_with(".toml") && !name.starts_with('.')

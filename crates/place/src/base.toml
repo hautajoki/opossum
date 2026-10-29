@@ -1,0 +1,43 @@
+# What a new place in Studio sets (File > New, the Baseplate template), applied under every project's place/ so a built
+# place starts modern. Roblox reads a property a place file leaves out as its legacy class default: Compatibility
+# lighting with no global shadows and no environment lighting, which draws PBR flat. A project's own properties files
+# set over these, property by property.
+
+[Lighting]
+Technology = "ShadowMap"
+Brightness = 3
+Ambient = [70, 70, 70]
+OutdoorAmbient = [70, 70, 70]
+TimeOfDay = "14:30:00"
+GeographicLatitude = 0
+GlobalShadows = true
+ShadowSoftness = 0.2
+EnvironmentDiffuseScale = 1
+EnvironmentSpecularScale = 1
+PrioritizeLightingQuality = true
+Outlines = false
+
+[Workspace]
+StreamingEnabled = true
+StreamingIntegrityMode = "PauseOutsideLoadedArea"
+StreamOutBehavior = "Opportunistic"
+SignalBehavior = "Deferred"
+UseNewLuauTypeSolver = "Enabled"
+PlayerCharacterDestroyBehavior = "Enabled"
+
+[Players]
+MaxPlayers = 30
+PreferredPlayers = 30
+RespawnTime = 3
+
+[StarterPlayer]
+AvatarJointUpgrade = "Enabled"
+CharacterUseJumpPower = false
+CharacterBreakJointsOnDeath = false
+CameraMaxZoomDistance = 128
+
+[SoundService]
+RespectFilteringEnabled = true
+
+[TextChatService]
+ChatVersion = "TextChatService"
