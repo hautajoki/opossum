@@ -1,11 +1,11 @@
 # opossum
 
-opossum takes a Roblox game written in TypeScript (the roblox-ts dialect) and Luau, compiles it, builds the place and
-syncs it live to Studio. The same binary uploads the game's assets, provisions its passes, products and badges, deploys
-its places through Open Cloud, and runs its tests locally, in Studio or on Open Cloud.
+opossum compiles a Roblox game written in TypeScript (the roblox-ts dialect) and Luau, builds the place and syncs it
+live to Studio. The same binary uploads assets, provisions passes, products and badges, deploys through Open Cloud, and
+runs tests locally, in Studio or on Open Cloud.
 
-It stands in for roblox-ts (or typescript-go-roblox), Rojo, rogen, tessera and hexagon. Building needs no Node; npm
-packages are only read from `node_modules/`.
+It replaces roblox-ts (or typescript-go-roblox), Rojo, rogen, tessera and hexagon. There is no Node at build time: npm
+packages are read straight from `node_modules/`.
 
 ## Example
 
@@ -118,9 +118,10 @@ return nil
 ```
 
 TypeScript types become Luau types, services become `GetService` locals, and each require is spelled from where both
-modules land in the place. Every module goes through Luau's own compiler at `-O2` before it ships. jecs
-`for (const ... of world.query(...))` loops lower to archetype iteration, and Flamework's metadata macros are evaluated
-at compile time; the rest of Flamework is not supported.
+modules land in the place. Every module passes Luau's own compiler at `-O2` before it ships. The semantics are
+TypeScript's, but the Luau does not try to look like roblox-ts output: `const` locals, numeric `for` where it is
+provably safe, `@native` per function instead of per file. jecs `for (const ... of world.query(...))` loops lower to
+archetype iteration, and Flamework's metadata macros run at compile time. Nothing else of Flamework is supported.
 
 ## Install
 
@@ -130,7 +131,7 @@ opossum plugin install    # the Studio plugin, ~/Documents/Roblox/Plugins/opossu
 ```
 
 `rust-toolchain.toml` pins Rust 1.99.1, which rustup fetches on the first build. Luau is compiled from source, so a
-C++17 compiler is needed too. macOS and Linux; there is no Windows support.
+C++17 compiler is needed too. macOS and Linux only.
 
 ## A project
 
@@ -161,7 +162,7 @@ Studio.
 opossum dev              # watch, rebuild and sync to Studio
 opossum build            # .opossum/place.rbxl; -o for another path, --emit <dir> for the Luau
 opossum check            # type errors, routing errors and the O2 gate, no place written
-opossum test             # specs in Studio through dev; --local in fresh Luau VMs; --cloud on Open Cloud
+opossum test             # specs in Studio through dev; --local: *.local.spec.luau here; --cloud: Open Cloud
 opossum exec -e 'print(workspace.Gravity)'    # Luau in Studio, after dev has synced every saved file
 opossum plan             # what upload and provision would do, offline
 opossum upload           # new and changed assets up, ids into opossum.lock
@@ -171,24 +172,20 @@ opossum migrate          # convert a Rojo, tessera or hexagon project once
 
 `opossum --help` lists every command and flag.
 
-## How it differs
+## Speed
 
 The whole project is one in-memory graph, and Studio patches, the `.rbxl`, the luau-lsp sourcemap and `where` are views
 of it. On a 1,107-module game, a one-file save is republished in 0.11 to 0.16 ms and reaches Studio in 50 to 250 ms,
 almost all of that the macOS file watcher. An `exec` sent right after a save runs the saved code, about 65 ms end to
 end. `test --local` runs 1,107 local cases in 5.5 s, where hexagon took 9.9 s. `plan` over 1,223 asset files
-takes 0.07 s, and a deploy with nothing to upload 1.2 s.
-
-The output does not try to match roblox-ts. It aims at the same TypeScript semantics in faster, more readable Luau:
-`--!strict` with native types, `const` locals, numeric `for` where it is provably safe, `@native` per function instead
-of per file.
+takes 0.07 s, and a deploy with nothing to upload, against the Open Cloud mock below, 1.2 s.
 
 ## Status
 
-opossum is 0.1.0.
-The Open Cloud paths (upload, provision, deploy, `--cloud` runs) are tested against a mock of the API that ships with
-it (`cargo run -p cloud --example mock`), and a full deploy of 1,300 assets has run against that mock.
-Changes are hard cutovers with no compatibility layers, so expect configs and commands to break between versions.
+opossum is 0.1.0. The Open Cloud paths (upload,
+provision, deploy, `--cloud` runs) are tested against a mock of the API that ships with it
+(`cargo run -p cloud --example mock`), and a full deploy of 1,300 assets has run against that mock. Changes
+are hard cutovers with no compatibility layers, so expect configs and commands to break between versions.
 
 DESIGN.md covers the rest: configuration, routing, the `place/` format, assets and the lock file, deploys, tests, exit
 codes and the JSON output. `crates/sync/SYNC.md` is the Studio sync protocol.
