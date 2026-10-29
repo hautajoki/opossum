@@ -1,9 +1,10 @@
-//! `opossum upload`: new and changed asset files go up to Roblox and their ids into `opossum.lock`; `opossum adopt
-//! asset` settles an upload nothing can tell happened or not. The main thread owns the lock and is its only writer; up
-//! to four workers each take one group (every file with one input hash) end to end. Each group's intent is on disk
-//! before its request leaves, so a crash or a lost answer never uploads a file twice without saying so.
+//! `opossum upload`: new and changed asset files go up to Roblox and their ids into `opossum.lock`, and each glb's
+//! upload is read back for the parts its import made; `opossum adopt asset` settles an upload nothing can tell happened
+//! or not. The main thread owns the lock and is its only writer; up to four workers each take one group (every file
+//! with one input hash, or every file a read serves) end to end. Each group's intent is on disk before its request
+//! leaves, so a crash or a lost answer never uploads a file twice without saying so.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
@@ -45,15 +46,22 @@ enum Job {
     Send { compiled: Compiled, key: String, file: String },
     /// Wait on the operation of an upload an earlier run started.
     Resume(String),
+    /// Read back the parts of a glb's upload no run has read yet. It sends nothing, so it has no intent.
+    Read(u64),
 }
 
-/// What a worker says about its group: `Created` once Roblox took the request, then exactly one of the others.
+/// What a worker says about its group: `Created` once Roblox took the request, then exactly one of the others. A glb's
+/// `Done` is followed by `Read` or `ReadFailed`, which a `Job::Read` says alone.
 enum Event {
     Created(String),
     /// The request failed. A `definite` error was certainly not applied; any other leaves the upload ambiguous.
     Failed(cloud::Error),
     /// The asset id, and whether moderation is still reviewing it.
     Done(u64, bool),
+    /// What the import of upload `id` made, by part name.
+    Read(u64, BTreeMap<String, lock::Part>),
+    /// The upload stays unread: the code, why, and whether Roblox refused the key's reads, so no later one is tried.
+    ReadFailed(&'static str, String, bool),
     /// The operation ended without an id the lock may hold: its code and why.
     Terminal(&'static str, String),
     /// The operation is gone, and with it the only way to tell whether the asset exists.
@@ -69,12 +77,17 @@ enum Event {
 #[derive(Default)]
 struct Report {
     uploaded: usize,
+    /// Files whose upload's parts were read back.
+    read: Vec<String>,
     /// Each uploaded file's new id.
     ids: Vec<(String, u64)>,
     reused: usize,
     unchanged: usize,
     dropped: usize,
-    pending: Vec<String>,
+    /// File, why and code: an operation still running, or an upload not read back.
+    pending: Vec<(String, String, String)>,
+    /// Roblox refused the key's reads of uploads; creates went on.
+    refused_reads: bool,
     /// File and how to settle it.
     ambiguous: Vec<(String, String)>,
     /// File, error and code.
@@ -123,9 +136,13 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
 
     let mut classes = plan::classify(root, &mut lock, &found, &hashes);
     let mut compiled = plan::check(cfg, &found, &hashes, &mut classes);
-    let mut groups: Vec<(String, Vec<usize>, Option<String>)> = Vec::new();
+    // a group's job, None for a send (compiled below)
+    let mut groups: Vec<(String, Vec<usize>, Option<Job>)> = Vec::new();
     let mut group_of = HashMap::new();
+    // the group reading each id, which serves every file bound to it
+    let mut reads: HashMap<u64, usize> = HashMap::new();
     for (i, (a, class)) in found.iter().zip(&classes).enumerate() {
+        let mut unread = None;
         match class {
             Class::Current => report.unchanged += 1,
             Class::Ambiguous(how) => report.ambiguous.push((a.file.clone(), how.clone())),
@@ -139,6 +156,9 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
                 // what the id's import made is a fact of the id, so it comes along with it
                 let all = lock.assets.values().chain(lock.merged.values().flatten());
                 let parts = all.filter(|r| r.id == Some(*id)).find_map(|r| r.parts.clone());
+                if parts.is_none() && place::is_glb(&a.file) {
+                    unread = Some(*id);
+                }
                 let record = lock.assets.entry(a.file.clone()).or_default();
                 (record.id, record.hash, record.rejected, record.parts) =
                     (Some(*id), Some(hashes[i].clone()), None, parts);
@@ -147,14 +167,29 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
             // a later change waits for the next run: this one finishes what was started
             Class::Pending => {
                 let record = &lock.assets[&a.file];
-                group_of.insert(i, groups.len());
-                groups.push((record.next.clone().unwrap_or_default(), vec![i], record.op.clone()));
+                match (&record.op, &record.next) {
+                    (Some(op), Some(next)) => {
+                        group_of.insert(i, groups.len());
+                        groups.push((next.clone(), vec![i], Some(Job::Resume(op.clone()))));
+                    }
+                    // a glb uploaded and never read back
+                    _ => unread = record.id,
+                }
             }
             Class::Send { .. } => {
                 group_of.insert(i, groups.len());
                 groups.push((hashes[i].clone(), vec![i], None));
             }
             Class::Joins(_) => {}
+        }
+        if let Some(id) = unread {
+            match reads.get(&id) {
+                Some(&g) => groups[g].1.push(i),
+                None => {
+                    reads.insert(id, groups.len());
+                    groups.push((hashes[i].clone(), vec![i], Some(Job::Read(id))));
+                }
+            }
         }
     }
     for (i, class) in classes.iter().enumerate() {
@@ -165,14 +200,11 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
 
     let ready: Vec<Group> = groups
         .into_iter()
-        .map(|(hash, members, op)| {
-            let job = match op {
-                Some(op) => Job::Resume(op),
-                None => {
-                    let (a, compiled) = (&found[members[0]], compiled.remove(&members[0]).expect("checked"));
-                    Job::Send { compiled, key: a.key.clone(), file: a.file.clone() }
-                }
-            };
+        .map(|(hash, members, job)| {
+            let job = job.unwrap_or_else(|| {
+                let (a, compiled) = (&found[members[0]], compiled.remove(&members[0]).expect("checked"));
+                Job::Send { compiled, key: a.key.clone(), file: a.file.clone() }
+            });
             Group { hash, members, job }
         })
         .collect();
@@ -203,15 +235,18 @@ impl Prepared {
     }
 }
 
-/// Sends a prepared upload, resuming what earlier runs left in flight, and drops the records of files that are gone.
+/// Sends a prepared upload, resuming what earlier runs left in flight and reading back the glbs no run has read, and
+/// drops the records of files that are gone.
 pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepared, stop: &AtomicBool) -> Outcome {
     let root = &cfg.root;
     let Prepared { mut lock, found, creator, mut report, groups: ready } = prepared;
     let mut broken = None;
     let mut halt = None;
+    // set once Roblox refuses the key's reads: workers skip every read after it
+    let refused_reads = AtomicBool::new(false);
     let (tx, rx) = mpsc::channel();
     let mut sent = 0;
-    let ready = &ready;
+    let (ready, found, refused_reads) = (&ready, &found, &refused_reads);
     std::thread::scope(|s| {
         let mut flight = 0;
         loop {
@@ -220,8 +255,9 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
                 && !(halt.is_some() || broken.is_some() || stop.load(Ordering::SeqCst))
             {
                 let g = &ready[sent];
-                intent(&mut lock, g, &found);
-                if !save(&mut lock, root, guard, &mut broken) {
+                let reads_only = matches!(g.job, Job::Read(_));
+                intent(&mut lock, g, found);
+                if !reads_only && !save(&mut lock, root, guard, &mut broken) {
                     // the intent is not durable, so the request never leaves
                     if let Job::Send { .. } = g.job {
                         for &m in &g.members {
@@ -230,14 +266,29 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
                     }
                     break;
                 }
-                progress(g, &found, sent, ready.len());
+                progress(g, found, sent, ready.len());
                 let (tx, i) = (tx.clone(), sent);
-                let audio = matches!(found[g.members[0]].ext.as_str(), ".ogg" | ".mp3" | ".wav" | ".flac");
+                let first = &found[g.members[0]];
+                let audio = matches!(first.ext.as_str(), ".ogg" | ".mp3" | ".wav" | ".flac");
+                let glb = place::is_glb(&first.file).then(|| (root.join(&first.file), first.file.as_str()));
                 s.spawn(move || {
                     let say = |e| drop(tx.send((i, e)));
                     // a worker that panics still answers, or the run would wait on it forever holding the guard
                     let worked = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        work(client, creator, &ready[i], audio, stop, &say)
+                        let g = &ready[i];
+                        let (id, reviewing) = match (&g.job, &glb) {
+                            (Job::Read(id), _) => (*id, None),
+                            (_, Some(_)) => match work(client, creator, g, audio, stop, &say) {
+                                Event::Done(id, reviewing) => {
+                                    say(Event::Done(id, reviewing));
+                                    (id, Some(reviewing))
+                                }
+                                event => return say(event),
+                            },
+                            (_, None) => return say(work(client, creator, g, audio, stop, &say)),
+                        };
+                        let (path, file) = glb.as_ref().expect("only a glb is read");
+                        say(read(client, id, reviewing, g, path, file, refused_reads));
                     }));
                     if worked.is_err() {
                         say(Event::Panicked);
@@ -250,8 +301,11 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
                 break;
             }
             let (i, event) = rx.recv().expect("a worker hung up");
-            flight -= usize::from(!matches!(event, Event::Created(_)));
-            halt = halt.or(apply(&mut lock, &ready[i], &found, event, &mut report));
+            // a glb's upload is read before its group ends
+            let glb = place::is_glb(&found[ready[i].members[0]].file);
+            flight -= usize::from(!(matches!(event, Event::Created(_)) || glb && matches!(event, Event::Done(..))));
+            halt = halt.or(apply(&mut lock, &ready[i], found, event, &mut report));
+            refused_reads.store(report.refused_reads, Ordering::SeqCst);
             save(&mut lock, root, guard, &mut broken);
         }
     });
@@ -270,7 +324,8 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
             let file = found[m].file.clone();
             match g.job {
                 Job::Send { .. } => report.failed.push((file, format!("not sent: {why}"), code.into())),
-                Job::Resume(_) => report.pending.push(file),
+                Job::Resume(_) => report.pending.push((file, format!("not asked: {why}"), code.into())),
+                Job::Read(_) => report.pending.push((file, format!("not read: {why}"), code.into())),
             }
         }
     }
@@ -286,15 +341,16 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
 }
 
 /// Records a group's intent on every member before its request: `next` for a send, `next` and the operation for
-/// files joining a resumed one.
+/// files joining a resumed one. A read sends nothing, so it has none.
 fn intent(lock: &mut Lock, g: &Group, found: &[File]) {
+    let op = match &g.job {
+        Job::Send { .. } => None,
+        Job::Resume(op) => Some(op.clone()),
+        Job::Read(_) => return,
+    };
     for &m in &g.members {
         let r = lock.assets.entry(found[m].file.clone()).or_default();
-        r.next = Some(g.hash.clone());
-        r.op = match &g.job {
-            Job::Send { .. } => None,
-            Job::Resume(op) => Some(op.clone()),
-        };
+        (r.next, r.op) = (Some(g.hash.clone()), op.clone());
     }
 }
 
@@ -337,6 +393,7 @@ fn progress(g: &Group, found: &[File], n: usize, total: usize) {
     let verb = match g.job {
         Job::Send { .. } => "uploading",
         Job::Resume(_) => "waiting on the upload of",
+        Job::Read(_) => "reading",
     };
     let more = match g.members.len() {
         1 => String::new(),
@@ -345,13 +402,22 @@ fn progress(g: &Group, found: &[File], n: usize, total: usize) {
     eprintln!("[{}/{}] {verb} {file}{more}…", count(n + 1), count(total));
 }
 
-/// One group end to end on a worker thread: send it (unless a stop came first), then wait on its operation.
-fn work(client: &Client, creator: cloud::Creator, g: &Group, audio: bool, stop: &AtomicBool, send: &dyn Fn(Event)) {
+/// A group's upload on a worker thread: send it (unless a stop came first), then wait on its operation. `Created` goes
+/// out through `send` as soon as Roblox takes the request; the event that ends the upload is returned.
+fn work(
+    client: &Client,
+    creator: cloud::Creator,
+    g: &Group,
+    audio: bool,
+    stop: &AtomicBool,
+    send: &dyn Fn(Event),
+) -> Event {
     let op = match &g.job {
         Job::Resume(op) => op.clone(),
+        Job::Read(_) => unreachable!("a read uploads nothing"),
         Job::Send { compiled, key, file } => {
             if stop.load(Ordering::SeqCst) {
-                return send(Event::NotSent);
+                return Event::NotSent;
             }
             let upload = Upload {
                 kind: compiled.kind,
@@ -363,23 +429,81 @@ fn work(client: &Client, creator: cloud::Creator, g: &Group, audio: bool, stop: 
                 bytes: &compiled.bytes,
             };
             match client.create_asset(&upload) {
-                Err(e) => return send(Event::Failed(e)),
+                Err(e) => return Event::Failed(e),
                 Ok(op) => {
                     send(Event::Created(op.path.clone()));
                     if op.done {
-                        return send(finished(op, audio));
+                        return finished(op, audio);
                     }
                     op.path
                 }
             }
         }
     };
-    send(match client.wait_operation(&op, client.now() + OPERATION_DEADLINE, stop) {
+    match client.wait_operation(&op, client.now() + OPERATION_DEADLINE, stop) {
         Ok(op) if op.done => finished(op, audio),
         Ok(_) => Event::Waiting(None),
         Err(e) if e.kind == ErrorKind::Status(404) => Event::Expired,
         Err(e) => Event::Waiting(Some(e)),
-    })
+    }
+}
+
+/// Reads back what Roblox's import made of upload `id` of the glb at `path` (`file` in messages) and matches its parts
+/// to the glb's by name: the same names, each once. `reviewing` is whether moderation was still reviewing the upload
+/// when it finished, None when an earlier run uploaded it. Asset delivery refusing a key it doesn't refuse for review
+/// stops every later read; any other failure leaves only this upload unread, for the next run.
+fn read(
+    client: &Client,
+    id: u64,
+    reviewing: Option<bool>,
+    g: &Group,
+    path: &Path,
+    file: &str,
+    refused: &AtomicBool,
+) -> Event {
+    let unread = |code, error| Event::ReadFailed(code, error, false);
+    if refused.load(Ordering::SeqCst) {
+        return unread("cloud.auth", "not read: Roblox refused the key's reads".into());
+    }
+    let names = match &g.job {
+        Job::Send { compiled, .. } => media::glb(&compiled.bytes),
+        _ => std::fs::read(path).map_err(|e| e.to_string()).and_then(|bytes| media::glb(&bytes)),
+    };
+    let names = match names {
+        Ok(names) => names,
+        Err(e) => return unread("asset.read", e),
+    };
+    let content = match client.asset_content(id) {
+        Ok(content) => content,
+        Err(e) => {
+            return match (e.kind, reviewing) {
+                (ErrorKind::Status(401), _) | (ErrorKind::Status(403), Some(false)) => {
+                    Event::ReadFailed("cloud.auth", e.to_string(), true)
+                }
+                (ErrorKind::Status(403), Some(true)) => {
+                    let why = if e.message.is_empty() { "403" } else { e.message.as_str() };
+                    unread("asset.read", format!("Roblox does not deliver it while moderation reviews it ({why})"))
+                }
+                (ErrorKind::Status(403), None) => {
+                    unread("cloud.auth", format!("{e}, or it is still in Roblox's moderation review"))
+                }
+                _ => unread("asset.read", format!("{e}; `opossum upload` reads it again")),
+            };
+        }
+    };
+    let parts = match place::model_parts(&content) {
+        Ok(parts) => parts,
+        Err(e) => return unread("asset.read", format!("its content is no model Roblox's import made: {e}")),
+    };
+    let mut made: Vec<&str> = parts.iter().map(|(name, _)| name.as_str()).collect();
+    let mut named: Vec<&str> = names.iter().map(String::as_str).collect();
+    made.sort_unstable();
+    named.sort_unstable();
+    if made != named {
+        let error = format!("the import has {}; {file} has {}", made.join(", "), named.join(", "));
+        return unread("asset.read", error);
+    }
+    Event::Read(id, parts.into_iter().collect())
 }
 
 /// A done operation: an id to bind, unless Roblox failed it or its moderation rejected it (a rejected id must never
@@ -453,17 +577,36 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
                     .push((file.into(), format!("operation {op} expired; {}", plan::settle(file, sent_as))));
             }
         }
+        Event::Read(id, parts) => {
+            // the parts are the id's, so every file bound to it (a rename reused it) gets them
+            for r in lock.assets.values_mut().filter(|r| r.id == Some(id)) {
+                r.parts = Some(parts.clone());
+            }
+            report.read.extend(files().map(String::from));
+            eprintln!("{} read back: {}", found[g.members[0]].file, plan::counted(parts.len(), "part"));
+        }
+        Event::ReadFailed(code, error, refused) => {
+            for file in files() {
+                report.pending.push((file.into(), error.clone(), code.into()));
+            }
+            report.refused_reads |= refused;
+        }
         Event::Waiting(e) => {
-            report.pending.extend(files().map(String::from));
+            let why =
+                e.as_ref().map_or("still running".into(), cloud::Error::to_string) + "; `opossum upload` asks again";
+            report.pending.extend(files().map(|f| (f.into(), why.clone(), "asset.pending".into())));
             if let Some(e) = e {
-                eprintln!("{e}");
                 return (e.diag() == "cloud.auth").then_some(Halt::Auth);
             }
         }
         Event::Panicked => {
             for file in files() {
-                match lock.assets.get(file).is_some_and(|r| r.op.is_some()) {
-                    true => report.pending.push(file.into()),
+                // an operation to ask, or an id the read never finished: the next run picks either up
+                match lock.assets.get(file).is_some_and(|r| r.op.is_some() || r.id.is_some() && r.next.is_none()) {
+                    true => {
+                        let why = "opossum failed mid-upload; `opossum upload` picks it up".into();
+                        report.pending.push((file.into(), why, "asset.pending".into()))
+                    }
                     false => report
                         .ambiguous
                         .push((file.into(), format!("opossum failed mid-upload; {}", plan::settle(file, sent_as)))),
@@ -482,8 +625,9 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
 
 fn outcome(r: Report, broken: Option<Diag>, halt: Option<Halt>, stopped: bool) -> Outcome {
     let mut text = format!(
-        "uploaded {}, reused {}, unchanged {}, dropped {}\n",
+        "uploaded {}, read {}, reused {}, unchanged {}, dropped {}\n",
         count(r.uploaded),
+        count(r.read.len()),
         count(r.reused),
         count(r.unchanged),
         count(r.dropped)
@@ -491,19 +635,21 @@ fn outcome(r: Report, broken: Option<Diag>, halt: Option<Halt>, stopped: bool) -
     for (file, error, _) in &r.failed {
         let _ = writeln!(text, "failed {file}: {error}");
     }
-    for file in &r.pending {
-        let _ = writeln!(text, "pending {file} (`opossum upload` asks again)");
+    for (file, why, _) in &r.pending {
+        let _ = writeln!(text, "pending {file}: {why}");
     }
     for (file, how) in &r.ambiguous {
         let _ = writeln!(text, "ambiguous {file}: {how}");
     }
-    let failed: Vec<_> =
-        r.failed.iter().map(|(file, error, code)| json!({ "file": file, "error": error, "code": code })).collect();
+    let listed = |all: &[(String, String, String)]| -> Vec<serde_json::Value> {
+        all.iter().map(|(file, error, code)| json!({ "file": file, "error": error, "code": code })).collect()
+    };
     let json = json!({
-        "ok": true, "uploaded": r.uploaded, "reused": r.reused, "unchanged": r.unchanged, "dropped": r.dropped,
+        "ok": true, "uploaded": r.uploaded, "read": r.read, "reused": r.reused, "unchanged": r.unchanged,
+        "dropped": r.dropped,
         "ids": r.ids.iter().map(|(file, id)| (file.clone(), json!(id))).collect::<serde_json::Map<_, _>>(),
-        "pending": r.pending, "ambiguous": r.ambiguous.iter().map(|(file, _)| file).collect::<Vec<_>>(),
-        "failed": failed,
+        "pending": listed(&r.pending), "ambiguous": r.ambiguous.iter().map(|(file, _)| file).collect::<Vec<_>>(),
+        "failed": listed(&r.failed),
     });
     // the one reason an agent branches on: what stopped the run, else the first kind of trouble a file is in
     let (code, error) = if let Some(d) = broken {
@@ -518,12 +664,19 @@ fn outcome(r: Report, broken: Option<Diag>, halt: Option<Halt>, stopped: bool) -
             plan::ambiguous(r.ambiguous.len())
         );
         ("asset.ambiguous".into(), error)
+    } else if r.refused_reads {
+        let error = "Roblox refused the key's reads of uploaded models: it needs the legacy-asset:manage scope. Every \
+                     upload went on, and `opossum upload` reads them back once the key has it";
+        ("cloud.auth".into(), error.into())
     } else if let Some((_, _, code)) = r.failed.first() {
         (code.clone(), format!("{} failed", plan::counted(r.failed.len(), "file")))
     } else if !r.ambiguous.is_empty() {
         ("asset.ambiguous".into(), plan::ambiguous(r.ambiguous.len()))
     } else if !r.pending.is_empty() {
-        ("asset.pending".into(), "uploads are still running; `opossum upload` asks again".into())
+        // why a read failed says more than that an operation is still running
+        let code = r.pending.iter().map(|(_, _, code)| code).find(|c| *c != "asset.pending");
+        let error = format!("{} pending", plan::counted(r.pending.len(), "file"));
+        (code.map_or("asset.pending", String::as_str).into(), error)
     } else {
         return Outcome { exit: 0, json, text };
     };
@@ -588,7 +741,7 @@ pub fn adopt_asset(cfg: &Config, guard: &RemoteGuard, cwd: &Path, file: &str, id
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::AtomicUsize;
     use std::sync::{Arc, Barrier};
@@ -649,6 +802,44 @@ mod tests {
     /// A done operation `operations/<op>` holding asset `id`.
     fn done(op: u64, id: u64) -> Reply {
         Reply::json(200, &json!({ "path": format!("operations/{op}"), "done": true, "response": { "assetId": id } }))
+    }
+
+    /// A glb whose `parts` share one textured material, as Blender exports one but with no binary chunk: the mock's
+    /// import reads only the JSON.
+    pub(crate) fn glb(parts: &[&str]) -> Vec<u8> {
+        let gltf = json!({
+            "asset": { "version": "2.0" },
+            "nodes": parts.iter().enumerate().map(|(i, p)| json!({ "name": p, "mesh": i })).collect::<Vec<_>>(),
+            "meshes": parts.iter().enumerate()
+                .map(|(i, p)| json!({ "name": p, "primitives": [{ "attributes": { "POSITION": i }, "material": 0 }] }))
+                .collect::<Vec<_>>(),
+            "accessors": parts.iter().map(|_| json!({ "min": [0, 0, 0], "max": [1, 2, 3] })).collect::<Vec<_>>(),
+            "materials": [{ "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } } }],
+        });
+        let mut chunk = gltf.to_string().into_bytes();
+        chunk.resize(chunk.len().next_multiple_of(4), b' ');
+        let mut out = b"glTF".to_vec();
+        for n in [2, 20 + chunk.len() as u32, chunk.len() as u32] {
+            out.extend(n.to_le_bytes());
+        }
+        out.extend(b"JSON");
+        out.extend(chunk);
+        out
+    }
+
+    /// The import's content holding one MeshPart per name.
+    fn import(names: &[&str]) -> Reply {
+        let parts: String = names
+            .iter()
+            .map(|n| {
+                format!(
+                    "<Item class=\"MeshPart\"><Properties><string name=\"Name\">{n}</string><Content \
+                     name=\"MeshContent\"><uri>rbxassetid://5</uri></Content><Vector3 name=\"InitialSize\">\
+                     <X>1</X><Y>1</Y><Z>1</Z></Vector3></Properties></Item>"
+                )
+            })
+            .collect();
+        Reply::bytes(200, format!("<roblox version=\"4\">{parts}</roblox>").into_bytes())
     }
 
     #[test]
@@ -806,6 +997,118 @@ mod tests {
         let out = run(&root, &mock, &stop_flag());
         assert_eq!((out.exit, sent(&mock, "POST", ""), sent(&mock, "GET", "")), (0, 0, 1), "{}", out.json);
         assert_eq!(record(&root, "art/a.mp4"), Some(Asset { id: Some(55), hash: Some(y), ..Asset::default() }));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A glb's read happens inside its group, so it holds one of the four slots: with four reads held open, no fifth
+    /// upload starts. Each read lands as the record's parts.
+    #[test]
+    fn six_glbs_go_up_four_at_a_time_and_each_is_read_back() {
+        let root = project("read", &[]);
+        for i in 0..6 {
+            std::fs::write(root.join(format!("art/{i}.glb")), glb(&["hull", &format!("Part{i}")])).unwrap();
+        }
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        let four = Arc::new(Barrier::new(4));
+        for _ in 0..4 {
+            let (four, base) = (four.clone(), mock.base.clone());
+            let location = move |r: &cloud::mock::Request| {
+                four.wait();
+                let id = r.path.rsplit('/').next().unwrap();
+                Reply::json(200, &json!({ "location": format!("{base}/_mock/content/{id}") }))
+            };
+            mock.on("GET", "asset-delivery-api/", Reply::Run(Box::new(location)));
+        }
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!(
+            (out.exit, &out.json["uploaded"], out.json["read"].as_array().map(Vec::len)),
+            (0, &json!(6), Some(6))
+        );
+        assert_eq!((sent(&mock, "POST", "assets/"), sent(&mock, "GET", "asset-delivery-api/"), mock.peak()), (6, 6, 4));
+        let text = std::fs::read_to_string(root.join(lock::FILE)).unwrap();
+        assert_eq!(text.matches("parts = { Part").count(), 6, "{text}");
+        let part = record(&root, "art/0.glb").unwrap().parts.unwrap().remove("hull").unwrap();
+        // the material has a colour map and nothing else
+        let maps = (part.color.is_some(), part.normal, part.roughness, part.metalness);
+        assert_eq!((part.size, maps), ([1.0, 2.0, 3.0], (true, None, None, None)));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A read that fails leaves the upload bound and unread, with no intent to settle: the plan calls it pending, and
+    /// the next run only reads it.
+    #[test]
+    fn an_unread_upload_is_read_by_the_next_run_and_never_sent_again() {
+        let root = project("unread", &[]);
+        std::fs::write(root.join("art/a.glb"), glb(&["Lens", "hull"])).unwrap();
+        let cfg = crate::config::load(&root.join("opossum.toml")).unwrap();
+        let state = || plan::plan(&cfg, None).json["assets"][0]["files"][0]["state"].clone();
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        for _ in 0..4 {
+            mock.on("GET", "_mock/content/", Reply::json(500, &json!({})));
+        }
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!((out.exit, &out.json["code"], &out.json["uploaded"]), (1, &json!("asset.read"), &json!(1)));
+        let r = record(&root, "art/a.glb").unwrap();
+        assert_eq!((r.id, r.next, r.parts), (Some(1_000_001), None, None));
+        assert_eq!(state(), "pending");
+        assert!(plan::plan(&cfg, None).text.contains(crate::ids::UNREAD));
+
+        mock.on("GET", "_mock/content/", import(&["hull"]));
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!(out.json["pending"][0]["error"], "the import has hull; art/a.glb has Lens, hull");
+
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!((out.exit, &out.json["read"], &out.json["uploaded"]), (0, &json!(["art/a.glb"]), &json!(0)));
+        assert_eq!(sent(&mock, "POST", ""), 1);
+        let parts = record(&root, "art/a.glb").unwrap().parts.unwrap();
+        assert_eq!(parts.keys().collect::<Vec<_>>(), ["Lens", "hull"]);
+        assert_eq!(state(), "current");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A key that can create but not read still uploads everything: a refused read stops the reads after it, and the
+    /// scope is named once. A refusal while moderation reviews an upload leaves only that one unread.
+    #[test]
+    fn refused_reads_skip_the_rest_and_an_upload_in_review_stays_unread_alone() {
+        let root = project("scope", &[]);
+        for i in 0..6 {
+            std::fs::write(root.join(format!("art/{i}.glb")), glb(&[&format!("Part{i}")])).unwrap();
+        }
+        let otherwise = auto();
+        let refuse: cloud::mock::Fallback = Box::new(move |r| match r.path.starts_with("asset-delivery-api/") {
+            true => Reply::json(401, &json!({ "message": "no" })),
+            false => otherwise(r),
+        });
+        let mock = Mock::bind(0, Some(refuse)).unwrap();
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!((out.exit, &out.json["code"], &out.json["uploaded"]), (1, &json!("cloud.auth"), &json!(6)));
+        let pending = out.json["pending"].as_array().unwrap();
+        let skipped = pending.iter().filter(|p| p["error"].as_str().unwrap().starts_with("not read")).count();
+        let asked = sent(&mock, "GET", "asset-delivery-api/");
+        assert!(pending.len() == 6 && (1..=4).contains(&asked) && asked + skipped == 6, "{}", out.json);
+        let said = format!("{}{}", out.text, out.json["error"]);
+        assert_eq!(said.matches("legacy-asset:manage").count(), 1, "{said}");
+        let _ = std::fs::remove_dir_all(&root);
+
+        let root = project("review", &[]);
+        std::fs::write(root.join("art/a.glb"), glb(&["A"])).unwrap();
+        std::fs::write(root.join("art/b.glb"), glb(&["B"])).unwrap();
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        let review = json!({ "path": "operations/1", "done": true,
+                             "response": { "assetId": 7, "moderationResult": { "moderationState": "Reviewing" } } });
+        mock.on("POST", "assets/v1/assets", Reply::json(200, &review));
+        mock.on("GET", "asset-delivery-api/v1/assetId/7", Reply::json(403, &json!({ "message": "in review" })));
+        let out = run(&root, &mock, &stop_flag());
+        let in_review = out.json["ids"].as_object().unwrap().iter().find(|(_, id)| **id == 7).unwrap().0.clone();
+        assert_eq!(
+            (out.exit, &out.json["code"], out.json["read"].as_array().map(Vec::len)),
+            (1, &json!("asset.read"), Some(1))
+        );
+        assert_eq!(
+            out.json["pending"],
+            json!([{ "file": in_review, "code": "asset.read",
+                     "error": "Roblox does not deliver it while moderation reviews it (in review)" }])
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

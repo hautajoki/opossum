@@ -211,15 +211,25 @@ pub fn deploy(
     Outcome::failed(json, text, code, error)
 }
 
-/// A session built before the upload, built again for the ids it gave: new ids only set the id modules' sources, and
-/// a resource's first id (which changes its type) loads the program again.
+/// A session built before the upload, built again for the ids and reads it gave: new ids only set the id modules'
+/// sources, and a resource's first id (which changes its type) loads the program again. Refused when a `$asset` names
+/// a part its upload does not have (printed as errors): the upload left nothing unread, or the deploy stopped there.
 fn rebuild(session: &mut Session) -> Result<(Vec<u8>, place::PackStats), Failure> {
     let fail = |error| Failure { code: "build", error, ran: true };
     if session.render_modules().map_err(fail)? == Changed::Types {
         editor::write(&session.cfg.root, &session.cfg.ts, &session.modules).map_err(fail)?;
         session.update(&[], true, &[]).map_err(fail)?;
     }
-    cloud_exec::rbxl(session)
+    let built = cloud_exec::rbxl(session)?;
+    let unknown = session.unknown_parts();
+    if unknown.is_empty() {
+        return Ok(built);
+    }
+    for d in &unknown {
+        eprintln!("{}", d.human(&session.cfg.root));
+    }
+    let error = format!("{} that the uploads do not have would draw nothing", counted(unknown.len(), "part"));
+    Err(Failure { code: "place.unknownPart", error, ran: true })
 }
 
 /// `packs: 168 applied, 3 without a pack yet (SurfaceAppearance 2, MaterialVariant 1)`: the only sign that a map
@@ -398,6 +408,41 @@ mod tests {
         assert_eq!((out.exit, out.json["code"].as_str()), (1, Some("cloud.http")), "{}", out.text);
         assert_eq!(out.json["upload"]["uploaded"], 1);
         assert!(!sent(&mock).iter().any(|r| r.ends_with("/versions")));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A deploy never ships a `$asset` that draws nothing. An upload left unread stops it at the upload; a part the
+    /// upload does not have is only a warning while building (the upload that brings it comes later), so the deploy
+    /// refuses it after uploading and reading, saving no place.
+    #[test]
+    fn a_deploy_uploads_and_reads_before_it_refuses_an_unread_model_or_a_missing_part() {
+        let template = |part: &str| {
+            format!(
+                r#"{{ "className": "MeshPart", "properties": {{ "MeshContent": {{ "$asset": "art/crate.glb", "part": "{part}" }} }} }}"#
+            )
+        };
+        let root = project("parts", &["main"], "", &[]);
+        std::fs::create_dir_all(root.join("place/replicated-storage")).unwrap();
+        let place = root.join("place/replicated-storage/crate.model.json");
+        std::fs::write(&place, template("Lid")).unwrap();
+        std::fs::write(root.join("art/crate.glb"), crate::upload::tests::glb(&["hull"])).unwrap();
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        for _ in 0..4 {
+            mock.on("GET", "_mock/content/", Reply::json(500, &serde_json::json!({})));
+        }
+        let out = deploy_at(&root, &mock, false);
+        assert_eq!((out.exit, out.json["code"].as_str()), (1, Some("asset.read")), "{}", out.text);
+        assert_eq!(out.json["upload"]["uploaded"], 2);
+
+        let out = deploy_at(&root, &mock, false);
+        assert_eq!((out.exit, out.json["code"].as_str()), (1, Some("place.unknownPart")), "{}", out.text);
+        assert_eq!(out.json["upload"]["read"], serde_json::json!(["art/crate.glb"]));
+        assert!(!sent(&mock).iter().any(|r| r.ends_with("/versions")));
+
+        std::fs::write(&place, template("hull")).unwrap();
+        let out = deploy_at(&root, &mock, false);
+        assert_eq!(out.exit, 0, "{}", out.text);
+        assert_eq!(sent(&mock).iter().filter(|r| r.starts_with("POST assets/")).count(), 2);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

@@ -108,11 +108,16 @@ fn pack_key(inst: &Instance, class: &str, maps: &[&str; 4]) -> Option<String> {
 }
 
 /// A map is `<map>Content` (a Content) or, written the older way, `<map>` (a ContentId).
-fn map_uri<'a>(inst: &'a Instance, map: &str) -> &'a str {
-    if let Some(Variant::Content(c)) = inst.properties.get(&ustr(&format!("{map}Content"))) {
+pub(crate) fn map_uri<'a>(inst: &'a Instance, map: &str) -> &'a str {
+    content_uri(inst, &format!("{map}Content"), map)
+}
+
+/// The uri of Content property `content`, else of its older ContentId spelling `legacy` (`MeshContent`, `MeshId`).
+pub(crate) fn content_uri<'a>(inst: &'a Instance, content: &str, legacy: &str) -> &'a str {
+    if let Some(Variant::Content(c)) = inst.properties.get(&ustr(content)) {
         return c.as_uri().unwrap_or_default();
     }
-    match inst.properties.get(&ustr(map)) {
+    match inst.properties.get(&ustr(legacy)) {
         Some(Variant::ContentId(c)) => c.as_str(),
         Some(Variant::String(s)) => s,
         _ => "",

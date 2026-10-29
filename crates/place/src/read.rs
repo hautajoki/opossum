@@ -25,7 +25,8 @@ use crate::properties::{self, PlaceEntry, is_properties_file, read_properties};
 use crate::props;
 use crate::tree::NESTED;
 use crate::value::{self, Resolved, db};
-use crate::{Channel, Diag, Resolver, Severity, Value as Asset};
+use crate::write::{content_uri, map_uri};
+use crate::{Channel, Diag, Part, Resolver, Severity, Value as Asset};
 
 /// What `place/` holds, as a DataModel, with the file each instance came from.
 pub struct Place {
@@ -171,6 +172,48 @@ pub fn model_classes(bytes: &[u8], xml: bool) -> Result<Vec<String>, String> {
         false => rbx_binary::from_reader(bytes).map_err(|e| e.to_string())?,
     };
     Ok(model.root().children().iter().filter_map(|r| model.get_by_ref(*r)).map(|i| i.class.to_string()).collect())
+}
+
+/// The parts Roblox's import made of a glb, from the content asset delivery hands back (an `.rbxm`, or an `.rbxmx`):
+/// every MeshPart in it, at any depth, by name, with its mesh, its `InitialSize` and its SurfaceAppearance's maps,
+/// each property in either spelling. The `_Node` Models, bones and anything else around them are not parts.
+pub fn model_parts(bytes: &[u8]) -> Result<Vec<(String, Part)>, String> {
+    let model = if bytes.starts_with(b"<roblox!") {
+        rbx_binary::from_reader(bytes).map_err(|e| e.to_string())?
+    } else if bytes.starts_with(b"<roblox ") {
+        rbx_xml::from_reader_default(bytes).map_err(|e| e.to_string())?
+    } else {
+        return Err("it is neither an rbxm nor an rbxmx".into());
+    };
+    let mut parts = Vec::new();
+    for inst in model.descendants().filter(|i| i.class == "MeshPart") {
+        let name = inst.name.as_str();
+        let id = |what: &str, uri: &str| match uri.strip_prefix("rbxassetid://").map(str::parse) {
+            _ if uri.is_empty() => Ok(None),
+            Some(Ok(id)) => Ok(Some(id)),
+            _ => Err(format!("MeshPart {name}'s {what} is `{uri}`, not an asset id")),
+        };
+        let mesh = id("mesh", content_uri(inst, "MeshContent", "MeshId"))?;
+        let Some(mesh) = mesh else { return Err(format!("MeshPart {name} has no mesh")) };
+        let Some(Variant::Vector3(size)) = inst.properties.get(&ustr("InitialSize")) else {
+            return Err(format!("MeshPart {name} has no InitialSize"));
+        };
+        let sa = inst.children().iter().filter_map(|r| model.get_by_ref(*r)).find(|i| i.class == "SurfaceAppearance");
+        let map = |map: &str| sa.map_or(Ok(None), |sa| id(map, map_uri(sa, map)));
+        let part = Part {
+            mesh,
+            size: [size.x, size.y, size.z],
+            color: map("ColorMap")?,
+            normal: map("NormalMap")?,
+            roughness: map("RoughnessMap")?,
+            metalness: map("MetalnessMap")?,
+        };
+        parts.push((name.to_owned(), part));
+    }
+    if parts.is_empty() {
+        return Err("it holds no MeshPart".into());
+    }
+    Ok(parts)
 }
 
 /// `ReplicatedStorage` -> `replicated-storage`, `VRService` -> `vr-service`.
@@ -896,6 +939,59 @@ pub fn resolve_ref(place: &Place, holder: Ref, path: &str) -> Result<Ref, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A real import (upload 156800916240477 of lantern.glb, loaded fresh in Studio): five MeshParts in
+    /// `_Node` Models nested under the hull's, sharing their one material's maps.
+    #[test]
+    fn the_parts_of_a_real_import() {
+        let parts = model_parts(include_bytes!("../testdata/lantern-import.rbxm")).unwrap();
+        let maps = (Some(199676980884141), Some(147280647780558), Some(131313702417440), Some(86729430079521));
+        let got: Vec<(&str, u64, [f32; 3])> = parts
+            .iter()
+            .inspect(|(_, p)| assert_eq!((p.color, p.normal, p.roughness, p.metalness), maps))
+            .map(|(name, p)| (name.as_str(), p.mesh, p.size))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("hull", 196285827490574, [0.24169974, 1.0473638, 4.997559]),
+                ("Lens", 83567644535122, [0.42724633, 0.3491212, 0.91308594]),
+                ("LensShroud", 137137247404215, [0.124511704, 0.068359405, 0.25634766]),
+                ("Canister", 114260977649353, [0.15625006, 0.42724618, 0.4858949]),
+                ("Shutter", 111504521580648, [0.021972679, 0.17822269, 0.068359375]),
+            ]
+        );
+    }
+
+    /// What an import holds in the older spellings, as XML: a ContentId `MeshId` and `ColorMap`.
+    #[test]
+    fn the_parts_of_a_legacy_spelled_import() {
+        let xml = r#"<roblox version="4"><Item class="Model" referent="0"><Properties><string name="Name">Model</string>
+            </Properties><Item class="MeshPart" referent="1"><Properties><string name="Name">Lens</string>
+            <Content name="MeshId"><url>rbxassetid://5</url></Content>
+            <Vector3 name="InitialSize"><X>1</X><Y>2</Y><Z>3</Z></Vector3></Properties>
+            <Item class="SurfaceAppearance" referent="2"><Properties>
+            <Content name="ColorMap"><url>rbxassetid://6</url></Content></Properties></Item></Item></Item></roblox>"#;
+        let part =
+            Part { mesh: 5, size: [1.0, 2.0, 3.0], color: Some(6), normal: None, roughness: None, metalness: None };
+        assert_eq!(model_parts(xml.as_bytes()), Ok(vec![("Lens".to_owned(), part)]));
+    }
+
+    /// A read that cannot give every part a mesh and a size fails rather than guessing.
+    #[test]
+    fn an_import_without_parts_or_sizes_is_refused() {
+        let rbxm = |part: InstanceBuilder| {
+            let mut dom = WeakDom::new(InstanceBuilder::new("DataModel"));
+            let at = dom.insert(dom.root_ref(), part);
+            let mut bytes = Vec::new();
+            rbx_binary::to_writer(&mut bytes, &dom, &[at]).unwrap();
+            model_parts(&bytes).unwrap_err()
+        };
+        let mesh = Variant::Content(Content::from_uri("rbxassetid://5"));
+        assert_eq!(rbxm(InstanceBuilder::new("Model")), "it holds no MeshPart");
+        let sizeless = InstanceBuilder::new("MeshPart").with_name("Lens").with_property("MeshContent", mesh);
+        assert_eq!(rbxm(sizeless), "MeshPart Lens has no InitialSize");
+    }
 
     #[test]
     fn service_dirs() {

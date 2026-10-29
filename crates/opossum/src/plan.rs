@@ -26,7 +26,7 @@ pub enum Class {
     Reuses(u64),
     /// Goes up with `found[i]`'s upload (or resumed operation) of the same content.
     Joins(usize),
-    /// An upload is in flight and its operation can be asked how it went.
+    /// An upload is in flight and its operation can be asked how it went, or a glb's upload is not read back yet.
     Pending,
     /// An upload may or may not have happened, and nothing says which: what settles it.
     Ambiguous(String),
@@ -108,6 +108,9 @@ pub fn classify(root: &Path, lock: &mut Lock, found: &[assets::Asset], hashes: &
             Some(Asset { next: Some(_), op: None, .. }) => Class::Ambiguous(settle(&a.file, &a.key)),
             Some(Asset { next: Some(_), .. }) => Class::Pending,
             Some(Asset { rejected: Some(r), .. }) if r == hash => Class::Rejected,
+            Some(Asset { id: Some(_), hash: Some(h), parts: None, .. }) if h == hash && place::is_glb(&a.file) => {
+                Class::Pending
+            }
             Some(Asset { id: Some(_), hash: Some(h), .. }) if h == hash => Class::Current,
             record => {
                 let changed = record.is_some_and(|r| r.id.is_some());
@@ -121,12 +124,16 @@ pub fn classify(root: &Path, lock: &mut Lock, found: &[assets::Asset], hashes: &
         };
         classes.push(class);
     }
-    // an upload in flight leads its content (it is resumed), else the first file sending it
+    // an upload in flight leads its content (it is resumed), else the first file sending it; an unread glb is read by
+    // its id, so it leads nothing
     let mut leaders: HashMap<&str, usize> = HashMap::new();
     for pending in [true, false] {
         for (i, a) in found.iter().enumerate() {
             let content = match &classes[i] {
-                Class::Pending if pending => lock.assets[&a.file].next.as_deref().unwrap_or_default(),
+                Class::Pending if pending => match lock.assets[&a.file].next.as_deref() {
+                    Some(next) => next,
+                    None => continue,
+                },
                 Class::Send { .. } if !pending => hashes[i].as_str(),
                 _ => continue,
             };
@@ -177,6 +184,9 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
                 }
                 Class::Ambiguous(how) => writeln!(lines, "{name:<9} {} ({how})", a.file),
                 Class::Rejected => writeln!(lines, "{name:<9} {} ({})", a.file, refused(&a.file)),
+                Class::Pending if lock.assets[&a.file].next.is_none() => {
+                    writeln!(lines, "{name:<9} {} ({})", a.file, crate::ids::UNREAD)
+                }
                 Class::Invalid(code, message) => {
                     (file["code"], file["error"]) = (code.as_str().into(), message.as_str().into());
                     writeln!(lines, "{name:<9} {} ({message})", a.file)

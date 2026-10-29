@@ -616,6 +616,13 @@ impl Session {
         out
     }
 
+    /// The last tree's `place.unknownPart` warnings as errors. A build draws such a part empty and goes on, since the
+    /// upload that brings it may come after the build; a deploy, which has uploaded and read everything, refuses them.
+    pub fn unknown_parts(&self) -> Vec<Diag> {
+        let parts = self.mount_diags.iter().filter(|d| d.code == "place.unknownPart");
+        parts.map(|d| Diag { severity: Severity::Error, ..d.clone() }).collect()
+    }
+
     /// Reads a Luau module's source, from the session's cache while the file's modification time and size are
     /// the ones it was read at.
     fn luau(&mut self, file: &Path) -> Result<place::Source, String> {
