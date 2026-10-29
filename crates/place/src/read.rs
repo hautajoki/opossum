@@ -186,6 +186,10 @@ struct Reader<'a> {
 
 const ROJO_META: &str = "a Rojo meta file; properties live in place/*.toml, and `opossum migrate` moves them there";
 
+/// What a rogen-era `place/services` or `place/generated` is, and what makes it a place `opossum migrate` converts.
+pub(crate) const ROGEN: &str = "a rogen layout: move place/services/* up into place/ and place/generated (rogen's \
+                                output) out of it, then run `opossum migrate` again";
+
 /// Reads `dir` (a project's `place/`) into a fresh DataModel, applies its properties files and resolves every Ref.
 /// Problems come back as diagnostics; whatever could be read is in the place. `skip` holds the asset roots, which are
 /// left out wherever they are.
@@ -201,7 +205,9 @@ pub fn read_place(dir: &Path, skip: &[PathBuf]) -> (Place, Vec<Diag>) {
             continue;
         }
         let Some(service_path) = service_for_dir(&name) else {
-            r.diags.push(Diag::error("place.unknownService", &path, format!("{name} names no service")));
+            let rogen =
+                if matches!(name.as_str(), "services" | "generated") { format!("; {ROGEN}") } else { String::new() };
+            r.diags.push(Diag::error("place.unknownService", &path, format!("{name} names no service{rogen}")));
             continue;
         };
         match r.instance_at(&service_path, None) {

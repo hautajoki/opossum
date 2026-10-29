@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 
 use crate::Diag;
 use crate::properties::{PlaceEntry, entries_to_toml, read_properties};
-use crate::read::{entries, kebab, service_for_dir};
+use crate::read::{ROGEN, entries, kebab, service_for_dir};
 
 /// A file the migration writes: its new text, or None to remove it.
 pub struct Write {
@@ -32,6 +32,9 @@ pub fn plan_migration(dir: &Path) -> Result<Vec<Write>, Vec<Diag>> {
     for (name, path, is_dir) in tops {
         if let Some(service) = service_for_dir(&name).filter(|_| is_dir) {
             plan.dir(&path, &service, true);
+        } else if is_dir && matches!(name.as_str(), "services" | "generated") {
+            // its Rojo files are only reachable once its services are where opossum reads them
+            plan.diags.push(Diag::error("migrate.rogen", &path, ROGEN));
         } else if !is_dir && name.ends_with(".meta.json") {
             plan.diags.push(Diag::error("migrate.meta", &path, ONLY_INIT));
         }
