@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -53,6 +54,8 @@ enum Event {
     Waiting(Option<cloud::Error>),
     /// A stop came before the request left.
     NotSent,
+    /// The worker panicked (a bug): the lock says how far it got.
+    Panicked,
 }
 
 #[derive(Default)]
@@ -240,7 +243,16 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
                 progress(g, &found);
                 let (tx, i) = (tx.clone(), sent);
                 let audio = matches!(found[g.members[0]].ext.as_str(), ".ogg" | ".mp3" | ".wav" | ".flac");
-                s.spawn(move || work(client, creator, &ready[i], audio, stop, &|e| drop(tx.send((i, e)))));
+                s.spawn(move || {
+                    let say = |e| drop(tx.send((i, e)));
+                    // a worker that panics still answers, or the run would wait on it forever holding the guard
+                    let worked = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        work(client, creator, &ready[i], audio, stop, &say)
+                    }));
+                    if worked.is_err() {
+                        say(Event::Panicked);
+                    }
+                });
                 sent += 1;
                 flight += 1;
             }
@@ -481,6 +493,16 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
             if let Some(e) = e {
                 eprintln!("{e}");
                 return e.diag() == "cloud.auth";
+            }
+        }
+        Event::Panicked => {
+            for file in files() {
+                match lock.assets.get(file).is_some_and(|r| r.op.is_some()) {
+                    true => report.pending.push(file.into()),
+                    false => {
+                        report.ambiguous.push((file.into(), format!("opossum failed mid-upload; {}", settle(file))))
+                    }
+                }
             }
         }
         Event::NotSent => {
