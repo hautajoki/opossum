@@ -823,5 +823,9 @@ mod tests {
         assert_eq!(prop("Lighting", "Brightness"), Some(Variant::Float32(1.5)));
         assert_eq!(prop("Lighting", "Technology"), Some(Variant::Enum(rbx_dom_weak::types::Enum::from_u32(3))));
         assert_eq!(prop("Lighting", "GlobalShadows"), Some(Variant::Bool(true)));
+
+        // a colour in 0-255 is refused rather than drawn 255 times too bright
+        let err = value::property("Lighting", "Ambient", &serde_json::json!([70, 70, 70])).err().unwrap();
+        assert!(err.contains("[0.2745, 0.2745, 0.2745]"), "{err}");
     }
 }

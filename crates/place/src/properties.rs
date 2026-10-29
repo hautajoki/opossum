@@ -8,7 +8,7 @@
 //!
 //! ["Workspace/Terrain"]
 //! ClassName = "Terrain"         # only needed to create or retype an instance
-//! WaterColor = [12, 84, 91]
+//! WaterColor = [0.0471, 0.3294, 0.3569]
 //! MaterialColors = { Asphalt = [112, 112, 108] }
 //! ```
 //!

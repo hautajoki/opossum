@@ -6,8 +6,8 @@
 [Lighting]
 Technology = "ShadowMap"
 Brightness = 3
-Ambient = [70, 70, 70]
-OutdoorAmbient = [70, 70, 70]
+Ambient = [0.2745, 0.2745, 0.2745]
+OutdoorAmbient = [0.2745, 0.2745, 0.2745]
 TimeOfDay = "14:30:00"
 GeographicLatitude = 0
 GlobalShadows = true
