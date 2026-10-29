@@ -684,6 +684,11 @@ impl Session {
         modules.map(|m| m.file.as_path()).collect()
     }
 
+    /// Whether a compiled module holds this build's `$buildTime()`, so no two builds have the same bytes.
+    pub fn timestamped(&self) -> bool {
+        self.compiled.values().any(|c| c.source.text.contains(self.options.build_time.as_str()))
+    }
+
     /// Whether the tree mounts the runtime library: a compiled module or a package requires it.
     pub fn needs_runtime(&self) -> bool {
         self.scan.modules.iter().any(|m| self.compiled.get(&slashed(&m.file)).is_some_and(|c| c.runtime))

@@ -1,31 +1,31 @@
 //! `opossum exec`, `test` and `bench`: Luau run where a [`Target`] says. In Studio it runs in a DataModel through the
 //! running `opossum dev`, one `POST /exec` on the port it wrote to `.opossum/port` (DESIGN.md, Exec); `--local` runs
-//! it in fresh in-process VMs, with no dev or Studio (DESIGN.md, Tests); `test --cloud` runs the specs on Open Cloud
-//! through tessera (DESIGN.md, Cloud tests). Every target runs the same spec runtime (`spec`) and prints its report
-//! the same way. The exit status is 0 when it ran clean, 1 for a script error, a failed or empty test run or an
+//! it in fresh in-process VMs, with no dev or Studio (DESIGN.md, Tests); `--cloud` runs it on Open Cloud, on the saved
+//! place version holding this build (DESIGN.md, Cloud runs). Every target runs the same spec runtime (`spec`) and
+//! prints its report the same way. The exit status is 0 when it ran clean, 1 for a script error, a failed or empty test run or an
 //! answer that never came, 2 when it never ran (dev or the DataModel cannot be reached, or holds older code than a
 //! test allows). `opossum play` and `stop` start and end a playtest the same way (`POST /play`, `/stop`; DESIGN.md,
 //! Play), and `opossum pull` writes an instance from Studio into the files (`POST /pull`; DESIGN.md, Pull).
 //! `opossum status` and `attach` ask every dev on the sync ports what it holds and move Studio between them
 //! (`POST /status`, `/release`; DESIGN.md, Attach).
 
-use std::io::{BufRead, IsTerminal, Read, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
+use cloud::Client;
 use serde_json::{Value, json};
 use spec::{Host, Mode};
 
-use crate::build::Session;
+use crate::cloud_exec::{self, Placed, Ran};
 use crate::config::Config;
-use crate::diag::Diag;
-use crate::{dev, editor};
+use crate::guard::Cache;
+use crate::{Outcome, dev, editor};
 
-/// The longest a run on Open Cloud may take, in seconds (tessera's and Open Cloud's limit).
-const CLOUD_TIMEOUT: f64 = 300.0;
+/// The longest a run on Open Cloud may take, in seconds (Open Cloud's limit), and its default.
+pub const CLOUD_TIMEOUT: f64 = 300.0;
 /// How long one file of a local test run may take by default, in seconds; a local bench run has no limit by default.
 const LOCAL_TEST_TIMEOUT: f64 = 300.0;
 
@@ -46,8 +46,17 @@ pub enum Target {
     Studio { realm: Option<String> },
     /// Fresh Luau VMs in this process, no DataModel; `interpreted` turns native code off.
     Local { interpreted: bool },
-    /// Open Cloud through tessera (test and bench only): its logical place and environment, its defaults when None.
-    Cloud { place: Option<String>, environment: Option<String> },
+    /// Open Cloud, on the saved version holding this build or, for an exec, the current head.
+    Cloud(Cloud),
+}
+
+/// `--cloud`'s flags: the place and environment (the root place and the default environment when None), the profile
+/// to build with, and `--head` (exec only: the current head, no build and no save).
+pub struct Cloud {
+    pub place: Option<String>,
+    pub environment: Option<String>,
+    pub profile: Option<String>,
+    pub head: bool,
 }
 
 /// What a `test` or `bench` run runs, wherever it runs.
@@ -74,6 +83,113 @@ pub fn exec_local(root: &Path, options: &Options, interpreted: bool, source: Sou
     let chunk = file.map_or(name, |file| shown(root, &file));
     let answer = run_local(root, options, interpreted, &chunk, &code)?;
     Ok(print_answer(options, &answer))
+}
+
+/// Runs Luau on Open Cloud: on the saved version holding this build, built with `--profile` or the place's profile,
+/// or on the current head with `--head`. Text prints what it returned as tessera did (nothing for no value, a string as
+/// it is, another value as JSON, several as one JSON array) and puts what it logged and its error on stderr.
+pub fn exec_cloud(
+    cfg: Config,
+    client: &Client,
+    cache: &Cache,
+    options: &Options,
+    run: &Cloud,
+    source: Source,
+) -> Outcome {
+    let code = match read(source) {
+        Ok((_, _, code)) => code,
+        Err(error) => return Outcome::refused("exec.source", error),
+    };
+    let at = match cloud_exec::resolve(&cfg, run.environment.as_deref(), run.place.as_deref()) {
+        Ok(at) => at,
+        Err(error) => return Outcome::refused("config", error),
+    };
+    let built = if run.head {
+        None
+    } else {
+        let profile = run.profile.as_deref().or(at.profile.as_deref());
+        match cloud_exec::build(cfg, profile, &at.environment) {
+            Ok(built) => Some(built),
+            Err(failure) => return Outcome::refused(failure.code, failure.error),
+        }
+    };
+    let index = built.as_ref().map(|(session, _)| dev::log_index(session)).unwrap_or_default();
+    let note = built.as_ref().map_or("", |(session, _)| reproducible(session));
+    let timeout = Duration::from_secs_f64(options.timeout.unwrap_or(CLOUD_TIMEOUT));
+    let rbxl = built.as_ref().map(|(_, rbxl)| rbxl.as_slice());
+    let mut answer = json!({
+        "ok": false, "realm": "cloud", "environment": at.environment, "place": at.place, "placeId": at.id,
+    });
+    let ran = match cloud_exec::run(client, cache, &at, rbxl, note, &code, timeout) {
+        Ok(ran) => ran,
+        Err(failure) if !failure.ran => return Outcome::refused(failure.code, failure.error),
+        Err(failure) => {
+            eprintln!("opossum: {}", failure.error);
+            answer["ran"] = true.into();
+            answer["code"] = failure.code.into();
+            answer["error"] = failure.error.into();
+            return Outcome { exit: 1, json: answer, text: String::new() };
+        }
+    };
+    let output: Vec<Value> = mapped_logs(&ran, &index);
+    let failure = task_failure(&ran, &index);
+    if !options.json {
+        output.iter().for_each(|line| eprintln!("{}", line["text"].as_str().unwrap_or("")));
+        if let Some((_, error)) = &failure {
+            eprintln!("{error}");
+        }
+    }
+    answer["ok"] = failure.is_none().into();
+    answer["version"] = ran.version.into();
+    answer["saved"] = ran.saved.into();
+    answer["ms"] = ran.ms.into();
+    answer["output"] = output.into();
+    answer["values"] = ran.task.results.clone().into();
+    if let Some((code, error)) = failure {
+        answer["code"] = code.into();
+        answer["error"] = error.into();
+    }
+    let exit = if answer["ok"] == true { 0 } else { 1 };
+    Outcome { exit, json: answer, text: results_text(&ran.task.results) }
+}
+
+/// What a cloud exec prints on stdout, tessera's way: nothing for no value, one string as it is, one other value as
+/// JSON, several as one compact JSON array; each but nothing ends its line.
+fn results_text(values: &[Value]) -> String {
+    match values {
+        [] => String::new(),
+        [Value::String(text)] => format!("{text}\n"),
+        [value] => format!("{value}\n"),
+        values => format!("{}\n", Value::Array(values.to_vec())),
+    }
+}
+
+/// What a task logged, `{kind, text}` each, its places mapped to the files.
+fn mapped_logs(ran: &Ran, index: &dev::LogIndex) -> Vec<Value> {
+    let line = |text: &String| json!({ "kind": "output", "text": dev::map_log(text, index).0 });
+    ran.logs.iter().map(line).collect()
+}
+
+/// A task that did not complete: its code (`cloud.timeout` when it ran out of time) and error, mapped.
+fn task_failure(ran: &Ran, index: &dev::LogIndex) -> Option<(&'static str, String)> {
+    let task = &ran.task;
+    if task.state == "COMPLETE" {
+        return None;
+    }
+    let mapped = |text: &str| text.lines().map(|line| dev::map_log(line, index).0).collect::<Vec<_>>().join("\n");
+    Some(match &task.error {
+        Some((code, message)) if code == "DEADLINE_EXCEEDED" => {
+            ("cloud.timeout", format!("{code}: {}", mapped(message)))
+        }
+        Some((code, message)) => ("exec.failed", format!("{code}: {}", mapped(message))),
+        None if !task.terminal() => ("cloud.timeout", format!("the task was still {} at its deadline", task.state)),
+        None => ("exec.failed", format!("the task ended {}", task.state)),
+    })
+}
+
+/// What a save of a build adds when its bytes can never match an earlier one's.
+fn reproducible(session: &crate::build::Session) -> &'static str {
+    if session.timestamped() { " (this build is not reproducible: $buildTime)" } else { "" }
 }
 
 /// The code to run: the file's absolute path for a file, the name its errors give it, and its text.
@@ -259,91 +375,72 @@ pub fn test_studio(cfg: &Config, options: &Options, realm: &Option<String>, test
     Ok(ok)
 }
 
-/// Runs the specs on Roblox's Open Cloud Luau execution instead of Studio: `tessera run --fresh` builds the place
-/// with its configured build command, saves it as a place version (or reuses an identical saved one) and runs one
-/// script holding the spec runtime and this build's suites there. The project is built here too, first: a build
-/// with errors never reaches Roblox, and its log index maps the report like Studio's. A suite the place tessera built
-/// does not hold fails to load.
+/// Runs the specs on Open Cloud instead of Studio: the project is built here, once, with `--profile` if given (a
+/// place's own profile is for what it publishes, and may leave the specs out), refused with errors, saved as a place
+/// version unless the cache names one holding the same bytes, and one task runs the spec runtime and this build's
+/// suites on exactly that version. Its log index maps the report like Studio's.
 pub fn test_cloud(
     cfg: Config,
+    client: &Client,
+    cache: &Cache,
     options: &Options,
-    place: Option<&str>,
-    environment: Option<&str>,
+    run: &Cloud,
     tests: &Tests,
 ) -> Result<bool, String> {
     let json = options.json;
-    let refused = |error| refused(json, error);
-    if options.timeout.is_some_and(|t| t > CLOUD_TIMEOUT) {
-        return Err(refused(format!("--timeout with --cloud is at most {CLOUD_TIMEOUT} s, Open Cloud's limit")));
-    }
-    let mut session = Session::new(cfg, None, environment).map_err(refused)?;
-    editor::write(&session.cfg.root, &session.cfg.ts, &session.modules).map_err(refused)?;
-    session.build().map_err(refused)?;
-    session.tree(false);
+    let refused = |code, error| refused_as(json, code, error);
+    let at = cloud_exec::resolve(&cfg, run.environment.as_deref(), run.place.as_deref())
+        .map_err(|e| refused("config", e))?;
+    let (session, rbxl) =
+        cloud_exec::build(cfg, run.profile.as_deref(), &at.environment).map_err(|f| refused(f.code, f.error))?;
     let root = session.cfg.root.clone();
-    let errors: Vec<Diag> = session.diagnostics().into_iter().filter(Diag::is_error).collect();
-    if !errors.is_empty() {
-        for d in &errors {
-            eprintln!("{}", d.human(&root));
-        }
-        return Err(refused("the project does not compile, so nothing was sent to Open Cloud".to_owned()));
-    }
     let index = dev::log_index(&session);
     let suites = suites(&session.scan, &root, tests.mode);
     let request = spec::Request { suites: &suites, mode: tests.mode, filter: tests.filter.as_deref(), focus: None };
-    let script = editor::dir(&root).join("spec.luau");
-    std::fs::write(&script, spec::bundle(Host::Roblox, &request))
-        .map_err(|e| refused(format!("{}: {e}", script.display())))?;
-    let mut tessera = Command::new("tessera");
-    tessera.current_dir(&root).args(["run", "--json", "--logs", "--script"]).arg(&script);
-    if let Some(timeout) = options.timeout {
-        tessera.arg("--timeout").arg(format!("{timeout}s"));
-    }
-    if let Some(environment) = environment {
-        tessera.args(["--environment", environment]);
-    }
-    tessera.args(["--fresh", place.unwrap_or("main")]);
-    // its progress and errors are shown as they come, mapped: a failed run's logs and error are only ever there
-    let mut child = tessera
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| refused(format!("could not run tessera: {e}")))?;
-    let errors = std::io::BufReader::new(child.stderr.take().expect("piped"));
-    let run = std::thread::scope(|s| {
-        s.spawn(|| {
-            errors.lines().map_while(Result::ok).for_each(|line| eprintln!("{}", dev::map_log(&line, &index).0))
-        });
-        child.wait_with_output()
-    });
-    let failed = |error| failed(json, error);
-    let run = match run {
-        Ok(run) => run,
-        Err(e) => return failed(format!("tessera: {e}")),
+    let script = spec::bundle(Host::Roblox, &request);
+    let timeout = Duration::from_secs_f64(options.timeout.unwrap_or(CLOUD_TIMEOUT));
+    let ran = match cloud_exec::run(client, cache, &at, Some(&rbxl), reproducible(&session), &script, timeout) {
+        Ok(ran) => ran,
+        Err(failure) if !failure.ran => return Err(refused(failure.code, failure.error)),
+        Err(failure) => return cloud_failed(json, about(&at, None), Vec::new(), failure.code, failure.error),
     };
-    if !run.status.success() {
-        return failed(format!("tessera failed ({})", run.status));
+    let output = mapped_logs(&ran, &index);
+    let about = about(&at, Some(&ran));
+    if let Some((code, error)) = task_failure(&ran, &index) {
+        return cloud_failed(json, about, output, code, error);
     }
-    let Ok(result) = serde_json::from_slice::<Value>(&run.stdout) else {
-        return failed("tessera did not answer like `tessera run --json`".to_owned());
-    };
-    let report = result["results"][0].as_str().and_then(|text| serde_json::from_str::<Value>(text).ok());
+    let report = ran.task.results.first().and_then(Value::as_str).and_then(|text| serde_json::from_str(text).ok());
     let Some(mut report) = report.filter(Value::is_object) else {
-        return failed("the run returned no report".to_owned());
+        return cloud_failed(json, about, output, "exec.failed", "the run returned no report".to_owned());
     };
     dev::map_strings(&mut report, &index);
-    let logs = result["logs"].as_array().into_iter().flatten().filter_map(Value::as_str);
-    let output = logs.map(|line| json!({ "kind": "output", "text": dev::map_log(line, &index).0 }));
-    let (environment, place, version) = (&result["environment"], &result["place"], &result["version"]);
-    let run = Run {
-        target: "cloud",
-        ran: format!("{}/{} v{version}", environment.as_str().unwrap_or("?"), place.as_str().unwrap_or("?")),
-        about: json!({ "environment": environment, "place": place, "placeId": result["placeId"], "version": version }),
-        output: output.collect(),
-        report,
-    };
+    let run = Run { target: "cloud", ran: format!("{} v{}", at.label(), ran.version), about, output, report };
     // the script's own chunk has a name of Open Cloud's choosing: the frames shown are the project's files
     Ok(finish(options, tests, run, &|line| project_line(&root, line)))
+}
+
+/// A cloud run's `ran`: where it ran and, once a task started, the version and whether this run saved it.
+fn about(at: &Placed, ran: Option<&Ran>) -> Value {
+    let mut about = json!({ "environment": at.environment, "place": at.place, "placeId": at.id });
+    if let Some(ran) = ran {
+        about["version"] = ran.version.into();
+        about["saved"] = ran.saved.into();
+    }
+    about
+}
+
+/// A cloud test run that brought back no report (exit status 1): what it logged, then why.
+fn cloud_failed(json: bool, about: Value, output: Vec<Value>, code: &str, error: String) -> Result<bool, String> {
+    if json {
+        let answer = json!({
+            "ok": false, "target": "cloud", "ran": about, "output": output, "report": null, "code": code, "error": error,
+        });
+        println!("{answer}");
+    } else {
+        output.iter().for_each(|line| println!("{}", line["text"].as_str().unwrap_or("")));
+        eprintln!("opossum: {error}");
+    }
+    Ok(false)
 }
 
 /// The suites of a scan for `mode`: every ModuleScript named `*.spec` (`*.bench`), labelled by its source file and
@@ -763,6 +860,14 @@ fn refused(json: bool, error: String) -> String {
     error
 }
 
+/// As [`refused`], with the diagnostic code `--json` adds for agents to branch on.
+fn refused_as(json: bool, code: &str, error: String) -> String {
+    if json {
+        println!("{}", json!({ "ok": false, "ran": false, "error": error, "code": code }));
+    }
+    error
+}
+
 /// An `ok: false` answer (exit status 1): it was asked, and did not come to pass.
 fn failed(json: bool, error: String) -> Result<bool, String> {
     if json {
@@ -780,6 +885,16 @@ fn shown(root: &Path, file: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cloud_exec_prints_its_results_as_tessera_did() {
+        // scripts parse this: a project's tooling driver reads one string result raw
+        let text = |values: Value| results_text(values.as_array().unwrap());
+        assert_eq!(text(json!([])), "");
+        assert_eq!(text(json!(["a \"b\"\n"])), "a \"b\"\n\n");
+        assert_eq!(text(json!([1.5])), "1.5\n");
+        assert_eq!(text(json!([1, "a", { "k": [true] }])), "[1,\"a\",{\"k\":[true]}]\n");
+    }
 
     #[test]
     fn local_exec_keeps_lines_directives_and_every_result() {

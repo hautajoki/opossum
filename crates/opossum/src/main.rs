@@ -2,6 +2,7 @@
 
 mod assets;
 mod build;
+mod cloud_exec;
 mod config;
 mod dev;
 mod diag;
@@ -42,13 +43,15 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
   check [--profile <name>] [--environment <e>] [--json]      diagnostics, no output
   dev [--environment <e>] [--json]                           watch, rebuild and sync to Studio
   exec [<target>] [--timeout <s>] [--json] (<file.luau> | -e <code> | -)
-                                                             run Luau (Studio or --local)
+                                                             run Luau where the target says
   test [<target>] [--timeout <s>] [--allow-focused] [--json] [<filter>]
                                                              run the specs (bench: the benchmarks)
     <target>: [--realm <r>]                                  in Studio through opossum dev (the default)
               --local [--interpreted]                        in fresh Luau VMs here, src/**/*.local.spec.luau
-              --cloud [--place <p>] [--environment <e>]      not exec: on Open Cloud through tessera (saves a
-                                                             place version to Roblox)
+              --cloud [--place <p>] [--environment <e>] [--profile <name>] [--head]
+                                                             on Open Cloud, on the place version holding this
+                                                             build (saved to Roblox unless one already is);
+                                                             exec --head: on the current head, no build
   plan [--environment <e>] [--json]                          every asset's state against opossum.lock; offline
   upload [--json]                                            upload new and changed assets, ids into opossum.lock
   adopt [--json] asset <file> (<id> | --none)                settle an upload that may or may not have happened
@@ -96,7 +99,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     let (mut profile, mut out, mut emit, mut json) = (None, None, None, false);
     let (mut realm, mut timeout, mut code, mut run) = (None, None, None, false);
     let (mut local, mut interpreted, mut cloud, mut place, mut environment) = (false, false, false, None, None);
-    let (mut force, mut allow_focused, mut none) = (false, false, false);
+    let (mut force, mut allow_focused, mut none, mut head) = (false, false, false, false);
     let mut positional: Vec<&str> = Vec::new();
     let mut it = rest.iter().copied().skip(1);
     while let Some(arg) = it.next() {
@@ -122,6 +125,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
             "--force" => force = true,
             "--allow-focused" => allow_focused = true,
             "--none" => none = true,
+            "--head" => head = true,
             "-" => positional.push(arg),
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}")),
             _ => positional.push(arg),
@@ -130,23 +134,25 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     let verb = rest.first().copied();
     let tests = matches!(verb, Some("test" | "bench"));
     let runs = tests || verb == Some("exec");
-    // where exec, test and bench run: each target takes only its own flags
+    // where exec, test and bench run: each target takes only its own flags, and a cloud run builds with its profile
+    let profiled = if runs && cloud { profile.take() } else { None };
+    let elsewhere = place.is_some() || environment.is_some() || profiled.is_some() || head;
     let target = match (local, cloud) {
-        (false, false) if !interpreted && place.is_none() && environment.is_none() => {
-            Some(exec::Target::Studio { realm: realm.clone() })
-        }
-        (true, false) if realm.is_none() && place.is_none() && environment.is_none() => {
-            Some(exec::Target::Local { interpreted })
-        }
-        (false, true) if tests && !interpreted && realm.is_none() => {
-            Some(exec::Target::Cloud { place: place.clone(), environment: environment.clone() })
+        (false, false) if !interpreted && !elsewhere => Some(exec::Target::Studio { realm: realm.clone() }),
+        (true, false) if realm.is_none() && !elsewhere => Some(exec::Target::Local { interpreted }),
+        (false, true) if !interpreted && realm.is_none() && (!head || (!tests && profiled.is_none())) => {
+            if timeout.is_some_and(|t| t > exec::CLOUD_TIMEOUT) {
+                return Err(format!("--timeout with --cloud is at most {} s, Open Cloud's limit", exec::CLOUD_TIMEOUT));
+            }
+            let (place, environment) = (place.clone(), environment.clone());
+            Some(exec::Target::Cloud(exec::Cloud { place, environment, profile: profiled, head }))
         }
         _ => None,
     };
     let timed = runs || matches!(verb, Some("play" | "stop" | "pull" | "attach"));
-    let targeted = realm.is_some() || local || interpreted || cloud || place.is_some();
+    let targeted = realm.is_some() || local || interpreted || cloud || place.is_some() || head;
     // the ids `opossum/resources` holds, or where a cloud run runs
-    let environed = tests || matches!(verb, Some("build" | "check" | "dev" | "plan"));
+    let environed = runs || matches!(verb, Some("build" | "check" | "dev" | "plan"));
     let stray = targeted && !runs
         || environment.is_some() && !environed
         || timeout.is_some() && !timed
@@ -259,6 +265,14 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Command::Test(options, exec::Target::Local { interpreted }, tests) => {
             return exec::test_local(&root()?, &options, interpreted, &tests);
         }
+        // one outcome, as below, matched here because it takes its source
+        Command::Exec(options, exec::Target::Cloud(run), source) => {
+            let outcome = match remote(&file) {
+                Ok((cfg, client, cache)) => exec::exec_cloud(cfg, &client, &cache, &options, &run, source),
+                Err(refusal) => refusal,
+            };
+            return finish(outcome, options.json);
+        }
         _ => {}
     }
     // the commands with one outcome: refusals are outcomes too
@@ -271,6 +285,12 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
             return finish(outcome, *json);
         }
         Command::Upload { json } => return finish(upload(&file), *json),
+        Command::Test(options, exec::Target::Cloud(run), tests) => {
+            return match remote(&file) {
+                Ok((cfg, client, cache)) => exec::test_cloud(cfg, &client, &cache, options, run, tests),
+                Err(refusal) => finish(refusal, options.json),
+            };
+        }
         Command::Adopt { json, file: asset, id } => return finish(adopt(&file, &cwd, asset, *id), *json),
         _ => {}
     }
@@ -282,10 +302,6 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         }
         Command::Test(options, exec::Target::Studio { realm }, tests) => {
             return exec::test_studio(&cfg, &options, &realm, &tests);
-        }
-        // builds itself, for the log index
-        Command::Test(options, exec::Target::Cloud { place, environment }, tests) => {
-            return exec::test_cloud(cfg, &options, place.as_deref(), environment.as_deref(), &tests);
         }
         Command::Play(options, run) => return exec::play(&cfg, &options, run),
         Command::Stop(options) => return exec::stop(&cfg, &options),
@@ -364,6 +380,14 @@ fn upload(file: &Path) -> Outcome {
     };
     signals::install();
     upload::upload(&cfg, &client, &guard, &signals::STOP)
+}
+
+/// What `--cloud` runs need: the config, the client with the project's key, and the cache of saved versions.
+fn remote(file: &Path) -> Result<(Config, Client, Cache), Outcome> {
+    let cfg = config::load(file).map_err(|error| Outcome::refused("config", error))?;
+    let client = open_cloud(&cfg.root)?;
+    let cache = Cache::default_dir().map_err(|error| Outcome::refused("cache", error))?;
+    Ok((cfg, client, cache))
 }
 
 /// `opossum adopt asset`: offline, but it writes the lock, so it holds the guard.
