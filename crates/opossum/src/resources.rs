@@ -115,8 +115,12 @@ pub struct Op {
 /// an unreadable one is the error. Images are hashed as asset inputs under the preset of their purpose, so a hash says
 /// the bytes and the pipeline they go through.
 pub fn catalog(cfg: &Config) -> Result<Vec<Want>, String> {
-    let read = |path: &str, preset: Preset| -> Result<(String, Option<Source>), String> {
-        let bytes = std::fs::read(cfg.root.join(path)).map_err(|e| format!("{path}: {e}"))?;
+    // `at` names the key naming the file, so a wrong path says where it is written
+    let read = |at: &str, path: &str, preset: Preset| -> Result<(String, Option<Source>), String> {
+        let bytes = std::fs::read(cfg.root.join(path)).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => format!("opossum.toml's {at} names {path}, which does not exist"),
+            _ => format!("opossum.toml's {at} names {path}: {e}"),
+        })?;
         let ext = path.rfind('.').map_or(String::new(), |dot| path[dot..].to_ascii_lowercase());
         let hash = assets::hash(&ext, ImageOptions { preset, bleed: true }, &bytes);
         Ok((hash, Some(Source { path: path.to_owned(), ext, bytes, preset })))
@@ -126,8 +130,9 @@ pub fn catalog(cfg: &Config) -> Result<Vec<Want>, String> {
         [(Kind::Pass, &cfg.passes, Preset::GamePassIcon), (Kind::Product, &cfg.products, Preset::ProductIcon)]
     {
         for s in sales {
+            let table = if kind == Kind::Pass { "passes" } else { "products" };
             let (icon, image) = match &s.icon {
-                Some(path) => read(path, preset).map(|(hash, image)| (Some(hash), image))?,
+                Some(path) => read(&format!("`{table}.{}.icon`", s.key), path, preset).map(|(h, i)| (Some(h), i))?,
                 None => (None, None),
             };
             let values = Resource {
@@ -144,7 +149,7 @@ pub fn catalog(cfg: &Config) -> Result<Vec<Want>, String> {
         }
     }
     for b in &cfg.badges {
-        let (icon, image) = read(&b.icon, Preset::BadgeIcon)?;
+        let (icon, image) = read(&format!("`badges.{}.icon`", b.key), &b.icon, Preset::BadgeIcon)?;
         let values = Resource {
             name: Some(b.name.clone()),
             description: Some(b.description.clone()),
@@ -160,12 +165,13 @@ pub fn catalog(cfg: &Config) -> Result<Vec<Want>, String> {
         wants.push(Want { key: "experience/metadata".into(), kind: Kind::Metadata, values, image: None, cost: 0 });
     }
     if let Some(path) = &exp.icon {
-        let (icon, image) = read(path, Preset::ExperienceIcon)?;
+        let (icon, image) = read("`experience.icon`", path, Preset::ExperienceIcon)?;
         let values = Resource { icon: Some(icon), ..Resource::default() };
         wants.push(Want { key: "experience/icon".into(), kind: Kind::Icon, values, image, cost: 0 });
     }
     for t in &exp.thumbnails {
-        let (hash, image) = read(&t.image, Preset::Thumbnail)?;
+        let at = format!("thumbnail `{}`'s `image`", t.key);
+        let (hash, image) = read(&at, &t.image, Preset::Thumbnail)?;
         let values = Resource { image: Some(hash), alt_text: t.alt_text.clone(), ..Resource::default() };
         wants.push(Want { key: format!("thumbnail/{}", t.key), kind: Kind::Thumbnail, values, image, cost: 0 });
     }

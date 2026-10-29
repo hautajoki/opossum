@@ -169,7 +169,10 @@ pub fn load(file: &Path) -> Result<Config, String> {
     let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
     let dir = file.parent().unwrap_or(Path::new("."));
     let root = std::fs::canonicalize(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    parse(&text, root).map_err(|e| format!("{}: {e}", file.display()))
+    parse(&text, root).map_err(|e| match locate(&text, &e) {
+        Some((line, col)) => format!("{}:{line}:{col}: {e}", file.display()),
+        None => format!("{}: {e}", file.display()),
+    })
 }
 
 /// The config in `text`, for the project at `root`.
@@ -656,8 +659,70 @@ fn text(value: &toml::Value, path: &str) -> Result<String, String> {
     Ok(s)
 }
 
+/// Every fixed key opossum.toml spells, so a typo's error can name the one meant.
+const KEYS: &str = "altText assets badges bleed creator defaultEnvironment description dev enabled environments exclude \
+                    expectedCost experience files forSale group hotReload icon image include key managedPricing name \
+                    native passes placeId places preset price products profile root routes thumbnails ts universeId user";
+
+/// `unknown key `passes.vip.prise`; did you mean `price`?`: the nearest key within two edits, case aside, unless the key
+/// is one opossum.toml has elsewhere.
 fn unknown(path: &str) -> String {
-    format!("unknown key `{path}`")
+    let typed = path.rsplit('.').next().unwrap_or(path);
+    let near = KEYS
+        .split_whitespace()
+        .map(|k| (distance(&k.to_lowercase(), &typed.to_lowercase()), k))
+        .filter(|&(d, _)| d <= 2)
+        .min()
+        .filter(|_| !KEYS.split_whitespace().any(|k| k == typed));
+    match near {
+        Some((_, key)) => format!("unknown key `{path}`; did you mean `{key}`?"),
+        None => format!("unknown key `{path}`"),
+    }
+}
+
+/// Edits (insert, delete, replace) from `a` to `b`.
+fn distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut diagonal = std::mem::replace(&mut row[0], i + 1);
+        for j in 0..b.len() {
+            let above = row[j + 1];
+            row[j + 1] = (diagonal + usize::from(ca != b[j])).min(row[j] + 1).min(above + 1);
+            diagonal = above;
+        }
+    }
+    row[b.len()]
+}
+
+/// The line and column where `text` spells the first `dotted.key` an error names: the deepest of its keys found.
+fn locate(text: &str, error: &str) -> Option<(usize, usize)> {
+    let path = error.split('`').nth(1)?;
+    let doc = toml::de::DeTable::parse(text).ok()?;
+    let (mut table, mut at) = (doc.get_ref(), None);
+    let mut segments = path.split('.');
+    while let Some(first) = segments.next() {
+        // a key may hold dots of its own: the shortest run of segments that names one
+        let mut key = first.to_owned();
+        let found = loop {
+            match table.iter().find(|(k, _)| k.get_ref().as_ref() == key) {
+                Some(found) => break Some(found),
+                None => match segments.next() {
+                    Some(next) => key = format!("{key}.{next}"),
+                    None => break None,
+                },
+            }
+        };
+        let Some((k, v)) = found else { break };
+        at = Some(k.span().start);
+        match v.get_ref() {
+            toml::de::DeValue::Table(t) => table = t,
+            _ => break,
+        }
+    }
+    let at = at?;
+    let line_start = text[..at].rfind('\n').map_or(0, |n| n + 1);
+    Some((text[..at].matches('\n').count() + 1, text[line_start..at].chars().count() + 1))
 }
 
 fn table<'a>(value: &'a toml::Value, path: &str) -> Result<&'a toml::Table, String> {
@@ -857,6 +922,18 @@ mod tests {
         }
         std::fs::remove_dir_all(&root).unwrap();
         assert!(failed.is_empty(), "{}", failed.join("\n"));
+    }
+
+    /// opossum.toml has no schema an editor checks, so a typo's error says where it is and what was meant.
+    #[test]
+    fn a_typo_is_located_and_the_key_meant_named() {
+        let text =
+            "name = \"x\"\n[routes]\nshared = \"ReplicatedStorage/shared\"\n\n[environments.dev]\nuniverseID = 1\n";
+        let Err(error) = parse(text, PathBuf::from("/p")) else { panic!("parsed") };
+        assert_eq!(error, "unknown key `environments.dev.universeID`; did you mean `universeId`?");
+        assert_eq!(locate(text, &error), Some((6, 1)));
+        // a key opossum.toml has elsewhere is no typo
+        assert_eq!(unknown("places.main.price"), "unknown key `places.main.price`");
     }
 
     #[test]
