@@ -1,6 +1,5 @@
 //! opossum: one binary from a TypeScript + Luau Roblox project to a Studio session or a place. See DESIGN.md.
 
-#[allow(dead_code)] // until the asset commands use all of it
 mod assets;
 mod build;
 mod config;
@@ -9,16 +8,14 @@ mod diag;
 mod editor;
 mod event;
 mod exec;
-#[allow(dead_code)] // until the asset commands use it
 mod guard;
 mod ids;
 mod inputs;
-#[allow(dead_code)] // until the asset commands use all of it
 mod lock;
 mod packages;
 mod plan;
-#[allow(dead_code)] // until the asset commands use it
 mod signals;
+mod upload;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,9 +23,15 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use build::Session;
+use cloud::{Client, Clock};
 use config::Config;
 use diag::Diag;
+use guard::{Cache, RemoteGuard};
 use serde_json::{Value, json};
+
+/// Roblox's Open Cloud: the only place a request goes, unless `OPOSSUM_OPEN_CLOUD_URL` points it at a mock on this
+/// machine.
+const ROBLOX: &str = "https://apis.roblox.com";
 
 #[global_allocator]
 static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
@@ -47,6 +50,8 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
               --cloud [--place <p>] [--environment <e>]      not exec: on Open Cloud through tessera (saves a
                                                              place version to Roblox)
   plan [--environment <e>] [--json]                          every asset's state against opossum.lock; offline
+  upload [--json]                                            upload new and changed assets, ids into opossum.lock
+  adopt [--json] asset <file> (<id> | --none)                settle an upload that may or may not have happened
   play [--run] [--timeout <s>] [--json]                      start a Studio playtest through opossum dev
   stop [--timeout <s>] [--json]                              end it and sum up what it logged
   pull [--timeout <s>] [--json] <Instance.Path> [<file.rbxm>]
@@ -63,6 +68,8 @@ enum Command {
     Check { profile: Option<String>, environment: Option<String>, json: bool },
     Dev { environment: Option<String>, json: bool },
     Plan { environment: Option<String>, json: bool },
+    Upload { json: bool },
+    Adopt { json: bool, file: String, id: Option<u64> },
     Exec(exec::Options, exec::Target, exec::Source),
     Test(exec::Options, exec::Target, exec::Tests),
     Play(exec::Options, bool),
@@ -89,7 +96,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     let (mut profile, mut out, mut emit, mut json) = (None, None, None, false);
     let (mut realm, mut timeout, mut code, mut run) = (None, None, None, false);
     let (mut local, mut interpreted, mut cloud, mut place, mut environment) = (false, false, false, None, None);
-    let (mut force, mut allow_focused) = (false, false);
+    let (mut force, mut allow_focused, mut none) = (false, false, false);
     let mut positional: Vec<&str> = Vec::new();
     let mut it = rest.iter().copied().skip(1);
     while let Some(arg) = it.next() {
@@ -114,6 +121,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
             "--environment" => environment = Some(value()?),
             "--force" => force = true,
             "--allow-focused" => allow_focused = true,
+            "--none" => none = true,
             "-" => positional.push(arg),
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}")),
             _ => positional.push(arg),
@@ -143,7 +151,11 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         || environment.is_some() && !environed
         || timeout.is_some() && !timed
         || allow_focused && !tests;
-    if stray || code.is_some() && verb != Some("exec") || run && verb != Some("play") || force && verb != Some("attach")
+    if stray
+        || code.is_some() && verb != Some("exec")
+        || run && verb != Some("play")
+        || force && verb != Some("attach")
+        || none && verb != Some("adopt")
     {
         return Err(USAGE.to_owned());
     }
@@ -154,6 +166,14 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         (Some("check"), [], _) if out.is_none() && emit.is_none() => Command::Check { profile, environment, json },
         (Some("dev"), [], _) if !built => Command::Dev { environment, json },
         (Some("plan"), [], _) if !built => Command::Plan { environment, json },
+        (Some("upload"), [], _) if !built => Command::Upload { json },
+        (Some("adopt"), ["asset", file, id @ ..], _) if !built && id.len() == usize::from(!none) => {
+            let id = match id.first() {
+                Some(id) => Some(id.parse().ok().filter(|&id| id > 0).ok_or(format!("{id} is not an asset id"))?),
+                None => None,
+            };
+            Command::Adopt { json, file: (*file).to_owned(), id }
+        }
         (Some("exec"), [], Some(target)) if code.is_some() && !built => {
             Command::Exec(options(), target, exec::Source::Code(code.clone().unwrap_or_default()))
         }
@@ -241,12 +261,18 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         }
         _ => {}
     }
-    if let Command::Plan { environment, json } = &command {
-        let outcome = match config::load(&file) {
-            Ok(cfg) => plan::plan(&cfg, environment.as_deref()),
-            Err(error) => Outcome::refused("config", error),
-        };
-        return finish(outcome, *json);
+    // the commands with one outcome: refusals are outcomes too
+    match &command {
+        Command::Plan { environment, json } => {
+            let outcome = match config::load(&file) {
+                Ok(cfg) => plan::plan(&cfg, environment.as_deref()),
+                Err(error) => Outcome::refused("config", error),
+            };
+            return finish(outcome, *json);
+        }
+        Command::Upload { json } => return finish(upload(&file), *json),
+        Command::Adopt { json, file: asset, id } => return finish(adopt(&file, &cwd, asset, *id), *json),
+        _ => {}
     }
     let cfg = config::load(&file)?;
     // dev wrote what the editor reads; these only talk to it
@@ -279,6 +305,8 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         | Command::Migrate
         | Command::Dev { .. }
         | Command::Plan { .. }
+        | Command::Upload { .. }
+        | Command::Adopt { .. }
         | Command::Exec(..)
         | Command::Test(..)
         | Command::Play(..)
@@ -318,6 +346,61 @@ fn finish(outcome: Outcome, json: bool) -> Result<bool, String> {
         1 => Ok(false),
         _ => Err(outcome.text),
     }
+}
+
+/// `opossum upload`, with the guard held and Ctrl-C asking it to stop.
+fn upload(file: &Path) -> Outcome {
+    let cfg = match config::load(file) {
+        Ok(cfg) => cfg,
+        Err(error) => return Outcome::refused("config", error),
+    };
+    let client = match open_cloud(&cfg.root) {
+        Ok(client) => client,
+        Err(refusal) => return refusal,
+    };
+    let guard = match Cache::default_dir().and_then(|cache| RemoteGuard::acquire(&cache)) {
+        Ok(guard) => guard,
+        Err(error) => return Outcome::refused("guard", error),
+    };
+    signals::install();
+    upload::upload(&cfg, &client, &guard, &signals::STOP)
+}
+
+/// `opossum adopt asset`: offline, but it writes the lock, so it holds the guard.
+fn adopt(file: &Path, cwd: &Path, asset: &str, id: Option<u64>) -> Outcome {
+    let cfg = match config::load(file) {
+        Ok(cfg) => cfg,
+        Err(error) => return Outcome::refused("config", error),
+    };
+    match Cache::default_dir().and_then(|cache| RemoteGuard::acquire(&cache)) {
+        Ok(guard) => upload::adopt_asset(&cfg, &guard, cwd, asset, id),
+        Err(error) => Outcome::refused("guard", error),
+    }
+}
+
+/// The Open Cloud client with the project's API key, refused without one. `OPOSSUM_OPEN_CLOUD_URL` may point it at
+/// `http://127.0.0.1:<port>` or `http://localhost:<port>` (the mock, for end-to-end checks) and nowhere else, so the
+/// variable can never send the key off the machine.
+fn open_cloud(root: &Path) -> Result<Client, Outcome> {
+    let base = match std::env::var("OPOSSUM_OPEN_CLOUD_URL") {
+        Err(std::env::VarError::NotPresent) => ROBLOX.to_owned(),
+        Ok(url) if loopback(&url) => url,
+        _ => {
+            let error = "OPOSSUM_OPEN_CLOUD_URL must be http://127.0.0.1:<port> or http://localhost:<port>";
+            return Err(Outcome::refused("cloud.baseUrl", error.into()));
+        }
+    };
+    let Some(key) = inputs::api_key(root) else {
+        let error = "no Open Cloud API key: set ROBLOX_OPEN_CLOUD_API_KEY in the environment, .env.local or .env";
+        return Err(Outcome::refused("cloud.credentials", error.into()));
+    };
+    Client::new(&key, &base, Clock::Real).map_err(|error| Outcome::refused("cloud.credentials", error))
+}
+
+/// `http://127.0.0.1:<port>` or `http://localhost:<port>`, nothing more.
+fn loopback(url: &str) -> bool {
+    let rest = url.strip_prefix("http://127.0.0.1:").or_else(|| url.strip_prefix("http://localhost:"));
+    rest.is_some_and(|port| port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok_and(|p| p > 0))
 }
 
 /// A session for the one-shot commands, with the editor's files written for its modules.

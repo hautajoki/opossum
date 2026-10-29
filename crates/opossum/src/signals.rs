@@ -3,7 +3,8 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-static STOP: AtomicBool = AtomicBool::new(false);
+/// Set by the first signal: the run sends nothing new.
+pub static STOP: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_signal(_: libc::c_int) {
     // only async-signal-safe calls here: an atomic swap and _exit
@@ -26,19 +27,14 @@ pub fn install() {
     }
 }
 
-/// True once a stop was asked for.
-pub fn stopped() -> bool {
-    STOP.load(Ordering::SeqCst)
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
     fn the_first_signal_asks_for_a_stop_instead_of_ending_the_process() {
         super::install();
-        assert!(!super::stopped());
+        assert!(!super::STOP.load(super::Ordering::SeqCst));
         // SAFETY: raise only runs the handler just installed
         unsafe { libc::raise(libc::SIGTERM) };
-        assert!(super::stopped());
+        assert!(super::STOP.load(super::Ordering::SeqCst));
     }
 }

@@ -20,6 +20,20 @@ pub fn env(root: &Path) -> FxHashMap<String, String> {
     env
 }
 
+/// The Open Cloud API key: `ROBLOX_OPEN_CLOUD_API_KEY` from the process environment, then `.env.local`, then `.env`,
+/// each trimmed, an empty value falling through (an empty export must not hide `.env`). Never printed.
+pub fn api_key(root: &Path) -> Option<String> {
+    const KEY: &str = "ROBLOX_OPEN_CLOUD_API_KEY";
+    let present = |v: Option<String>| v.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+    present(std::env::var(KEY).ok()).or_else(|| {
+        [".env.local", ".env"].into_iter().find_map(|name| {
+            let mut env = FxHashMap::default();
+            parse_env(&std::fs::read_to_string(root.join(name)).ok()?, &mut env);
+            present(env.remove(KEY))
+        })
+    })
+}
+
 /// `KEY=value` lines; `#` comments, blank lines and an `export ` prefix are skipped, and a value in matching quotes
 /// loses them. No interpolation.
 fn parse_env(text: &str, env: &mut FxHashMap<String, String>) {

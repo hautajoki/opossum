@@ -6,8 +6,8 @@ use std::fmt::Write as _;
 use serde_json::json;
 
 use crate::config::Config;
-use crate::diag::Diag;
-use crate::lock::{self, Asset};
+use crate::diag::{Diag, Severity};
+use crate::lock::{self, Asset, Lock};
 use crate::{Outcome, assets};
 
 /// Where a file stands against its record in the lock.
@@ -57,33 +57,16 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
         Ok(environment) => environment,
         Err(error) => return Outcome::refused("config", error),
     };
-    let (mut lock, mut diags) = match lock::read(root) {
-        Ok(read) => read,
-        Err(error) => return Outcome::refused("lock.io", error),
+    let (mut lock, found, hashes) = match survey(cfg, "planned") {
+        Ok(survey) => survey,
+        Err(refusal) => return refusal,
     };
-    let (found, discovered) = assets::discover(root, &cfg.assets);
-    diags.extend(discovered);
-    let hashes = assets::hash_all(root, &cfg.assets, &found);
-    for (a, hash) in found.iter().zip(&hashes) {
-        if let Err(e) = hash {
-            diags.push(Diag::new("asset.root", crate::diag::Severity::Error, Some(&root.join(&a.file)), e.clone()));
-        }
-    }
-    let errors: Vec<&Diag> = diags.iter().filter(|d| d.is_error()).collect();
-    if let Some(first) = errors.first() {
-        for d in &errors {
-            eprintln!("{}", d.human(root));
-        }
-        let error = format!("{} errors in opossum.lock or the asset roots, so nothing was planned", errors.len());
-        return Outcome::refused(&first.code, error);
-    }
     let mut text = String::new();
     let mut sets = Vec::new();
     let mut ambiguous = 0;
     for (i, set) in cfg.assets.iter().enumerate() {
         let (mut files, mut lines, mut counts) = (Vec::new(), String::new(), [0; 5]);
         for (a, hash) in found.iter().zip(&hashes).filter(|(a, _)| a.set == i) {
-            let hash = hash.as_deref().unwrap_or_default();
             // a merge's records for the file: the one whose id holds it, if any
             if let Some(warning) = lock.settle(root, &a.file, hash) {
                 eprintln!("{}", warning.human(root));
@@ -139,8 +122,31 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
     Outcome { exit: u8::from(ambiguous > 0), json, text }
 }
 
+/// The lock, every asset file and each file's input hash, for a command about to compare them. Errors in the lock or
+/// the asset roots are printed on stderr and refuse the command: nothing was `done` (planned, uploaded).
+pub fn survey(cfg: &Config, done: &str) -> Result<(Lock, Vec<assets::Asset>, Vec<String>), Outcome> {
+    let root = &cfg.root;
+    let (lock, mut diags) = lock::read(root).map_err(|error| Outcome::refused("lock.io", error))?;
+    let (found, discovered) = assets::discover(root, &cfg.assets);
+    diags.extend(discovered);
+    let mut hashes = Vec::with_capacity(found.len());
+    for (a, hash) in found.iter().zip(assets::hash_all(root, &cfg.assets, &found)) {
+        match hash {
+            Ok(hash) => hashes.push(hash),
+            Err(e) => diags.push(Diag::new("asset.root", Severity::Error, Some(&root.join(&a.file)), e)),
+        }
+    }
+    let errors: Vec<&Diag> = diags.iter().filter(|d| d.is_error()).collect();
+    let Some(first) = errors.first() else { return Ok((lock, found, hashes)) };
+    for d in &errors {
+        eprintln!("{}", d.human(root));
+    }
+    let error = format!("{} errors in opossum.lock or the asset roots, so nothing was {done}", errors.len());
+    Err(Outcome::refused(&first.code, error))
+}
+
 /// `1,300`.
-fn count(n: usize) -> String {
+pub fn count(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
