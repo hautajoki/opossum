@@ -1166,9 +1166,11 @@ fn leftovers(plan: &mut Plan, generated: &str, asset_roots: &[String]) {
     }
     plan.notes.push(format!(
         "these lines still name tessera, hexagon or {generated}, which opossum leaves to you: `tessera build`/`deploy` \
-         become `opossum build`/`deploy`, `tessera generate` goes, `tessera run` becomes `opossum exec --cloud`, \
-         `hexagon test`/`bench` become `opossum test`/`bench`, {generated}/<set>.luau is .opossum/modules/<set>.luau, \
-         and the @tessera-rbx/config and @hautajoki/hexagon packages and rokit's tessera go{}",
+         become `opossum build`/`deploy`, `tessera generate` goes, `tessera run` becomes `opossum exec --cloud --head` \
+         (`--fresh`: `opossum exec --cloud`), `hexagon test`/`bench` become `opossum test --local`/`bench --local` \
+         (`--cloud`: `--cloud`; plain `opossum test` runs in Studio), {generated}/<set>.luau is \
+         .opossum/modules/<set>.luau, and the @tessera-rbx/config and @hautajoki/hexagon packages and rokit's tessera \
+         go{}",
         lines.concat()
     ));
 }
