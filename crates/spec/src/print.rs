@@ -5,7 +5,7 @@
 use serde_json::Value;
 
 /// The text of `report`. `ran` says where it ran (`local`, `edit, generation 12`, `development/main v57`);
-/// `project` keeps the trace lines that are project frames; `color` paints with ANSI codes.
+/// `project` keeps the places and trace lines that are project frames; `color` paints with ANSI codes.
 pub fn print(report: &Value, ran: &str, project: &dyn Fn(&str) -> bool, color: bool) -> String {
     let paint = |code: &str, text: &str| if color { format!("\x1b[{code}m{text}\x1b[0m") } else { text.to_owned() };
     let list = |key: &str| report[key].as_array().map_or(&[][..], Vec::as_slice);
@@ -19,8 +19,10 @@ pub fn print(report: &Value, ran: &str, project: &dyn Fn(&str) -> bool, color: b
             for line in failure["message"].as_str().unwrap_or("").lines() {
                 out += &format!("      {line}\n");
             }
+            // the place a case failed at, when it is the project's: a suite Studio does not hold fails in the host
             if let (Some(source), Some(line)) = (failure["source"].as_str(), failure["line"].as_i64())
                 && line > 0
+                && project(&format!("{source}:{line}"))
             {
                 out += &format!("{}\n", paint("2", &format!("      {source}:{line}")));
             }
