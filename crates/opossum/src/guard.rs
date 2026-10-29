@@ -68,7 +68,12 @@ mod tests {
         assert!(matches!(other.try_lock(), Err(fs::TryLockError::WouldBlock)));
         assert_eq!(fs::read_to_string(dir.join("remote.lock")).unwrap(), std::process::id().to_string());
         drop(guard);
-        assert!(other.try_lock().is_ok());
+        // a child another test forks right now holds a copy of the descriptor, and with it the lock, until it execs
+        let start = std::time::Instant::now();
+        while other.try_lock().is_err() {
+            assert!(start.elapsed().as_secs() < 5, "the lock outlived the guard");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 }
