@@ -78,7 +78,8 @@ pub enum Action {
     Noop,
     /// In the lock, no longer declared: left alone on Roblox (gameplay ids may still be referenced).
     Retain,
-    /// A thumbnail no longer declared: presentational, holding one of ten carousel slots, so it goes.
+    /// A thumbnail no longer declared: presentational, holding one of ten carousel slots, so it goes. So does the
+    /// order once no thumbnail is declared, as a record only: nothing is left on Roblox to order.
     Delete,
     /// An earlier create may have succeeded: `opossum adopt` says how it went before anything is sent.
     Blocked,
@@ -209,7 +210,8 @@ pub fn plan(wants: &[Want], records: &BTreeMap<String, Resource>) -> Vec<Op> {
             .keys()
             .filter(|key| Kind::of(key) == Some(kind) && !wants.iter().any(|w| &w.key == *key))
             .map(|key| {
-                let action = if kind == Kind::Thumbnail { Action::Delete } else { Action::Retain };
+                let action =
+                    if matches!(kind, Kind::Thumbnail | Kind::Order) { Action::Delete } else { Action::Retain };
                 Op { key: key.clone(), kind, action, changed: Vec::new(), want: None }
             })
             .collect();
@@ -461,7 +463,8 @@ pub fn apply(
             Action::Delete => {
                 deleted = true;
                 let gone: Vec<&Op> = ops.iter().filter(|op| op.action == Action::Delete).collect();
-                eprintln!("deleting {} thumbnails no longer declared…", gone.len());
+                let thumbnails = gone.iter().filter(|op| op.kind == Kind::Thumbnail).count();
+                eprintln!("deleting {thumbnails} thumbnails no longer declared…");
                 let records = lock.universes.entry(t.universe).or_default();
                 let ids: Vec<u64> = gone
                     .iter()
@@ -1134,6 +1137,13 @@ mod tests {
         assert_eq!(mock.requests()[1].json(), json!({ "mediaAssetIds": [2_000_001] }));
         let a = Resource { id: Some(2_000_001), image: Some(hash(&new, Preset::Thumbnail)), ..Resource::default() };
         assert_eq!(records(&root)["thumbnail/a"], a);
+
+        // the last thumbnail taken out takes the order's record with it, so no run retains dead ids
+        let root = project("none", "[experience]\nname = \"Demo\"\n", &[], &lines);
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        assert_eq!(provision_at(&root, &mock, false).exit, 0);
+        assert_eq!(sent(&mock), ["PATCH cloud/v2/universes/7/places/8", "DELETE images/41"]);
+        assert!(records(&root).keys().all(|key| key == "experience/metadata"));
 
         // at the limit: the old image goes first
         let keys: Vec<String> = (0..10).map(|i| format!("t{i}")).collect();
