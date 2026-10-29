@@ -143,11 +143,19 @@ pub fn frame_dir(path: &str) -> Option<String> {
 
 /// The class of the one top-level instance an `.rbxm` holds, as the reader would take it.
 pub fn rbxm_class(bytes: &[u8]) -> Result<String, String> {
-    let model = rbx_binary::from_reader(bytes).map_err(|e| e.to_string())?;
-    match model.root().children() {
-        [root] => Ok(model.get_by_ref(*root).map(|i| i.class.to_string()).unwrap_or_default()),
+    match &model_classes(bytes, false)?[..] {
+        [class] => Ok(class.clone()),
         roots => Err(format!("holds {} top-level instances; a model file holds one", roots.len())),
     }
+}
+
+/// The classes of the top-level instances in an `.rbxm` (or, with `xml`, an `.rbxmx`), in file order.
+pub fn model_classes(bytes: &[u8], xml: bool) -> Result<Vec<String>, String> {
+    let model = match xml {
+        true => rbx_xml::from_reader_default(bytes).map_err(|e| e.to_string())?,
+        false => rbx_binary::from_reader(bytes).map_err(|e| e.to_string())?,
+    };
+    Ok(model.root().children().iter().filter_map(|r| model.get_by_ref(*r)).map(|i| i.class.to_string()).collect())
 }
 
 /// `ReplicatedStorage` -> `replicated-storage`, `VRService` -> `vr-service`.

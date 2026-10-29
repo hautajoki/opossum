@@ -1,5 +1,7 @@
 //! opossum: one binary from a TypeScript + Luau Roblox project to a Studio session or a place. See DESIGN.md.
 
+#[allow(dead_code)] // until the asset commands use it
+mod assets;
 mod build;
 mod config;
 mod dev;
