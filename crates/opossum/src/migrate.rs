@@ -879,6 +879,7 @@ fn import_lock(
         }
     };
     diags.extend(problems.into_iter().filter(Diag::is_error));
+    diags.extend(lock::recovered(root));
     if let Some(c) = cfg.creator {
         diags.extend(lock.check_creator(root, c));
         lock.creator = Some(c);

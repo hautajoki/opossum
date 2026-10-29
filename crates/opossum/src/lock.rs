@@ -18,6 +18,8 @@ use crate::diag::{Diag, Severity};
 use crate::guard::RemoteGuard;
 
 pub const FILE: &str = "opossum.lock";
+/// Where [`save`] puts the state it could not write, under `.opossum/`.
+const RECOVERED: &str = "opossum.lock.recovered";
 const HEADER: &str =
     "# opossum.lock: ids opossum created on Roblox. Commit it. opossum keeps it; a merge needs no hand edits.";
 const VERSION: i64 = 1;
@@ -517,11 +519,12 @@ pub fn save(lock: &mut Lock, root: &Path, _guard: &RemoteGuard) -> Result<Option
     let now = fs::metadata(&path).ok().map(|m| (m.len(), m.modified().ok()));
     if now != lock.disk.as_ref().map(|d| (d.len, d.mtime)) {
         let dir = crate::editor::dir(root);
-        let recovered = dir.join("opossum.lock.recovered");
-        fs::create_dir_all(&dir).and_then(|_| fs::write(&recovered, &text)).map_err(io)?;
-        let message = "opossum.lock changed while opossum was writing it (git?). Nothing was lost: rerun the command; \
-                       the recovered state is in .opossum/opossum.lock.recovered";
-        return Err(fail("lock.changedOnDisk", message.into()));
+        fs::create_dir_all(&dir).and_then(|_| fs::write(dir.join(RECOVERED), &text)).map_err(io)?;
+        let message = format!(
+            "opossum.lock changed while opossum was writing it (git?), so nothing was overwritten: this run's ids are \
+             in .opossum/{RECOVERED}, and no command writes the lock until they are folded back (lock.recovered)"
+        );
+        return Err(fail("lock.changedOnDisk", message));
     }
     let tmp = root.join(format!(".{FILE}.tmp-{}", std::process::id()));
     let mut file = fs::File::create(&tmp).map_err(io)?;
@@ -549,6 +552,21 @@ pub fn save(lock: &mut Lock, root: &Path, _guard: &RemoteGuard) -> Result<Option
         .and_then(|mut f| f.write_all(line.as_bytes()))
         .map_err(|e| fail("lock.io", format!("{}: {e}", attributes.display())))?;
     Ok(Some(format!("wrote .gitattributes ({FILE} merge=union)")))
+}
+
+/// `lock.recovered` while a [`save`] that found the lock changed on disk left its state aside: every command that writes
+/// the lock refuses until it is folded back, since a run from the lock git left would send again what that state holds.
+pub fn recovered(root: &Path) -> Option<Diag> {
+    let path = crate::editor::dir(root).join(RECOVERED);
+    if !path.exists() {
+        return None;
+    }
+    let message = format!(
+        "a run could not save opossum.lock and left its ids in .opossum/{RECOVERED}. On the branch it ran on, fold them \
+         back with `cat .opossum/{RECOVERED} >> {FILE} && rm .opossum/{RECOVERED}` (lock.merged and lock.conflict \
+         then say what to settle), or `rm` the file to drop them"
+    );
+    Some(Diag::new("lock.recovered", Severity::Error, Some(&path), message))
 }
 
 #[cfg(test)]
@@ -695,10 +713,20 @@ universes.15302144394."thumbnail/main" = { id = 55, altText = "Lobby", image = "
         let err = save(&mut lock, &root, &guard).unwrap_err();
         assert_eq!(err.code, "lock.changedOnDisk");
         assert_eq!(fs::read_to_string(root.join(FILE)).unwrap(), "version = 1\n");
-        assert_eq!(fs::read_to_string(root.join(".opossum/opossum.lock.recovered")).unwrap(), render(&lock));
+        let recovered = fs::read_to_string(root.join(".opossum/opossum.lock.recovered")).unwrap();
+        assert_eq!(recovered, render(&lock));
+        assert!(super::recovered(&root).is_some_and(|d| d.code == "lock.recovered"));
+
+        // the fold the refusal advises reads back clean, with the run's ids
+        let mut text = fs::read_to_string(root.join(FILE)).unwrap();
+        text.push_str(&recovered);
+        fs::write(root.join(FILE), text).unwrap();
+        fs::remove_file(root.join(".opossum/opossum.lock.recovered")).unwrap();
+        assert!(super::recovered(&root).is_none());
+        let (mut lock, diags) = read(&root).unwrap();
+        assert!(diags.is_empty() && lock.assets["a.png"].id == Some(5));
 
         // a fresh read writes again, and the attribute is not added twice
-        let (mut lock, _) = read(&root).unwrap();
         lock.creator = Some(Creator::Group(3));
         assert_eq!(save(&mut lock, &root, &guard).unwrap(), None);
         assert_eq!(read(&root).unwrap().0.creator, Some(Creator::Group(3)));

@@ -417,12 +417,21 @@ fn outward(file: &Path, run: impl FnOnce(&Config, &Client, &RemoteGuard, &Cache)
         Ok(remote) => remote,
         Err(refusal) => return refusal,
     };
-    let guard = match RemoteGuard::acquire(&cache) {
+    let guard = match guard(&cache, &cfg.root) {
         Ok(guard) => guard,
-        Err(error) => return Outcome::refused("guard", error),
+        Err(refusal) => return refusal,
     };
     signals::install();
     run(&cfg, &client, &guard, &cache)
+}
+
+/// The remote guard, for a command about to write `root`'s lock: refused while a run's ids wait to be folded back.
+fn guard(cache: &Cache, root: &Path) -> Result<RemoteGuard, Outcome> {
+    let guard = RemoteGuard::acquire(cache).map_err(|error| Outcome::refused("guard", error))?;
+    match lock::recovered(root) {
+        Some(d) => Err(Outcome::refused(&d.code, d.message)),
+        None => Ok(guard),
+    }
 }
 
 /// `opossum adopt`: offline, but it writes the lock, so it holds the guard.
@@ -431,9 +440,10 @@ fn adopt(file: &Path, cwd: &Path, what: &Adopted, id: Option<u64>) -> Outcome {
         Ok(cfg) => cfg,
         Err(error) => return Outcome::refused("config", error),
     };
-    let guard = match Cache::default_dir().and_then(|cache| RemoteGuard::acquire(&cache)) {
+    let cache = Cache::default_dir().map_err(|error| Outcome::refused("cache", error));
+    let guard = match cache.and_then(|cache| guard(&cache, &cfg.root)) {
         Ok(guard) => guard,
-        Err(error) => return Outcome::refused("guard", error),
+        Err(refusal) => return refusal,
     };
     match what {
         Adopted::Asset(asset) => upload::adopt_asset(&cfg, &guard, cwd, asset, id),
