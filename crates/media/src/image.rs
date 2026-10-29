@@ -7,7 +7,7 @@ use resvg::{tiny_skia, usvg};
 
 /// Part of every asset input hash (`pipeline`). Bumped by hand only when old outputs are wrong, never because a
 /// dependency moved bytes: the goldens below say when bytes move, and bumping re-uploads every image.
-pub const IMAGE_VERSION: u32 = 1;
+const IMAGE_VERSION: u32 = 1;
 
 /// Roblox refuses an image of 8000 pixels or more on either side; the caller reports a larger output as too large.
 pub const MAX_SIDE: u32 = 7999;

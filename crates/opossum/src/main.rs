@@ -166,8 +166,9 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         (false, false) if !interpreted && !elsewhere => Some(exec::Target::Studio { realm: realm.clone() }),
         (true, false) if realm.is_none() && !elsewhere => Some(exec::Target::Local { interpreted }),
         (false, true) if !interpreted && realm.is_none() && (!head || (!tests && profiled.is_none())) => {
-            if timeout.is_some_and(|t| t > exec::CLOUD_TIMEOUT) {
-                return Err(format!("--timeout with --cloud is at most {} s, Open Cloud's limit", exec::CLOUD_TIMEOUT));
+            let max = cloud::MAX_TASK_TIMEOUT;
+            if timeout.is_some_and(|t| t > max.as_secs_f64()) {
+                return Err(format!("--timeout with --cloud is at most {} s, Open Cloud's limit", max.as_secs()));
             }
             let (place, environment) = (place.clone(), environment.clone());
             Some(exec::Target::Cloud(exec::Cloud { place, environment, profile: profiled, head }))

@@ -24,8 +24,6 @@ use crate::config::Config;
 use crate::guard::Cache;
 use crate::{Outcome, dev, editor};
 
-/// The longest a run on Open Cloud may take, in seconds (Open Cloud's limit), and its default.
-pub const CLOUD_TIMEOUT: f64 = 300.0;
 /// How long one file of a local test run may take by default, in seconds; a local bench run has no limit by default.
 const LOCAL_TEST_TIMEOUT: f64 = 300.0;
 
@@ -115,7 +113,7 @@ pub fn exec_cloud(
     };
     let index = built.as_ref().map(|(session, _)| dev::log_index(session)).unwrap_or_default();
     let note = built.as_ref().map_or("", |(session, _)| reproducible(session));
-    let timeout = Duration::from_secs_f64(options.timeout.unwrap_or(CLOUD_TIMEOUT));
+    let timeout = options.timeout.map_or(cloud::MAX_TASK_TIMEOUT, Duration::from_secs_f64);
     let rbxl = built.as_ref().map(|(_, rbxl)| rbxl.as_slice());
     let mut answer = json!({
         "ok": false, "realm": "cloud", "environment": at.environment, "place": at.place, "placeId": at.id,
@@ -399,7 +397,7 @@ pub fn test_cloud(
     let suites = suites(&session.scan, &root, tests.mode);
     let request = spec::Request { suites: &suites, mode: tests.mode, filter: tests.filter.as_deref(), focus: None };
     let script = spec::bundle(Host::Roblox, &request);
-    let timeout = Duration::from_secs_f64(options.timeout.unwrap_or(CLOUD_TIMEOUT));
+    let timeout = options.timeout.map_or(cloud::MAX_TASK_TIMEOUT, Duration::from_secs_f64);
     let ran = match cloud_exec::run(client, cache, &at, Some(&rbxl), reproducible(&session), &script, timeout) {
         Ok(ran) => ran,
         Err(failure) if !failure.ran => return refused(failure.code, failure.error),

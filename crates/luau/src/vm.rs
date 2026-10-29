@@ -39,6 +39,7 @@ unsafe extern "C" {
         outsize: *mut usize,
     ) -> c_int;
     fn opossum_vm_interrupt(vm: *mut RawVm);
+    #[cfg(test)]
     fn opossum_vm_native_functions(vm: *mut RawVm) -> usize;
     fn opossum_vm_take_output(vm: *mut RawVm, outsize: *mut usize) -> *mut c_char;
     fn opossum_vm_free(vm: *mut RawVm);
@@ -111,7 +112,8 @@ impl Vm {
     }
 
     /// How many functions of the chunks and modules loaded so far run as native code.
-    pub fn native_functions(&self) -> usize {
+    #[cfg(test)]
+    fn native_functions(&self) -> usize {
         // SAFETY: a plain read of a live VM that no other thread runs (`&self` cannot overlap a `&mut self` call).
         unsafe { opossum_vm_native_functions(self.raw) }
     }

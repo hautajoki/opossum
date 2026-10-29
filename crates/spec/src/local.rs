@@ -14,7 +14,8 @@ use std::time::Duration;
 use luau::vm::Vm;
 use serde_json::{Value, json};
 
-use crate::{CHUNK, Host, Mode, Request, Suite, aggregate, bundle};
+use crate::report::aggregate;
+use crate::{CHUNK, Host, Mode, Request, Suite, bundle};
 
 /// How a local run runs.
 #[derive(Clone, Debug)]

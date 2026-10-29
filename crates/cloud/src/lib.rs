@@ -15,7 +15,7 @@ mod places;
 mod resources;
 
 pub use assets::{AssetKind, Creator, MAX_ASSET, OPERATION_DEADLINE, Operation, Upload};
-pub use execution::{MAX_SCRIPT, MAX_TASK_TIMEOUT, Task};
+pub use execution::{MAX_TASK_TIMEOUT, Task};
 pub use places::MAX_PLACE;
 pub use resources::{BadgeChange, Image, MAX_THUMBNAILS, NewBadge, Sale};
 
@@ -103,7 +103,7 @@ pub struct Client {
     pooled: ureq::Agent,
     fresh: ureq::Agent,
     clock: Clock,
-    pub timeouts: Timeouts,
+    timeouts: Timeouts,
 }
 
 #[derive(Debug)]

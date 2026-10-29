@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use crate::{Call, Client, Error, ErrorKind, code};
 
 /// Open Cloud's limits on a task's script and its timeout.
-pub const MAX_SCRIPT: usize = 4 << 20;
+const MAX_SCRIPT: usize = 4 << 20;
 pub const MAX_TASK_TIMEOUT: Duration = Duration::from_secs(300);
 
 const START: &str = "start Luau execution task";
