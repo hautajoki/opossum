@@ -1,9 +1,10 @@
 //! The Luau VM local tests, benches and exec run in, over `src/vm.cpp`. Everything that touches a `lua_State` lives
 //! there behind `noexcept` entry points, so no Luau error, C++ exception or longjmp crosses a Rust frame.
 //!
-//! A [`Vm`] is one `lua_State` with the standard libraries, `print` captured into [`Vm::take_output`], sandboxed
-//! globals and a [`MEMORY_LIMIT`]. Host chunks ([`Vm::eval`]) run on one sandboxed thread. Bytecode is cached per
-//! process by source, so a module that many VMs load compiles once.
+//! A [`Vm`] is one `lua_State` with the standard libraries, `print` captured into [`Vm::take_output`], the `luau`
+//! CLI's `collectgarbage("collect" | "count")`, sandboxed globals and a [`MEMORY_LIMIT`]. Host chunks ([`Vm::eval`])
+//! run on one sandboxed thread. Bytecode is cached per process by source, so a module that many VMs load compiles
+//! once.
 //!
 //! `require` resolves by string from the file system as the `luau` CLI does (`./`, `../`, `@self`, `init.luau`
 //! directories, `.luaurc` aliases), each module on its own sandboxed thread with the chunk name `@<path from the
@@ -164,6 +165,8 @@ mod tests {
         assert_eq!(vm.eval("host", "return tostring(x)"), Ok("1".to_owned()));
         assert!(vm.eval("host", "string.x = 1").unwrap_err().contains("readonly"));
         assert!(vm.eval("host", "return 1").unwrap_err().contains("returned a number"));
+        // as in the `luau` CLI, which local suites measure allocations with
+        assert_eq!(vm.eval("host", "collectgarbage() return tostring(collectgarbage('count') > 0)"), Ok("true".into()));
     }
 
     #[test]

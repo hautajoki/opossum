@@ -1,8 +1,8 @@
 // The Luau VM local tests, benches and exec run in (src/vm.rs). Everything that touches a lua_State lives here, and
 // every entry point is noexcept with a catch-all, so no Luau error, C++ exception or longjmp crosses a Rust frame.
 //
-// One opossum_vm is one lua_State: the standard libraries, print captured into the VM's output, globals sandboxed,
-// and a memory cap enforced by its allocator. Host chunks run on one sandboxed thread. Bytecode is cached per process
+// One opossum_vm is one lua_State: the standard libraries, print captured into the VM's output, the `luau` CLI's
+// collectgarbage, globals sandboxed, and a memory cap enforced by its allocator. Host chunks run on one sandboxed thread. Bytecode is cached per process
 // by source, so a module many VMs load is compiled once.
 //
 // Native code is generated as on Roblox: only for `--!native` modules and `@native` functions. Every VM uses one
@@ -434,6 +434,24 @@ static int vm_print(lua_State* L)
     return 0;
 }
 
+// The `luau` CLI's collectgarbage, which local suites measure allocations with: "collect" runs a full cycle, "count"
+// is the heap in KB.
+static int vm_collectgarbage(lua_State* L)
+{
+    const char* option = luaL_optstring(L, 1, "collect");
+    if (std::strcmp(option, "collect") == 0)
+    {
+        lua_gc(L, LUA_GCCOLLECT, 0);
+        return 0;
+    }
+    if (std::strcmp(option, "count") == 0)
+    {
+        lua_pushnumber(L, lua_gc(L, LUA_GCCOUNT, 0));
+        return 1;
+    }
+    luaL_error(L, "collectgarbage must be called with 'count' or 'collect'");
+}
+
 // Raises at every safepoint once installed, so the VM unwinds even through pcall. Null until a deadline passes:
 // Luau calls a non-null callback at every loop back edge and call, which would skew benches.
 static void vm_interrupted(lua_State* L, int gc)
@@ -490,6 +508,8 @@ extern "C" opossum_vm* opossum_vm_new(const char* root, int codegen, size_t limi
         luaL_openlibs(L);
         lua_pushcfunction(L, vm_print, "print");
         lua_setglobal(L, "print");
+        lua_pushcfunction(L, vm_collectgarbage, "collectgarbage");
+        lua_setglobal(L, "collectgarbage");
         luarequire_pushproxyrequire(L, require_config, vm);
         lua_pushliteral(L, "@__load");
         lua_pushcclosure(L, load_project_file, "__load", 2);
