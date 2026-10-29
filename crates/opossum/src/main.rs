@@ -7,7 +7,11 @@ mod diag;
 mod editor;
 mod event;
 mod exec;
+#[allow(dead_code)] // until the asset commands use it
+mod guard;
 mod inputs;
+#[allow(dead_code)] // until the asset commands use it
+mod lock;
 mod packages;
 
 use std::collections::BTreeMap;
