@@ -186,13 +186,11 @@ fn decode(bytes: &[u8]) -> Result<Json, String> {
 
 /// Tessera's input fingerprint of a file with these bytes and lowercase extension in a set with these image options:
 /// sha256 over the source's digest and its transform, which for an image names tessera's processor and the options.
+/// Only files opossum discovers are fingerprinted, so only its extensions arrive.
 pub fn fingerprint(bytes: &[u8], ext: &str, image: ImageOptions) -> String {
     let transform = match ext {
-        ".png" | ".svg" | ".jpg" | ".jpeg" | ".bmp" => format!("image-v1;source={ext};options={}", options(image)),
-        _ => {
-            let ext = if ext.is_empty() { ".bin" } else { ext };
-            format!("passthrough-v2;extension={ext};mime={}", mime(ext))
-        }
+        ".png" | ".svg" | ".jpg" | ".jpeg" => format!("image-v1;source={ext};options={}", options(image)),
+        _ => format!("passthrough-v2;extension={ext};mime={}", mime(ext)),
     };
     let mut h = Sha256::new();
     h.update(b"tessera-asset-input-v1\0");
@@ -217,14 +215,10 @@ fn options(image: ImageOptions) -> String {
     hex(&Sha256::digest(json.as_bytes()))
 }
 
-/// Tessera's MIME table, which its passthrough fingerprint names.
+/// Tessera 0.2.0's MIME for the passthrough extensions opossum discovers, which its fingerprint names. Frozen with
+/// tessera: opossum's own upload types may change, these never do, or every migrated id would read as changed.
 fn mime(ext: &str) -> &'static str {
     match ext {
-        ".png" => "image/png",
-        ".jpg" | ".jpeg" => "image/jpeg",
-        ".bmp" => "image/bmp",
-        ".tga" => "image/tga",
-        ".webp" => "image/webp",
         ".ogg" => "audio/ogg",
         ".mp3" => "audio/mpeg",
         ".wav" => "audio/wav",
@@ -232,10 +226,8 @@ fn mime(ext: &str) -> &'static str {
         ".fbx" => "model/fbx",
         ".gltf" => "model/gltf+json",
         ".glb" => "model/gltf-binary",
-        ".obj" | ".txt" => "text/plain",
         ".mp4" => "video/mp4",
         ".mov" => "video/mov",
-        ".json" => "application/json",
         ".rbxm" | ".rbxmx" => "model/x-rbxm",
         _ => "application/octet-stream",
     }
