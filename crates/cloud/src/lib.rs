@@ -9,10 +9,12 @@
 #![allow(clippy::result_large_err)]
 
 mod assets;
+mod execution;
 pub mod mock;
 mod places;
 
 pub use assets::{AssetKind, Creator, MAX_ASSET, OPERATION_DEADLINE, Operation, Upload};
+pub use execution::{MAX_SCRIPT, MAX_TASK_TIMEOUT, Task};
 pub use places::MAX_PLACE;
 
 use std::fmt;
