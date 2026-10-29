@@ -77,6 +77,15 @@ pub enum Event<'a> {
     Drawn {
         files: &'a [PathBuf],
     },
+    /// The pack capture: packs Studio baked that it saved to opossum.lock, keys whose maps it set again so Studio bakes
+    /// them, and keys still unbaked after that (each named once), `after` seconds since they were first missing, with
+    /// their class and the files using them.
+    Packs {
+        baked: usize,
+        nudged: usize,
+        unbaked: &'a [(&'static str, Vec<PathBuf>)],
+        after: u64,
+    },
     /// A config file changed: the session starts over.
     Restart {
         file: &'a str,
@@ -176,6 +185,27 @@ impl Event<'_> {
                 let them = if files.len() == 1 { "file now draws" } else { "files now draw" };
                 format!("place: {} {them} uploaded content ({})", files.len(), names.join(", "))
             }
+            Event::Packs { baked, nudged, unbaked, after } => {
+                let mut said = Vec::new();
+                if baked > 0 {
+                    said.push(format!("{baked} baked by Studio, saved to opossum.lock"));
+                }
+                if nudged > 0 {
+                    said.push(format!("re-asked Studio for {nudged}"));
+                }
+                if !unbaked.is_empty() {
+                    let mut classes: Vec<(&str, usize)> = Vec::new();
+                    for (class, _) in unbaked {
+                        match classes.iter_mut().find(|(c, _)| c == class) {
+                            Some((_, n)) => *n += 1,
+                            None => classes.push((class, 1)),
+                        }
+                    }
+                    let classes: Vec<String> = classes.iter().map(|(c, n)| format!("{c} {n}")).collect();
+                    said.push(format!("{} still unbaked after {after} s ({})", unbaked.len(), classes.join(", ")));
+                }
+                format!("packs: {}", said.join("; "))
+            }
             Event::Restart { file } => format!("{file} changed, starting over"),
             Event::Error { message, .. } => format!("opossum: {message}"),
         }
@@ -249,6 +279,16 @@ impl Event<'_> {
             Event::Drawn { files } => {
                 let files: Vec<String> = files.iter().map(|f| shown(root, f)).collect();
                 json!({"t": "drawn", "files": files})
+            }
+            Event::Packs { baked, nudged, unbaked, after } => {
+                let unbaked: Vec<Value> = unbaked
+                    .iter()
+                    .map(|(class, files)| {
+                        let files: Vec<String> = files.iter().map(|f| shown(root, f)).collect();
+                        json!({"class": class, "usedBy": files})
+                    })
+                    .collect();
+                json!({"t": "packs", "baked": baked, "nudged": nudged, "unbaked": unbaked, "after": after})
             }
             Event::Restart { file } => json!({"t": "restart", "file": file}),
             Event::Error { message, fatal } => json!({"t": "error", "message": message, "fatal": fatal}),

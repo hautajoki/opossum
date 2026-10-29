@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::io::{Read as _, Seek as _, Write as _};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// opossum's per-user cache: saved place versions and the guard's lock file. Tests make one in a temporary directory;
 /// only `main.rs` asks for the real one.
@@ -35,24 +35,45 @@ pub struct RemoteGuard {
 impl RemoteGuard {
     /// Takes the guard, waiting (and saying for whom) while another opossum holds it.
     pub fn acquire(cache: &Cache) -> Result<RemoteGuard, String> {
-        let path = cache.dir.join("remote.lock");
-        let io = |e: std::io::Error| format!("{}: {e}", path.display());
-        fs::create_dir_all(&cache.dir).map_err(|e| format!("{}: {e}", cache.dir.display()))?;
-        let mut file =
-            fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path).map_err(io)?;
+        let (mut file, path) = open(cache)?;
         match file.try_lock() {
             Ok(()) => {}
             Err(fs::TryLockError::WouldBlock) => {
                 let mut pid = String::new();
                 let _ = file.read_to_string(&mut pid);
                 eprintln!("waiting for another opossum (pid {}) to finish with Roblox…", pid.trim());
-                file.lock().map_err(io)?;
+                file.lock().map_err(|e| format!("{}: {e}", path.display()))?;
             }
-            Err(fs::TryLockError::Error(e)) => return Err(io(e)),
+            Err(fs::TryLockError::Error(e)) => return Err(format!("{}: {e}", path.display())),
         }
-        file.set_len(0).and_then(|_| file.rewind()).and_then(|_| write!(file, "{}", std::process::id())).map_err(io)?;
+        RemoteGuard::held(file, &path)
+    }
+
+    /// Takes the guard when no other opossum holds it, else None at once: dev's pack capture, which writes the lock
+    /// beside the user's commands, keeps what it has for its next tick rather than wait on an upload.
+    pub fn try_acquire(cache: &Cache) -> Result<Option<RemoteGuard>, String> {
+        let (file, path) = open(cache)?;
+        match file.try_lock() {
+            Ok(()) => RemoteGuard::held(file, &path).map(Some),
+            Err(fs::TryLockError::WouldBlock) => Ok(None),
+            Err(fs::TryLockError::Error(e)) => Err(format!("{}: {e}", path.display())),
+        }
+    }
+
+    /// Writes this process's id into the locked file, for whoever waits on it.
+    fn held(mut file: fs::File, path: &Path) -> Result<RemoteGuard, String> {
+        let written = file.set_len(0).and_then(|_| file.rewind()).and_then(|_| write!(file, "{}", std::process::id()));
+        written.map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(RemoteGuard { _file: file })
     }
+}
+
+/// `<cache>/remote.lock`, created with its directory.
+fn open(cache: &Cache) -> Result<(fs::File, PathBuf), String> {
+    let path = cache.dir.join("remote.lock");
+    fs::create_dir_all(&cache.dir).map_err(|e| format!("{}: {e}", cache.dir.display()))?;
+    let file = fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path);
+    file.map(|file| (file, path.clone())).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 #[cfg(test)]

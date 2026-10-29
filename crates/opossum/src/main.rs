@@ -16,6 +16,7 @@ mod inputs;
 mod lock;
 mod migrate;
 mod packages;
+mod packs;
 mod plan;
 mod resources;
 mod signals;
@@ -56,9 +57,10 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>                        
   upload [--json]                                            upload new and changed assets, ids into opossum.lock
   provision [--environment <e>] [--allow-spend] [--json]     create and update passes, products, badges and the
                                                              experience; --allow-spend lets badge creates pay
-  deploy [--environment <e>] [--saved] [--allow-spend] [--json] [<place>...]
+  deploy [--environment <e>] [--saved] [--allow-spend] [--unbaked] [--json] [<place>...]
                                                              upload, provision, then build and publish the places
-                                                             (--saved: save them unpublished)
+                                                             (--saved: save them unpublished; --unbaked: even
+                                                             with surfaces Studio baked no texture pack for)
   adopt [--json] asset <file> (<id> | --none)                settle an upload that may or may not have happened
   adopt [--environment <e>] [--json] (pass | product | badge | thumbnail) <key> (<id> | --none)
                                                              settle a create, or bind one made elsewhere
@@ -75,14 +77,46 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>                        
                                                              tessera's config, lock and ids and hexagon's imports";
 
 enum Command {
-    Build { profile: Option<String>, environment: Option<String>, out: Option<PathBuf>, emit: Option<PathBuf> },
-    Check { profile: Option<String>, environment: Option<String>, json: bool },
-    Dev { environment: Option<String>, json: bool },
-    Plan { environment: Option<String>, json: bool },
-    Upload { json: bool },
-    Provision { environment: Option<String>, allow_spend: bool, json: bool },
-    Deploy { environment: Option<String>, places: Vec<String>, saved: bool, allow_spend: bool, json: bool },
-    Adopt { json: bool, what: Adopted, id: Option<u64> },
+    Build {
+        profile: Option<String>,
+        environment: Option<String>,
+        out: Option<PathBuf>,
+        emit: Option<PathBuf>,
+    },
+    Check {
+        profile: Option<String>,
+        environment: Option<String>,
+        json: bool,
+    },
+    Dev {
+        environment: Option<String>,
+        json: bool,
+    },
+    Plan {
+        environment: Option<String>,
+        json: bool,
+    },
+    Upload {
+        json: bool,
+    },
+    Provision {
+        environment: Option<String>,
+        allow_spend: bool,
+        json: bool,
+    },
+    Deploy {
+        environment: Option<String>,
+        places: Vec<String>,
+        saved: bool,
+        allow_spend: bool,
+        unbaked: bool,
+        json: bool,
+    },
+    Adopt {
+        json: bool,
+        what: Adopted,
+        id: Option<u64>,
+    },
     Exec(exec::Options, exec::Target, exec::Source),
     Test(exec::Options, exec::Target, exec::Tests),
     Play(exec::Options, bool),
@@ -117,7 +151,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     let (mut realm, mut timeout, mut code, mut run) = (None, None, None, false);
     let (mut local, mut interpreted, mut cloud, mut place, mut environment) = (false, false, false, None, None);
     let (mut force, mut allow_focused, mut none, mut head, mut allow_spend) = (false, false, false, false, false);
-    let mut saved = false;
+    let (mut saved, mut unbaked) = (false, false);
     let mut help = matches!(rest.first(), Some(&("-h" | "--help")));
     let mut positional: Vec<&str> = Vec::new();
     let mut it = rest.iter().copied().skip(1);
@@ -147,6 +181,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
             "--head" => head = true,
             "--allow-spend" => allow_spend = true,
             "--saved" => saved = true,
+            "--unbaked" => unbaked = true,
             "-h" | "--help" => help = true,
             "-" => positional.push(arg),
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}")),
@@ -189,7 +224,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         || force && verb != Some("attach")
         || none && verb != Some("adopt")
         || allow_spend && !matches!(verb, Some("provision" | "deploy"))
-        || saved && verb != Some("deploy")
+        || (saved || unbaked) && verb != Some("deploy")
     {
         return Err(USAGE.to_owned());
     }
@@ -204,7 +239,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         (Some("provision"), [], _) if !built => Command::Provision { environment, allow_spend, json },
         (Some("deploy"), places, _) if !built => {
             let places = places.iter().map(|p| (*p).to_owned()).collect();
-            Command::Deploy { environment, places, saved, allow_spend, json }
+            Command::Deploy { environment, places, saved, allow_spend, unbaked, json }
         }
         (Some("adopt"), [kind @ ("asset" | "pass" | "product" | "badge" | "thumbnail"), name, id @ ..], _)
             if !built && id.len() == usize::from(!none) && (*kind != "asset" || environment.is_none()) =>
@@ -350,10 +385,10 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
             });
             finish(outcome, json)
         }
-        Command::Deploy { environment, places, saved, allow_spend, json } => {
+        Command::Deploy { environment, places, saved, allow_spend, unbaked, json } => {
             let outcome = outward(&file()?, |cfg, client, guard, cache| {
                 let (environment, stop) = (environment.as_deref(), &signals::STOP);
-                deploy::deploy(cfg, client, guard, cache, environment, &places, saved, allow_spend, stop)
+                deploy::deploy(cfg, client, guard, cache, environment, &places, saved, allow_spend, unbaked, stop)
             });
             finish(outcome, json)
         }

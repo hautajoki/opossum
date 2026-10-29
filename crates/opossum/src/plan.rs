@@ -1,9 +1,10 @@
 //! `opossum plan`: what going outward would do, worked out offline with no credentials. Every asset file is hashed and
 //! classified against `opossum.lock` exactly as `opossum upload` classifies it ([`classify`]), so the plan is what an
 //! upload does and also the dump of every id; with an environment the resources it declares are compared with the
-//! records of its universe.
+//! records of its universe. It also reads the place, resolved as a build resolves it, for the texture packs Studio has
+//! still to bake.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -13,7 +14,7 @@ use crate::assets::Compiled;
 use crate::config::Config;
 use crate::diag::{Diag, Severity};
 use crate::lock::{self, Asset, Lock};
-use crate::{Outcome, assets, resources};
+use crate::{Outcome, assets, ids, resources};
 
 /// What `opossum upload` does with one found file.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -212,6 +213,8 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
     for file in &dropped {
         let _ = writeln!(text, "dropped   {file} (no longer found)");
     }
+    let (line, packs) = self::packs(cfg, &lock, &found);
+    text.push_str(&line);
     let ambiguous = classes.iter().filter(|c| matches!(c, Class::Ambiguous(_))).count();
     let rejected = classes.iter().filter(|c| **c == Class::Rejected).count();
     let invalid = classes.iter().find_map(|c| match c {
@@ -221,7 +224,7 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
     if cfg.assets.is_empty() && environment.is_none() {
         text.push_str("nothing to plan: opossum.toml declares no [assets] and no [environments]\n");
     }
-    let mut json = json!({ "ok": true, "assets": sets, "dropped": dropped });
+    let mut json = json!({ "ok": true, "assets": sets, "dropped": dropped, "packs": packs });
     let mut blocked = 0;
     if let Some(env) = environment {
         let (_, ops) = match resources::survey(cfg, env, &lock) {
@@ -263,6 +266,57 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
         return Outcome { exit: 0, json, text };
     };
     Outcome::failed(json, text, error.0, error.1)
+}
+
+/// The texture packs the place's SurfaceAppearances and MaterialVariants need, by key: baked (the lock or the model
+/// file holds a pack), unbaked (each with the files using it: `opossum dev` bakes them in Studio, and `deploy` refuses
+/// until it did), and waiting (a map's `$asset` has no upload or read yet, so its key is not known). The text (empty
+/// for a place with none) and `{baked, unbaked: [{class, maps, usedBy}], waiting}`.
+fn packs(cfg: &Config, lock: &Lock, found: &[assets::Asset]) -> (String, serde_json::Value) {
+    let (mut place, _) = place::read_place(&cfg.root.join("place"), &cfg.asset_roots());
+    place.resolve_assets(&ids::resolver(lock, found));
+    let (mut baked, mut waiting) = (BTreeSet::new(), BTreeSet::new());
+    let mut unbaked: BTreeMap<String, (&str, BTreeSet<String>)> = BTreeMap::new();
+    let surfaces = place.surfaces();
+    for s in &surfaces {
+        if s.waiting {
+            waiting.insert(&s.key);
+        } else if s.packed || lock.packs.contains_key(&s.key) {
+            baked.insert(&s.key);
+        } else {
+            let file = s.file.strip_prefix(&cfg.root).unwrap_or(&s.file).display().to_string();
+            unbaked.entry(s.key.clone()).or_insert((s.class, BTreeSet::new())).1.insert(file);
+        }
+    }
+    let list: Vec<serde_json::Value> = unbaked
+        .iter()
+        .map(|(key, (class, files))| {
+            let maps: Vec<&str> = key.split('|').skip(1).collect();
+            json!({ "class": class, "maps": maps, "usedBy": files })
+        })
+        .collect();
+    let json = json!({ "baked": baked.len(), "unbaked": list, "waiting": waiting.len() });
+    if surfaces.is_empty() {
+        return (String::new(), json);
+    }
+    let mut text = format!("packs: {} baked", count(baked.len()));
+    if !unbaked.is_empty() {
+        let mut classes: BTreeMap<&str, usize> = BTreeMap::new();
+        for (class, _) in unbaked.values() {
+            *classes.entry(class).or_default() += 1;
+        }
+        let classes: Vec<String> = classes.iter().map(|(class, n)| format!("{class} {n}")).collect();
+        let _ = write!(text, ", {} unbaked ({})", count(unbaked.len()), classes.join(", "));
+    }
+    if !waiting.is_empty() {
+        let _ = write!(text, ", {} waiting on uploads", count(waiting.len()));
+    }
+    text.push('\n');
+    for (key, (_, files)) in &unbaked {
+        let files: Vec<&str> = files.iter().map(String::as_str).collect();
+        let _ = writeln!(text, "unbaked   {key} (used by {})", files.join(", "));
+    }
+    (text, json)
 }
 
 /// Compiles, in parallel, the one file each upload would send (one sent, not joining another's upload), before
@@ -440,6 +494,58 @@ mod tests {
             ]
         );
         assert_eq!((outcome.exit, &outcome.json["code"]), (1, &"asset.ambiguous".into()));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Packs are counted by key, as the lock keeps them: surfaces sharing maps are one pack to bake, and a surface whose
+    /// map waits on an upload has no key yet, so it is waiting, not unbaked.
+    #[test]
+    fn plan_counts_texture_packs_by_key() {
+        let root = std::env::temp_dir().join(format!("opossum-plan-packs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("art")).unwrap();
+        std::fs::create_dir_all(root.join("place/replicated-storage")).unwrap();
+        let toml = "name = \"plan\"\ncreator = { user = 1 }\n[routes]\nshared = \"ReplicatedStorage/shared\"\n\
+                    [assets]\nart = \"art\"\n";
+        std::fs::write(root.join("opossum.toml"), toml).unwrap();
+        std::fs::write(root.join("art/color.mp4"), "x").unwrap();
+        let surface = |name: &str, class: &str, color: &str| {
+            let properties = format!("{{\"ColorMap\": {color}, \"NormalMap\": \"rbxassetid://9\"}}");
+            format!("{{\"name\": \"{name}\", \"className\": \"{class}\", \"properties\": {properties}}}")
+        };
+        let children = [
+            surface("Baked", "SurfaceAppearance", "\"rbxassetid://1\""),
+            surface("Unbaked", "SurfaceAppearance", "\"rbxassetid://2\""),
+            surface("Twin", "SurfaceAppearance", "\"rbxassetid://2\""),
+            surface("Variant", "MaterialVariant", "\"rbxassetid://3\""),
+            surface("Waiting", "SurfaceAppearance", "{\"$asset\": \"art/color.mp4\"}"),
+        ];
+        let model = format!("{{\"className\": \"Model\", \"children\": [{}]}}", children.join(", "));
+        std::fs::write(root.join("place/replicated-storage/m.model.json"), model).unwrap();
+        std::fs::write(
+            root.join("opossum.lock"),
+            "version = 1\npacks.\"SurfaceAppearance|rbxassetid://1|rbxassetid://9||\" = 5\n",
+        )
+        .unwrap();
+        let cfg = crate::config::load(&root.join("opossum.toml")).unwrap();
+        let outcome = plan(&cfg, None);
+        let used = ["place/replicated-storage/m.model.json"];
+        let expected = json!({
+            "baked": 1,
+            "unbaked": [
+                { "class": "MaterialVariant", "maps": ["rbxassetid://3", "rbxassetid://9", "", ""], "usedBy": used },
+                { "class": "SurfaceAppearance", "maps": ["rbxassetid://2", "rbxassetid://9", "", ""], "usedBy": used },
+            ],
+            "waiting": 1,
+        });
+        assert_eq!(outcome.json["packs"], expected);
+        assert!(
+            outcome
+                .text
+                .contains("packs: 1 baked, 2 unbaked (MaterialVariant 1, SurfaceAppearance 1), 1 waiting on uploads\n"),
+            "{}",
+            outcome.text
+        );
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

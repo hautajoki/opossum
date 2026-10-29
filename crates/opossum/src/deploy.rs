@@ -28,11 +28,12 @@ struct Build {
     session: Session,
 }
 
-/// `opossum deploy [--environment e] [--saved] [--allow-spend] [place...]`: uploads new and changed assets, applies
-/// the environment's resources, then saves the named places (else every place the environment maps) as new versions,
-/// published unless `saved`. Exit 2 when nothing was sent: the config, the lock, an asset file, a resource or a build
-/// is wrong, or a badge create lacks `allow_spend`. Exit 1 when it stopped part way or any place was not saved, with
-/// what it did recorded.
+/// `opossum deploy [--environment e] [--saved] [--allow-spend] [--unbaked] [place...]`: uploads new and changed
+/// assets, applies the environment's resources, then saves the named places (else every place the environment maps) as
+/// new versions, published unless `saved`. A place with a SurfaceAppearance or MaterialVariant Studio has baked no
+/// pack for is not saved (`pack.unbaked`, it would draw flat live) unless `unbaked`. Exit 2 when nothing was sent: the
+/// config, the lock, an asset file, a resource or a build is wrong, or a badge create lacks `allow_spend`. Exit 1 when
+/// it stopped part way or any place was not saved, with what it did recorded.
 #[allow(clippy::too_many_arguments)]
 pub fn deploy(
     cfg: &Config,
@@ -43,6 +44,7 @@ pub fn deploy(
     names: &[String],
     saved: bool,
     allow_spend: bool,
+    unbaked: bool,
     stop: &AtomicBool,
 ) -> Outcome {
     let env = match cfg.environment(environment) {
@@ -142,7 +144,7 @@ pub fn deploy(
     // the places with the ids the lock holds now, each build's bytes for every place of its profile
     let mut bytes = Vec::new();
     for b in &mut builds {
-        let built = rebuild(&mut b.session).map(|(rbxl, packs)| {
+        let built = rebuild(&mut b.session, unbaked).map(|(rbxl, packs)| {
             let labels: Vec<String> = places.iter().filter(|p| p.profile == b.profile).map(Placed::label).collect();
             if packs.packed > 0 || !packs.missing.is_empty() {
                 eprintln!("{}: {}", labels.join(", "), packed(&packs));
@@ -214,7 +216,8 @@ pub fn deploy(
 /// A session built before the upload, built again for the ids and reads it gave: new ids only set the id modules'
 /// sources, and a resource's first id (which changes its type) loads the program again. Refused when a `$asset` names
 /// a part its upload does not have (printed as errors): the upload left nothing unread, or the deploy stopped there.
-fn rebuild(session: &mut Session) -> Result<(Vec<u8>, place::PackStats), Failure> {
+/// Refused too, unless `unbaked` (then said as a warning), when a surface has no texture pack.
+fn rebuild(session: &mut Session, unbaked: bool) -> Result<(Vec<u8>, place::PackStats), Failure> {
     let fail = |error| Failure { code: "build", error, ran: true };
     if session.render_modules().map_err(fail)? == Changed::Types {
         editor::write(&session.cfg.root, &session.cfg.ts, &session.modules).map_err(fail)?;
@@ -222,26 +225,42 @@ fn rebuild(session: &mut Session) -> Result<(Vec<u8>, place::PackStats), Failure
     }
     let built = cloud_exec::rbxl(session)?;
     let unknown = session.unknown_parts();
-    if unknown.is_empty() {
-        return Ok(built);
+    if !unknown.is_empty() {
+        for d in &unknown {
+            eprintln!("{}", d.human(&session.cfg.root));
+        }
+        let error = format!("{} that the uploads do not have would draw nothing", counted(unknown.len(), "part"));
+        return Err(Failure { code: "place.unknownPart", error, ran: true });
     }
-    for d in &unknown {
-        eprintln!("{}", d.human(&session.cfg.root));
+    let Some(missing) = missing(&built.1) else { return Ok(built) };
+    let error = format!(
+        "{missing}, so it would draw flat live: let `opossum dev` bake them in Studio, close the place, deploy again"
+    );
+    if !unbaked {
+        return Err(Failure { code: "pack.unbaked", error, ran: true });
     }
-    let error = format!("{} that the uploads do not have would draw nothing", counted(unknown.len(), "part"));
-    Err(Failure { code: "place.unknownPart", error, ran: true })
+    eprintln!("warning: {error} (--unbaked saves it anyway)");
+    Ok(built)
 }
 
 /// `packs: 168 applied, 3 without a pack yet (SurfaceAppearance 2, MaterialVariant 1)`: the only sign that a map
 /// uploaded again lost its texture packs. `build` prints it too.
 pub fn packed(packs: &place::PackStats) -> String {
     let mut line = format!("packs: {} applied", count(packs.packed));
-    if !packs.missing.is_empty() {
-        let missing: Vec<String> = packs.missing.iter().map(|(class, n)| format!("{class} {n}")).collect();
-        let n = packs.missing.iter().map(|(_, n)| n).sum::<usize>();
-        let _ = write!(line, ", {} without a pack yet ({})", count(n), missing.join(", "));
+    if let Some(missing) = missing(packs) {
+        let _ = write!(line, ", {missing}");
     }
     line
+}
+
+/// `3 without a pack yet (SurfaceAppearance 2, MaterialVariant 1)`, None when every surface has one.
+fn missing(packs: &place::PackStats) -> Option<String> {
+    if packs.missing.is_empty() {
+        return None;
+    }
+    let classes: Vec<String> = packs.missing.iter().map(|(class, n)| format!("{class} {n}")).collect();
+    let n = packs.missing.iter().map(|(_, n)| n).sum::<usize>();
+    Some(format!("{} without a pack yet ({})", count(n), classes.join(", ")))
 }
 
 #[cfg(test)]
@@ -295,7 +314,7 @@ mod tests {
             let client = Client::new("test-key", &base, Clock::Fake(Fake::new())).unwrap();
             let cache = Cache { dir: root.join(".cache") };
             let guard = RemoteGuard::acquire(&cache).unwrap();
-            deploy(&cfg, &client, &guard, &cache, None, &[], false, allow_spend, &AtomicBool::new(false))
+            deploy(&cfg, &client, &guard, &cache, None, &[], false, allow_spend, false, &AtomicBool::new(false))
         };
         std::thread::Builder::new().stack_size(lower::STACK_SIZE).spawn(run).unwrap().join().unwrap()
     }

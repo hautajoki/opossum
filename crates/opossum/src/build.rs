@@ -616,6 +616,11 @@ impl Session {
         out
     }
 
+    /// Every SurfaceAppearance and MaterialVariant with maps in the last tree's place.
+    pub fn surfaces(&self) -> Vec<place::Surface> {
+        self.place.as_ref().map_or_else(Vec::new, place::Place::surfaces)
+    }
+
     /// The last tree's `place.unknownPart` warnings as errors. A build draws such a part empty and goes on, since the
     /// upload that brings it may come after the build; a deploy, which has uploaded and read everything, refuses them.
     pub fn unknown_parts(&self) -> Vec<Diag> {

@@ -44,6 +44,8 @@ use crate::build::{Changed, LineMap, MODULES, RUNTIME, Session, script_class, sc
 use crate::config::{self, Config};
 use crate::diag::Severity;
 use crate::event::{Event, Out};
+use crate::guard::Cache;
+use crate::packs::{Capture, Surfaces};
 use crate::{canonical_prefix, editor, lock, project_path};
 
 const QUIET: Duration = Duration::from_millis(30);
@@ -58,7 +60,7 @@ const STALE_KEPT: usize = 64;
 /// How long a release waits for the plugins it told to leave.
 const RELEASE_WAIT: Duration = Duration::from_secs(10);
 /// Bytes of base64 a pull's answer may carry: an 18 MB model, within the 32 MB a message up the socket may hold.
-const PULL_LIMIT: usize = 24 << 20;
+pub(crate) const PULL_LIMIT: usize = 24 << 20;
 /// Bytes of a spec report's JSON text a test's answer may carry, far past any run's, within what a message up holds.
 const REPORT_LIMIT: usize = 8 << 20;
 
@@ -164,11 +166,16 @@ fn session(cfg: Config, out: &Out, environment: Option<&str>) -> Result<bool, St
 
     let index: Arc<Mutex<LogIndex>> = Arc::default();
     let playtest: Playtests = Arc::default();
+    let (wake, wakes) = mpsc::channel();
     let (printer, studio, tally) = (Arc::clone(&index), out.clone(), Arc::clone(&playtest));
     std::thread::Builder::new()
         .name("studio-reports".into())
-        .spawn(move || show_reports(reports, &printer, &tally, &studio, port))
+        .spawn(move || show_reports(reports, &printer, &tally, &studio, port, &wake))
         .map_err(|e| e.to_string())?;
+    let surfaces: Surfaces = Arc::default();
+    let capture =
+        Capture::new(server.clone(), Arc::clone(&surfaces), out.clone(), cfg.root.clone(), Cache::default_dir()?);
+    std::thread::Builder::new().name("packs".into()).spawn(move || capture.run(&wakes)).map_err(|e| e.to_string())?;
     let fences: Arc<Mutex<Fences>> = Arc::default();
     let stale: Arc<Mutex<Stale>> = Arc::default();
     let execs = Execs {
@@ -201,6 +208,7 @@ fn session(cfg: Config, out: &Out, environment: Option<&str>) -> Result<bool, St
         index: &index,
         fences: &fences,
         stale: &stale,
+        surfaces: &surfaces,
         out,
         shown: Vec::new(),
     };
@@ -250,6 +258,8 @@ struct Dev<'a> {
     index: &'a Mutex<LogIndex>,
     fences: &'a Mutex<Fences>,
     stale: &'a Mutex<Stale>,
+    /// The texture pack capture's view of the tree.
+    surfaces: &'a Surfaces,
     out: &'a Out,
     shown: Vec<String>,
 }
@@ -421,6 +431,7 @@ impl Dev<'_> {
         session.rendered.clear();
         let fresh = session.tree(false);
         self.tree.update(fresh);
+        *self.surfaces.lock().unwrap_or_else(|e| e.into_inner()) = session.surfaces();
         let root = session.cfg.root.clone();
         *self.index.lock().unwrap_or_else(|e| e.into_inner()) = log_index(session);
         let sourcemap = editor::dir(&root).join("sourcemap.json");
@@ -1069,7 +1080,7 @@ fn clash(tree: &Tree, root: &Path, path: &str, file: &Path) -> Result<(), String
 }
 
 /// Standard base64, as EncodingService:Base64Encode writes it; None for anything else.
-fn base64(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn base64(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() / 4 * 3);
     let (mut acc, mut bits) = (0u32, 0);
     for &c in text.trim_end_matches('=').as_bytes() {
@@ -1109,8 +1120,16 @@ fn log_entry(session: &Session, root: &Path, file: &Path) -> (String, Option<Arc
 }
 
 /// Shows what the sync server reports until it stops, Studio's output mapped to the files it came from, and keeps the
-/// playtest's tally. A socket reports its log lines before it disconnects, so a tally is whole once all are gone.
-fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, playtest: &Playtests, out: &Out, port: u16) {
+/// playtest's tally. A socket reports its log lines before it disconnects, so a tally is whole once all are gone. The
+/// edit DataModel's hello and acks `wake` the pack capture: it holds new maps then.
+fn show_reports(
+    reports: Receiver<Report>,
+    index: &Mutex<LogIndex>,
+    playtest: &Playtests,
+    out: &Out,
+    port: u16,
+    wake: &Sender<()>,
+) {
     let (lock, changed) = &**playtest;
     let connect = |realm: Realm, connected: bool| {
         if !matches!(realm, Realm::Server | Realm::Client) {
@@ -1149,6 +1168,9 @@ fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, playtest: &P
                 out.emit(&Event::Log { realm: line.realm, kind: line.kind, text: &text, at });
             }
             Report::Connected { realm, place } => {
+                if realm == Realm::Edit {
+                    let _ = wake.send(());
+                }
                 connect(realm, true);
                 out.emit(&Event::Connected { realm, place, port });
             }
@@ -1157,6 +1179,9 @@ fn show_reports(reports: Receiver<Report>, index: &Mutex<LogIndex>, playtest: &P
                 out.emit(&Event::Disconnected { realm, place, port });
             }
             Report::Applied { realm, generation, ms, failed } => {
+                if realm == Realm::Edit {
+                    let _ = wake.send(());
+                }
                 out.emit(&Event::Applied { realm, generation, ms, failed });
             }
             Report::Verify { realm, generation, quiet } => out.emit(&Event::Verify { realm, generation, quiet }),

@@ -12,7 +12,7 @@
 //! Entry order is not kept in the dom: a re-read entry lands last among its siblings, so [`Place::entry_name`] gives
 //! the tree its directory order back.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -25,7 +25,7 @@ use crate::properties::{self, PlaceEntry, is_properties_file, read_properties};
 use crate::props;
 use crate::tree::NESTED;
 use crate::value::{self, Resolved, db};
-use crate::write::{content_uri, map_uri};
+use crate::write::{PACKED, Surface, content_uri, map_uri, pack_key};
 use crate::{Channel, Diag, Part, Resolver, Severity, Value as Asset};
 
 /// What `place/` holds, as a DataModel, with the file each instance came from.
@@ -38,6 +38,8 @@ pub struct Place {
     refs: Vec<RefSpec>,
     /// Every `$asset` property, by holder and the name its value is stored under.
     assets: HashMap<(Ref, Ustr), AssetSpec>,
+    /// The holders of a map `$asset` the last [`Place::resolve_assets`] left empty: no upload or read yet.
+    waiting: HashSet<Ref>,
 }
 
 /// A Ref property as written in a model file or a properties file: a path from its holder.
@@ -73,6 +75,7 @@ impl Place {
             entries: HashMap::new(),
             refs: Vec::new(),
             assets: HashMap::new(),
+            waiting: HashSet::new(),
         }
     }
 
@@ -483,7 +486,13 @@ impl Place {
             };
             writes.push((holder, class, stored, spec.property, resolved));
         }
+        self.waiting.clear();
         for (holder, class, stored, property, resolved) in writes {
+            if resolved.as_ref().is_some_and(|(uri, _)| uri.is_empty())
+                && Channel::of(property).is_some_and(|c| c != Channel::Mesh)
+            {
+                self.waiting.insert(holder);
+            }
             let Some(inst) = self.dom.get_by_ref_mut(holder) else { continue };
             inst.properties.remove(&stored);
             let Some((uri, size)) = resolved else { continue };
@@ -503,6 +512,24 @@ impl Place {
         diags.sort_by(|a, b| (&a.path, &a.message).cmp(&(&b.path, &b.message)));
         diags.dedup();
         diags
+    }
+
+    /// Every SurfaceAppearance and MaterialVariant with maps, as the last [`Place::resolve_assets`] left them.
+    pub fn surfaces(&self) -> Vec<Surface> {
+        let mut surfaces = Vec::new();
+        for inst in self.dom.descendants() {
+            let Some(&(class, maps)) = PACKED.iter().find(|(class, _)| inst.class == *class) else {
+                continue;
+            };
+            let waiting = self.waiting.contains(&inst.referent());
+            // a surface whose every map waits has no key yet, but still waits
+            let Some(key) = pack_key(inst, class, &maps).or_else(|| waiting.then(|| format!("{class}||||"))) else {
+                continue;
+            };
+            let packed = crate::write::own_pack(inst).is_some();
+            surfaces.push(Surface { class, key, packed, waiting, file: self.source_of(inst.referent()) });
+        }
+        surfaces
     }
 
     /// `place.pastedId` for every Content or ContentId, `$asset`s aside, that spells an id the lock holds.

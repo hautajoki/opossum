@@ -3,10 +3,12 @@
 //! Studio bakes each SurfaceAppearance's and MaterialVariant's maps into one texture pack asset
 //! (TexturePackContent), and a live server draws PBR only from that pack. A place published through Open Cloud has
 //! none, so the packs Studio baked are kept in opossum.lock, keyed `Class|map uri|map uri|...` (the class's maps in
-//! order, colour first), and every place write sets them.
+//! order, colour first), and every place write sets them. `opossum dev` captures them: Studio serializes what it baked,
+//! and [`texture_packs`] reads each key's pack back out.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
+use std::path::PathBuf;
 
 use rbx_dom_weak::types::{Content, Ref, Variant};
 use rbx_dom_weak::{Instance, ustr};
@@ -18,12 +20,26 @@ pub type TexturePacks = BTreeMap<String, u64>;
 
 /// Each packed class's maps, its colour first. PBR decals are left out: Studio never bakes them in edit mode, so no
 /// Decal pack can be kept.
-const PACKED: &[(&str, [&str; 4])] = &[
+pub(crate) const PACKED: &[(&str, [&str; 4])] = &[
     ("SurfaceAppearance", ["ColorMap", "NormalMap", "RoughnessMap", "MetalnessMap"]),
     ("MaterialVariant", ["ColorMap", "NormalMap", "RoughnessMap", "MetalnessMap"]),
 ];
 
 const PACK: &str = "TexturePackContent";
+
+/// A SurfaceAppearance or MaterialVariant with maps, as `plan` reports packs and dev captures them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Surface {
+    pub class: &'static str,
+    /// Its pack key, as opossum.lock's `packs.` lines hold it.
+    pub key: String,
+    /// It holds a pack of its own (one Studio baked into a model file), which the lock's never replaces.
+    pub packed: bool,
+    /// A map's `$asset` has no upload or read yet, so its key is not the one it will have.
+    pub waiting: bool,
+    /// The file it was read from.
+    pub file: PathBuf,
+}
 
 #[derive(Debug, Default)]
 pub struct PackStats {
@@ -63,11 +79,7 @@ fn apply_packs(place: &mut Place, packs: &TexturePacks) -> (PackStats, Vec<(Ref,
         let Some((class, maps)) = PACKED.iter().find(|(class, _)| inst.class == *class) else {
             continue;
         };
-        let own = match inst.properties.get(&ustr(PACK)) {
-            Some(Variant::Content(c)) => c.as_uri().is_some_and(|uri| !uri.is_empty()),
-            _ => false,
-        };
-        if own {
+        if own_pack(inst).is_some() {
             stats.packed += 1;
             continue;
         }
@@ -94,8 +106,34 @@ fn apply_packs(place: &mut Place, packs: &TexturePacks) -> (PackStats, Vec<(Ref,
     (stats, before)
 }
 
+/// The packs Studio baked, from what `SerializeInstancesAsync` made of the instances holding them (an `.rbxm`): each
+/// SurfaceAppearance's and MaterialVariant's key, computed from its own serialized maps, and the id of its
+/// `TexturePackContent`. One Studio has not baked yet is left out.
+pub fn texture_packs(bytes: &[u8]) -> Result<Vec<(String, u64)>, String> {
+    let model = rbx_binary::from_reader(bytes).map_err(|e| e.to_string())?;
+    let mut packs = Vec::new();
+    for inst in model.descendants() {
+        let Some((class, maps)) = PACKED.iter().find(|(class, _)| inst.class == *class) else {
+            continue;
+        };
+        let pack = own_pack(inst).and_then(|uri| uri.strip_prefix("rbxassetid://")?.parse().ok());
+        if let (Some(key), Some(id)) = (pack_key(inst, class, maps), pack) {
+            packs.push((key, id));
+        }
+    }
+    Ok(packs)
+}
+
+/// The uri of the pack an instance holds itself, None when it holds none.
+pub(crate) fn own_pack(inst: &Instance) -> Option<&str> {
+    match inst.properties.get(&ustr(PACK)) {
+        Some(Variant::Content(c)) => c.as_uri().filter(|uri| !uri.is_empty()),
+        _ => None,
+    }
+}
+
 /// The pack key of an instance with maps, or None for one with none.
-fn pack_key(inst: &Instance, class: &str, maps: &[&str; 4]) -> Option<String> {
+pub(crate) fn pack_key(inst: &Instance, class: &str, maps: &[&str; 4]) -> Option<String> {
     let mut key = class.to_string();
     let mut pbr = false;
     for map in maps {
@@ -149,6 +187,34 @@ mod tests {
         assert_eq!(
             sa(&[("ColorMap", "rbxassetid://1")], &[("NormalMap", "rbxassetid://2")]).as_deref(),
             Some("SurfaceAppearance|rbxassetid://1|rbxassetid://2||")
+        );
+    }
+
+    // what Studio serializes for dev's capture: a surface's key comes from its own maps, written either way, beside the
+    // id of the pack it holds; one Studio has not baked yet gives nothing
+    #[test]
+    fn texture_packs_read_each_baked_surface_key_and_pack() {
+        let mut dom = rbx_dom_weak::WeakDom::new(InstanceBuilder::new("Folder"));
+        let root = dom.root_ref();
+        let baked = InstanceBuilder::new("SurfaceAppearance")
+            .with_property("ColorMapContent", Content::from_uri("rbxassetid://11"))
+            .with_property("RoughnessMap", ContentId::from("rbxassetid://13"))
+            .with_property(PACK, Content::from_uri("rbxassetid://83799176238290"));
+        let variant = InstanceBuilder::new("MaterialVariant")
+            .with_property("NormalMapContent", Content::from_uri("rbxassetid://22"))
+            .with_property(PACK, Content::from_uri("rbxassetid://7"));
+        let unbaked = InstanceBuilder::new("SurfaceAppearance")
+            .with_property("ColorMapContent", Content::from_uri("rbxassetid://31"))
+            .with_property(PACK, Content::none());
+        let roots = [dom.insert(root, baked), dom.insert(root, variant), dom.insert(root, unbaked)];
+        let mut bytes = Vec::new();
+        rbx_binary::to_writer(&mut bytes, &dom, &roots).unwrap();
+        assert_eq!(
+            texture_packs(&bytes).unwrap(),
+            [
+                ("SurfaceAppearance|rbxassetid://11||rbxassetid://13|".to_owned(), 83799176238290),
+                ("MaterialVariant||rbxassetid://22||".to_owned(), 7),
+            ]
         );
     }
 }

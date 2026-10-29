@@ -627,25 +627,51 @@ pub(crate) fn string(s: &str) -> String {
 /// and says so in the returned note.
 pub fn save(lock: &mut Lock, root: &Path, _guard: &RemoteGuard) -> Result<Option<String>, Diag> {
     let path = root.join(FILE);
+    let fail = |code: &str, message: String| Diag::new(code, Severity::Error, Some(&path), message);
+    match write(lock, root)? {
+        Written::Saved(note) => Ok(note),
+        Written::Changed(text) => {
+            let dir = crate::editor::create(root).map_err(|e| fail("lock.io", e))?;
+            fs::write(dir.join(RECOVERED), &text).map_err(|e| fail("lock.io", e.to_string()))?;
+            let message = format!(
+                "opossum.lock changed while opossum was writing it (git?), so nothing was overwritten: this run's ids \
+                 are in .opossum/{RECOVERED}, and no command writes the lock until they are folded back \
+                 (lock.recovered)"
+            );
+            Err(fail("lock.changedOnDisk", message))
+        }
+    }
+}
+
+/// [`save`] for a writer whose state is read again from the lock each time (dev's pack capture): a lock something
+/// else changed is left as it is and nothing goes to `.opossum/`, so the writer never leaves a `lock.recovered` that
+/// would refuse the user's own commands. False when nothing was written for that reason.
+pub fn save_or_drop(lock: &mut Lock, root: &Path, _guard: &RemoteGuard) -> Result<bool, Diag> {
+    Ok(matches!(write(lock, root)?, Written::Saved(_)))
+}
+
+enum Written {
+    /// Written, or unchanged; the note says the lock was created.
+    Saved(Option<String>),
+    /// The file changed on disk since this process read or wrote it: nothing was written, and this is the text.
+    Changed(String),
+}
+
+fn write(lock: &mut Lock, root: &Path) -> Result<Written, Diag> {
+    let path = root.join(FILE);
     let text = render(lock);
     let unchanged = match &lock.disk {
         Some(disk) => disk.text == text,
         None => lock.is_empty(),
     };
     if unchanged {
-        return Ok(None);
+        return Ok(Written::Saved(None));
     }
     let fail = |code: &str, message: String| Diag::new(code, Severity::Error, Some(&path), message);
     let io = |e: std::io::Error| fail("lock.io", e.to_string());
     let now = fs::metadata(&path).ok().map(|m| (m.len(), m.modified().ok()));
     if now != lock.disk.as_ref().map(|d| (d.len, d.mtime)) {
-        let dir = crate::editor::create(root).map_err(|e| fail("lock.io", e))?;
-        fs::write(dir.join(RECOVERED), &text).map_err(io)?;
-        let message = format!(
-            "opossum.lock changed while opossum was writing it (git?), so nothing was overwritten: this run's ids are \
-             in .opossum/{RECOVERED}, and no command writes the lock until they are folded back (lock.recovered)"
-        );
-        return Err(fail("lock.changedOnDisk", message));
+        return Ok(Written::Changed(text));
     }
     let tmp = root.join(format!(".{FILE}.tmp-{}", std::process::id()));
     let mut file = fs::File::create(&tmp).map_err(io)?;
@@ -658,7 +684,7 @@ pub fn save(lock: &mut Lock, root: &Path, _guard: &RemoteGuard) -> Result<Option
     let created = lock.disk.is_none();
     lock.disk = Some(Disk { text, len: meta.len(), mtime: meta.modified().ok() });
     if !created {
-        return Ok(None);
+        return Ok(Written::Saved(None));
     }
     let attributes = root.join(".gitattributes");
     let old = match fs::read_to_string(&attributes) {
@@ -667,14 +693,14 @@ pub fn save(lock: &mut Lock, root: &Path, _guard: &RemoteGuard) -> Result<Option
         Err(e) => return Err(fail("lock.io", format!("{}: {e}", attributes.display()))),
     };
     if old.lines().any(|l| l.contains(FILE)) {
-        return Ok(None);
+        return Ok(Written::Saved(None));
     }
     let line = format!("{}{FILE} merge=union\n", if old.is_empty() || old.ends_with('\n') { "" } else { "\n" });
     let append = fs::OpenOptions::new().append(true).create(true).open(&attributes);
     append
         .and_then(|mut f| f.write_all(line.as_bytes()))
         .map_err(|e| fail("lock.io", format!("{}: {e}", attributes.display())))?;
-    Ok(Some(format!("wrote .gitattributes ({FILE} merge=union)")))
+    Ok(Written::Saved(Some(format!("wrote .gitattributes ({FILE} merge=union)"))))
 }
 
 /// `lock.recovered` while a [`save`] that found the lock changed on disk left its state aside: every command that writes
@@ -893,6 +919,30 @@ universes.15302144394."thumbnail/main" = { id = 55, altText = "Lobby", image = "
         lock.creator = Some(Creator::Group(3));
         assert_eq!(save(&mut lock, &root, &guard).unwrap(), None);
         assert_eq!(read(&root).unwrap().0.creator, Some(Creator::Group(3)));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // dev's pack capture saves beside the user's own commands: when git rewrote the lock between its read and its
+    // save, it leaves that lock alone and no recovered state that would refuse every command that writes the lock
+    #[test]
+    fn a_capture_save_racing_a_rewritten_lock_leaves_no_recovered_file() {
+        let root = temp("drop");
+        let cache = Cache { dir: root.join("cache") };
+        let guard = RemoteGuard::acquire(&cache).unwrap();
+        fs::write(root.join(FILE), "version = 1\n").unwrap();
+        let (mut lock, _) = read(&root).unwrap();
+        let checkout = "version = 1\npacks.\"MaterialVariant|rbxassetid://5|||\" = 7\n";
+        fs::write(root.join(FILE), checkout).unwrap();
+        lock.packs.insert("SurfaceAppearance|rbxassetid://1|||".into(), 2);
+        assert!(!save_or_drop(&mut lock, &root, &guard).unwrap());
+        assert_eq!(fs::read_to_string(root.join(FILE)).unwrap(), checkout);
+        assert!(recovered(&root).is_none() && !root.join(".opossum").exists());
+
+        // the next tick reads the new lock and saves into it
+        let (mut lock, _) = read(&root).unwrap();
+        lock.packs.insert("SurfaceAppearance|rbxassetid://1|||".into(), 2);
+        assert!(save_or_drop(&mut lock, &root, &guard).unwrap());
+        assert_eq!(read(&root).unwrap().0.packs.len(), 2);
         let _ = fs::remove_dir_all(&root);
     }
 }
