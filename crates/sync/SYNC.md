@@ -426,11 +426,12 @@ answer is the server's own `{"ok": false, "lost": true}`: the code may have run,
 it never ran is only ever given when it never will.
 
 **Running.** The chunk is a nil-parented ModuleScript named after the file, holding
-`return function(print, warn, ...) ` spliced in front of the source's first code, on that line (directives such as
-`--!native` stay first, line numbers stay the user's, a top-level `...` is legal as in any script), and `\nend` after
-it. A source of 200,000 characters or more is set with `UpdateSourceAsync`, which `Source` refuses. Its print and
-warn record into the answer's `output`, so only its own output is captured; what the modules it requires print goes to
-Output and the dev terminal as usual. It runs in a
+`return function(...) ` spliced in front of the source's first code, on that line (directives such as `--!native`
+stay first, line numbers stay the user's, a top-level `...` is legal as in any script), and `\nend` after it, loaded
+as a module (below) and called, so every value it returns is answered. A source of 200,000 characters or more is set
+with `UpdateSourceAsync`, which `Source` refuses. The print and warn of the chunk and of every module it requires
+record into the answer's `output`, so what a spec's code prints is in `opossum test`'s output, not only in Studio's;
+a thread the exec leaves running prints to Output once the answer is sent. It runs in a
 thread under `xpcall`: an error answers with its message and `debug.traceback` less the plugin's own frames; returned
 values are JSON, every leaf JSON has no word for (an Instance, a Vector3, a function, inf, nan) as its `tostring`,
 nested ones included, and a value with a cycle or keys JSON cannot hold as its `tostring` whole. A `tostring` that
@@ -448,11 +449,11 @@ write, a rename, a reparent or `UpdateSourceAsync`, `require` of the same instan
 a new instance loads anew (measured in Studio 0.745, 2026-10-28). Sync writes `Source` in place, so the plugin's
 `require` would run stale code from the second exec on. So the chunk and everything it requires load
 through exec.luau's own `require`, which runs each module's **body**: its `Source` wrapped as
-`return function(script, require, ...) <source> end` (spliced in front of the first code line, so `--!native` stays a
+`return function(script, require, print, warn, ...) <source> end` (spliced in front of the first code line, so `--!native` stays a
 directive and lines keep their numbers), compiled by requiring a copy placed in a nil-parented mirror of the
 original's ancestors' names, so chunk names, errors and tracebacks read `ReplicatedStorage.shared.x:12` as the
-original's would and map to files the same way. `script` is the original and `require` the loader, which resolves
-instances and `@self`/`@game`/`./`/`../` paths against the original. A body is compiled once per `Source` and called
+original's would and map to files the same way. `script` is the original, `require` the loader, which resolves
+instances and `@self`/`@game`/`./`/`../` paths against the original, and `print` and `warn` the exec's. A body is compiled once per `Source` and called
 anew by each exec, so module state never leaks from one run into the next while compiled code is kept: Studio never
 frees native code, and compiling fresh copies of every module per run ran the edit VM out of it after about a dozen
 `opossum test` runs over a large project ("Memory allocation limit reached for native code generation", every module interpreted

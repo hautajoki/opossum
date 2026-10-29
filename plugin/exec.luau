@@ -1,11 +1,12 @@
 --!strict
 -- Runs what `opossum exec` and `opossum test` send (crates/sync/SYNC.md, "Exec"): Luau as a fresh ModuleScript chunk
--- whose print and warn are its own, under a time limit, leaving nothing in the DataModel.
+-- whose print and warn (and those of every module it requires) are its own, under a time limit, leaving nothing in the
+-- DataModel.
 --
 -- Studio's require caches a result per instance for the life of this VM: a Source change, rename, reparent or
 -- UpdateSourceAsync leaves it returning the first result (measured), and sync writes Source in place. So each exec
 -- runs every ModuleScript it requires afresh, through its body: the module's Source wrapped as a function of `script`
--- (the original) and `require` (this loader), compiled once per Source from a nil-parented copy placed in a mirror of
+-- (the original), `require` (this loader), and the exec's `print` and `warn`, compiled once per Source from a nil-parented copy placed in a mirror of
 -- its ancestors' names, so chunk names and tracebacks read like the original's. Module state never carries from one
 -- exec to the next; compiled code does, since Studio never frees native code (a fresh copy per run ran a dozen
 -- test runs out of it, measured).
@@ -38,8 +39,10 @@ export type Request = {
 	now: boolean?,
 }
 
+type Body = (Instance, (any) -> any, (...any) -> (), (...any) -> ()) -> any
+
 -- Module bodies by the module's full name, with the Source each was compiled from.
-local bodies: { [string]: { source: string, body: (Instance, (any) -> any) -> any } } = {}
+local bodies: { [string]: { source: string, body: Body } } = {}
 
 -- The byte where the first token that is not a comment starts, or nil: directives (--!native) stay in front of it.
 local function first_code(source: string): number?
@@ -90,6 +93,8 @@ end
 -- One exec's modules: results, and the error of each that failed (a later require rethrows it, as Studio's does);
 -- `traces` holds the whole stack of a located loading error, which its rethrow loses.
 type Session = {
+	print: (...any) -> (),
+	warn: (...any) -> (),
 	cache: { [Instance]: any },
 	failed: { [Instance]: unknown },
 	traces: { [string]: string },
@@ -165,13 +170,13 @@ local function trim(trace: string): string
 end
 
 -- The body of `original`'s current Source, compiled on first use.
-local function compile(session: Session, original: ModuleScript): (Instance, (any) -> any) -> any
+local function compile(session: Session, original: ModuleScript): Body
 	local name, source = original:GetFullName(), original.Source
 	local compiled = bodies[name]
 	if compiled and compiled.source == source then return compiled.body end
 	-- spliced in front of the first code, on its line, so directives stay first and lines keep their numbers
 	local at = first_code(source)
-	local open = "return function(script, require, ...) "
+	local open = "return function(script, require, print, warn, ...) "
 	local wrapped = if at then `{string.sub(source, 1, at - 1)}{open}{string.sub(source, at)}\nend` else `{source}\n{open}\nend`
 	local copy = Instance.new("ModuleScript")
 	copy.Name = original.Name
@@ -206,7 +211,7 @@ load = function(session: Session, original: ModuleScript): any
 	if cached ~= nil then return cached end
 	session.cache[original] = LOADING
 	local ok, result = xpcall(function()
-		return compile(session, original)(original, bound(session, original))
+		return compile(session, original)(original, bound(session, original), session.print, session.warn)
 	end, function(e: unknown)
 		return locate(session, e)
 	end)
@@ -274,10 +279,13 @@ local function run(request: Request, at: number): string
 		return failed(request, `waited {math.floor(started - at)} s behind earlier work in Studio and was not run`, true)
 	end
 	local output: { { string } } = {}
-	local room, dropped = ANSWER_LIMIT, 0
-	local function capture(kind: string): (...any) -> ()
+	local room, dropped, answered = ANSWER_LIMIT, 0, false
+	-- once the answer is sent, a print from a thread the exec left running goes to Output
+	local function capture(kind: string, fallback: (...any) -> ()): (...any) -> ()
 		return function(...)
-			if room <= 0 then
+			if answered then
+				fallback(...)
+			elseif room <= 0 then
 				dropped += 1
 				return
 			end
@@ -291,7 +299,15 @@ local function run(request: Request, at: number): string
 		end
 	end
 	local chunk: ModuleScript? = nil
-	local session: Session = { cache = {}, failed = {}, traces = {}, folders = {}, tops = {} }
+	local session: Session = {
+		print = capture("output", print),
+		warn = capture("warning", warn),
+		cache = {},
+		failed = {},
+		traces = {},
+		folders = {},
+		tops = {},
+	}
 	-- in edit, what the script writes is one waypoint of its own, so Ctrl+Z takes it back
 	local recording = if apply.role == "edit" then ChangeHistoryService:TryBeginRecording("opossum: exec") else nil
 	local result: { n: number, [number]: any }? = nil
@@ -301,15 +317,15 @@ local function run(request: Request, at: number): string
 			chunk = made
 			made.Name = request.name
 			-- spliced in front of the first code, on its line, so directives stay first and lines keep their numbers;
-			-- print and warn are this exec's own
+			-- the body loading it runs this, so the chunk's values are all returned, not a module's one
 			local source = request.source
 			local code = first_code(source)
-			local open = "return function(print, warn, ...) "
+			local open = "return function(...) "
 			set_source(
 				made,
 				if code then `{string.sub(source, 1, code - 1)}{open}{string.sub(source, code)}\nend` else `{source}\n{open}\nend`
 			)
-			return load(session, made)(capture("output"), capture("warning"))
+			return load(session, made)()
 		end, function(e: unknown)
 			local trace = if type(e) == "string" then session.traces[e] else nil
 			return { message = if type(e) == "string" then e else describe(e), trace = trace or trim(debug.traceback(nil, 2)) }
@@ -325,6 +341,7 @@ local function run(request: Request, at: number): string
 	for _, top in session.tops do
 		top:Destroy()
 	end
+	answered = true
 	if dropped > 0 then table.insert(output, { "warning", `... {dropped} more lines cut` }) end
 	local message = { t = "result", id = request.id, ok = false, output = output, ms = (os.clock() - started) * 1000 } :: { [string]: any }
 	local values: { string } = {}
