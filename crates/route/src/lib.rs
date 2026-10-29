@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 mod scan;
 mod spell;
 
-pub use scan::{Scan, Where, scan, scan_files};
+pub use scan::{Scan, scan, scan_files};
 pub use spell::{boundary, require};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

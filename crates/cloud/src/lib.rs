@@ -88,12 +88,12 @@ impl Clock {
 /// Per-phase limits on every request, so no request hangs on a dead connection. Sending a body gets `send` plus a
 /// second per MiB; uploads wait `recv_long` for Roblox's answer, everything else `recv`. Tests shorten them to see a
 /// hung server quickly.
-pub struct Timeouts {
-    pub connect: Duration,
-    pub send: Duration,
-    pub recv: Duration,
-    pub recv_long: Duration,
-    pub body: Duration,
+struct Timeouts {
+    connect: Duration,
+    send: Duration,
+    recv: Duration,
+    recv_long: Duration,
+    body: Duration,
 }
 
 pub struct Client {

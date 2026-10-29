@@ -16,13 +16,6 @@ pub struct Scan {
     by_file: HashMap<PathBuf, usize>,
 }
 
-/// What `where` prints for a file: its module, and with an importer, the require that reaches it from there.
-#[derive(Debug)]
-pub struct Where<'a> {
-    pub module: &'a Module,
-    pub require: Option<Result<String, Code>>,
-}
-
 /// Walks `root`, routes every source file and checks the routed tree. Dotfiles and dot-directories are skipped.
 pub fn scan(root: &Path, routes: &Routes) -> Scan {
     let mut files = Vec::new();
@@ -253,16 +246,6 @@ impl Scan {
     /// Whether `path` is a scanned file (a module, its typing, a declaration file) or a directory holding one.
     pub fn holds(&self, path: &Path) -> bool {
         self.by_file.keys().chain(&self.decls).any(|f| f.starts_with(path))
-    }
-
-    /// `where <file>`: where a file lands, and the require spelling from `importer` when one is given.
-    pub fn where_file(&self, routes: &Routes, file: &Path, importer: Option<&Path>) -> Option<Where<'_>> {
-        let module = self.find(file)?;
-        let require = importer.map(|f| match self.find(f) {
-            Some(from) => crate::require(routes, from, module),
-            None => Err(Code::Unrouted),
-        });
-        Some(Where { module, require })
     }
 
     /// `where <Instance.Path[:line]>`: the module behind an instance path as Studio prints it, and the line.

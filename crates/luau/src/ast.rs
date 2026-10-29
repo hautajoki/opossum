@@ -607,11 +607,6 @@ impl Expr {
         )
     }
 
-    /// `isExpressionWithPrecedence`: binary, unary and if-expressions, which may need parentheses.
-    pub fn has_precedence(&self) -> bool {
-        matches!(self, Expr::Binary(_) | Expr::Unary(_) | Expr::If(_))
-    }
-
     /// `isNone`
     pub fn is_none(&self) -> bool {
         matches!(self, Expr::None)
@@ -702,21 +697,6 @@ impl Stmt {
             Stmt::For(s) => Some(&s.statements),
             Stmt::FunctionDeclaration(s) => Some(&s.statements),
             Stmt::MethodDeclaration(s) => Some(&s.statements),
-            _ => None,
-        }
-    }
-
-    /// Mutable [`Stmt::statements`].
-    pub fn statements_mut(&mut self) -> Option<&mut Vec<Stmt>> {
-        match self {
-            Stmt::Do(s) => Some(&mut s.statements),
-            Stmt::While(s) => Some(&mut s.statements),
-            Stmt::Repeat(s) => Some(&mut s.statements),
-            Stmt::If(s) => Some(&mut s.statements),
-            Stmt::NumericFor(s) => Some(&mut s.statements),
-            Stmt::For(s) => Some(&mut s.statements),
-            Stmt::FunctionDeclaration(s) => Some(&mut s.statements),
-            Stmt::MethodDeclaration(s) => Some(&mut s.statements),
             _ => None,
         }
     }
