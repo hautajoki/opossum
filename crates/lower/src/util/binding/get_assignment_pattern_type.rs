@@ -40,7 +40,8 @@ fn get_iterable_element_type(state: &mut TransformState<'_>, t: P<Type>, node: P
         state.checker.get_type_of_symbol_at_location(iterator, Some(node)).expect("the iterator method has a type");
     let signature = state.checker.get_call_signatures(iterator_function)[0];
     let iterator_type = state.checker.get_return_type_of_signature_exported(signature);
-    let next = state.checker.get_type_of_property_of_type_exported(iterator_type, "next").expect("an iterator has next");
+    let next =
+        state.checker.get_type_of_property_of_type_exported(iterator_type, "next").expect("an iterator has next");
     let next_signature = state.checker.get_call_signatures(next)[0];
     let result = state.checker.get_return_type_of_signature_exported(next_signature);
     let mut values = Vec::new();
@@ -48,8 +49,10 @@ fn get_iterable_element_type(state: &mut TransformState<'_>, t: P<Type>, node: P
     let true_type = crate::util::types::regular_boolean_literal(state.checker, true);
     for part in constituents(result) {
         if state.checker.get_type_of_property_of_type_exported(part, "done") != Some(true_type) {
-            let value =
-                state.checker.get_type_of_property_of_type_exported(part, "value").expect("an iterator result has a value");
+            let value = state
+                .checker
+                .get_type_of_property_of_type_exported(part, "value")
+                .expect("an iterator result has a value");
             values.push(value);
         }
     }
@@ -135,9 +138,7 @@ fn get_property_type(state: &mut TransformState<'_>, pattern: P<Node>, name: P<N
     let t = get_assignment_pattern_type(state, pattern);
     let key_type = match name.kind() {
         Kind::ComputedPropertyName => state.get_type(name.as_computed_property_name().expression),
-        Kind::NumericLiteral => {
-            state.checker.get_number_literal_type(Number(luau::js_string_to_number(name.text())))
-        }
+        Kind::NumericLiteral => state.checker.get_number_literal_type(Number(luau::js_string_to_number(name.text()))),
         _ => state.checker.get_string_literal_type(name.text()),
     };
     let mut values = Vec::new();

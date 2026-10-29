@@ -107,9 +107,26 @@ pub fn try_mark_builtin_member(state: &mut TransformState<'_>, node: P<Node>, ex
 /// commute with later prerequisites (the ones that can throw only with prerequisites that have no effects:
 /// [`NEVER_THROWING_CONSTRUCTORS`]); `Instance.new` and every other call stay unknown.
 const PURE_DATATYPES: &[&str] = &[
-    "Axes", "BrickColor", "CFrame", "Color3", "ColorSequence", "ColorSequenceKeypoint", "Faces", "Font",
-    "NumberRange", "NumberSequence", "NumberSequenceKeypoint", "PhysicalProperties", "Ray", "Rect", "Region3",
-    "TweenInfo", "UDim", "UDim2", "Vector2", "Vector3",
+    "Axes",
+    "BrickColor",
+    "CFrame",
+    "Color3",
+    "ColorSequence",
+    "ColorSequenceKeypoint",
+    "Faces",
+    "Font",
+    "NumberRange",
+    "NumberSequence",
+    "NumberSequenceKeypoint",
+    "PhysicalProperties",
+    "Ray",
+    "Rect",
+    "Region3",
+    "TweenInfo",
+    "UDim",
+    "UDim2",
+    "Vector2",
+    "Vector3",
 ];
 
 /// rbxts-rs: the constructors of [`PURE_DATATYPES`] that never throw for arguments of their declared types (`new` is
@@ -153,9 +170,8 @@ fn is_declared_in_rbxts_types(state: &mut TransformState<'_>, node: P<Node>) -> 
 /// A member that interface inherits (a user's `interface ColorSequenceConstructor extends SharedTableConstructor`
 /// gives it `SharedTableConstructor`'s `new (t: object)`) belongs to another type, so it does not count.
 fn is_declared_by_constructor_type(state: &mut TransformState<'_>, declaration: P<Node>, receiver: &str) -> bool {
-    let owner = get_ancestor(declaration, |a| {
-        matches!(a.kind(), Kind::InterfaceDeclaration | Kind::TypeAliasDeclaration)
-    });
+    let owner =
+        get_ancestor(declaration, |a| matches!(a.kind(), Kind::InterfaceDeclaration | Kind::TypeAliasDeclaration));
     owner.is_some_and(|owner| {
         owner.name().is_some_and(|name| name.text().strip_suffix("Constructor") == Some(receiver))
             && is_in_rbxts_types(state, owner)
@@ -202,9 +218,7 @@ pub fn try_mark_pure_constructor(
         }
     }
     let name = member.map_or("new", |member| member.text());
-    let may_throw = !NEVER_THROWING_CONSTRUCTORS
-        .iter()
-        .any(|&(d, members)| d == datatype && members.contains(&name));
+    let may_throw = !NEVER_THROWING_CONSTRUCTORS.iter().any(|&(d, members)| d == datatype && members.contains(&name));
     if let Some(facts) = call.facts_mut() {
         facts.set_pure_constructor(may_throw);
     }

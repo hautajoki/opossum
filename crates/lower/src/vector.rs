@@ -68,14 +68,8 @@ pub fn declarations_file(root: &str) -> String {
 
 /// `Vector3` methods with a `vector` library function of the same semantics: `v.Method(args)` is
 /// `vector.function(v, args)`.
-const METHODS: &[(&str, &str)] = &[
-    ("Abs", "abs"),
-    ("Ceil", "ceil"),
-    ("Cross", "cross"),
-    ("Dot", "dot"),
-    ("Floor", "floor"),
-    ("Sign", "sign"),
-];
+const METHODS: &[(&str, &str)] =
+    &[("Abs", "abs"), ("Ceil", "ceil"), ("Cross", "cross"), ("Dot", "dot"), ("Floor", "floor"), ("Sign", "sign")];
 
 /// A lowered `Vector3` member access.
 pub enum Access {

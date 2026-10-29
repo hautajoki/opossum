@@ -232,32 +232,20 @@ fn build_array_loop(
     exp: Expr,
 ) -> Vec<Stmt> {
     let mut initializers = Vec::new();
-    let ids = vec![
-        AnyIdentifier::Temporary(temp_id("")),
-        transform_for_initializer(state, initializer, &mut initializers),
-    ];
+    let ids =
+        vec![AnyIdentifier::Temporary(temp_id("")), transform_for_initializer(state, initializer, &mut initializers)];
     make_for_loop(ids, exp, initializers, statements)
 }
 
 /// `buildSetLoop`: `for x in set do`; also `buildIterableFunctionLoop`: `for x in iter do`.
-fn build_set_loop(
-    state: &mut TransformState<'_>,
-    statements: Vec<Stmt>,
-    initializer: P<Node>,
-    exp: Expr,
-) -> Vec<Stmt> {
+fn build_set_loop(state: &mut TransformState<'_>, statements: Vec<Stmt>, initializer: P<Node>, exp: Expr) -> Vec<Stmt> {
     let mut initializers = Vec::new();
     let ids = vec![transform_for_initializer(state, initializer, &mut initializers)];
     make_for_loop(ids, exp, initializers, statements)
 }
 
 /// `buildMapLoop`: `for k, v in map do`, with `[k, v]` patterns bound in line.
-fn build_map_loop(
-    state: &mut TransformState<'_>,
-    statements: Vec<Stmt>,
-    initializer: P<Node>,
-    exp: Expr,
-) -> Vec<Stmt> {
+fn build_map_loop(state: &mut TransformState<'_>, statements: Vec<Stmt>, initializer: P<Node>, exp: Expr) -> Vec<Stmt> {
     let mut ids = Vec::new();
     let mut initializers = Vec::new();
 
@@ -460,9 +448,7 @@ impl LoopBuilder {
         match self {
             LoopBuilder::Array => build_array_loop(state, statements, initializer, exp),
             // `buildIterableFunctionLoop` is the same loop as `buildSetLoop`
-            LoopBuilder::Set | LoopBuilder::IterableFunction => {
-                build_set_loop(state, statements, initializer, exp)
-            }
+            LoopBuilder::Set | LoopBuilder::IterableFunction => build_set_loop(state, statements, initializer, exp),
             LoopBuilder::Map => build_map_loop(state, statements, initializer, exp),
             LoopBuilder::String => build_string_loop(state, statements, initializer, exp),
             LoopBuilder::IterableFunctionLuaTuple(t) => {

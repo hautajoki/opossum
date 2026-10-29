@@ -146,9 +146,7 @@ pub fn get_intrinsic_effects(node: LuauNode<'_>) -> Effects {
             Expr::Identifier(_) | Expr::TemporaryIdentifier(_) => {
                 reads_of(binding_of_expr(e).expect("an identifier has a binding"))
             }
-            Expr::Nil | Expr::True | Expr::False | Expr::Number(_) | Expr::String(_) => {
-                Effects::none()
-            }
+            Expr::Nil | Expr::True | Expr::False | Expr::Number(_) | Expr::String(_) => Effects::none(),
             Expr::None | Expr::VarArgs => Effects::none(),
             Expr::Call(n) => get_builtin_call_effects(&n.expression)
                 .or_else(|| get_call_effects(&n.expression))
@@ -248,7 +246,10 @@ fn accumulate(node: LuauNode<'_>, result: &mut Effects, pure_constructors: bool)
             }
             return;
         }
-        if pure_constructors && let Expr::PropertyAccess(access) = e && access.facts.is_roblox_constant() {
+        if pure_constructors
+            && let Expr::PropertyAccess(access) = e
+            && access.facts.is_roblox_constant()
+        {
             // an Enum item or a datatype constant: a global's immutable member
             return;
         }

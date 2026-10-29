@@ -36,9 +36,7 @@ pub fn transform_if_statement_inner(
                 ElseBody::Block(else_if_statements)
             }
         }
-        Some(else_statement) => {
-            ElseBody::Block(transform_body(state, else_statement))
-        }
+        Some(else_statement) => ElseBody::Block(transform_body(state, else_statement)),
     };
 
     IfStatement { condition, statements, else_body }

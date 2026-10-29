@@ -16,12 +16,12 @@ use crate::nodes::transform_statement_list::transform_body;
 use crate::shared::diagnostics::errors;
 use crate::util::create_truthiness_checks::create_truthiness_checks;
 use crate::util::get_constant_integer::get_constant_integer;
-use crate::util::loop_bounds::{is_integral, is_invariant};
-use crate::util::types::{is_definitely_type, is_number_type};
 use crate::util::get_declared_variables::get_declared_variables;
 use crate::util::get_literal_number_value::get_literal_number_value;
+use crate::util::loop_bounds::{is_integral, is_invariant};
 use crate::util::offset::offset;
 use crate::util::traversal::{get_ancestor, is_ancestor_of, skip_downwards, source_file_of};
+use crate::util::types::{is_definitely_type, is_number_type};
 
 fn add_finalizers_to_if_statement(node: &mut IfStatement, finalizers: &[Stmt]) {
     if !node.statements.is_empty() {
@@ -476,8 +476,7 @@ fn transform_for_statement_optimized(state: &mut TransformState<'_>, node: P<Nod
 
 /// `transformForStatement`
 pub fn transform_for_statement(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
-    if let Some(optimized) = transform_for_statement_optimized(state, node)
-    {
+    if let Some(optimized) = transform_for_statement_optimized(state, node) {
         return optimized;
     }
     transform_for_statement_fallback(state, node)

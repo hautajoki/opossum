@@ -5,7 +5,10 @@
 //! A file is lowered on the checker that checked it, one thread per checker ([`groups`]). Lowered trees are plain
 //! owned data, rendered by the `luau` crate.
 
+pub mod callsite;
 pub mod classes;
+pub mod ecs;
+pub mod flamework;
 pub mod graph;
 pub mod groups;
 pub mod locate;
@@ -20,9 +23,6 @@ pub mod source_cache;
 pub mod types;
 pub mod util;
 pub mod vector;
-pub mod ecs;
-pub mod callsite;
-pub mod flamework;
 
 pub use groups::{Lowered, lower_files};
 pub use locate::{Location, Locator, Realm};

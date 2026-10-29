@@ -26,10 +26,7 @@ pub fn scan(root: &Path, routes: &Routes) -> Scan {
 
 /// `scan` over a known file list (paths relative to `root`), for a watcher that already holds it.
 pub fn scan_files(root: &Path, files: Vec<PathBuf>, routes: &Routes) -> Scan {
-    let mut s = Scan {
-        root: root.to_path_buf(),
-        ..Scan::default()
-    };
+    let mut s = Scan { root: root.to_path_buf(), ..Scan::default() };
     let module_dirs: HashSet<PathBuf> = files
         .iter()
         .filter(|rel| {
@@ -43,11 +40,7 @@ pub fn scan_files(root: &Path, files: Vec<PathBuf>, routes: &Routes) -> Scan {
         let name = rel.file_name().and_then(|n| n.to_str()).unwrap_or("");
         match file_type(name) {
             Some(FileType::Dts) => dts.push(rel),
-            Some(FileType::Source {
-                kind: Kind::Json,
-                ..
-            })
-            | None => {}
+            Some(FileType::Source { kind: Kind::Json, .. }) | None => {}
             Some(FileType::Source { .. }) => match route(routes, &rel, &module_dirs) {
                 Ok(Some(mut m)) => {
                     m.file = root.join(&rel);
@@ -67,11 +60,7 @@ pub fn scan_files(root: &Path, files: Vec<PathBuf>, routes: &Routes) -> Scan {
     for rel in dts {
         let name = rel.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let stem = &name[..name.len() - 5];
-        let luau = rel.with_file_name(if stem == "index" {
-            "init.luau".to_owned()
-        } else {
-            format!("{stem}.luau")
-        });
+        let luau = rel.with_file_name(if stem == "index" { "init.luau".to_owned() } else { format!("{stem}.luau") });
         let file = root.join(&rel);
         match s.by_file.get(&root.join(luau)).copied() {
             Some(i) => {
@@ -235,11 +224,7 @@ impl Scan {
     /// The module a source file (or the `.d.ts` typing a Luau module) routes to. A relative path is taken
     /// relative to the root.
     pub fn find(&self, file: &Path) -> Option<&Module> {
-        let i = if file.is_absolute() {
-            self.by_file.get(file)
-        } else {
-            self.by_file.get(&self.root.join(file))
-        };
+        let i = if file.is_absolute() { self.by_file.get(file) } else { self.by_file.get(&self.root.join(file)) };
         i.map(|&i| &self.modules[i])
     }
 

@@ -71,8 +71,7 @@ fn transform_jsx_attribute(
         // decoded (TypeScript's `tryDecodeEntities`). A line break inside one went into the quotes as it was, which
         // Luau rejects. A string with none of these is spelled as before.
         Some(initializer)
-            if initializer.kind() == Kind::StringLiteral
-                && initializer.text().contains(['\\', '&', '\n', '\r']) =>
+            if initializer.kind() == Kind::StringLiteral && initializer.text().contains(['\\', '&', '\n', '\r']) =>
         {
             match decode_entities_in_text(initializer.text()) {
                 Ok(value) => create_string_from_value(&value),

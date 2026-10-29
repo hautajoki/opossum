@@ -257,8 +257,7 @@ fn array_for_each(
 }
 
 fn array_map(_: &mut TransformState<'_>, prereqs: &mut Prereqs, _: P<Node>, expression: Expr, args: Args) -> Expr {
-    let new_value_id =
-        prereqs.push_to_var(create::call(globals::table::create(), vec![len(&expression)]), "newValue");
+    let new_value_id = prereqs.push_to_var(create::call(globals::table::create(), vec![len(&expression)]), "newValue");
     let callback_id = convert_to_indexable_expression(args.into_iter().next().expect("a callback"));
     let key_id = temp_id("k");
     let value_id = temp_id("v");
@@ -546,8 +545,7 @@ fn array_unordered_remove(
     expression: Expr,
     args: Args,
 ) -> Expr {
-    let index_exp =
-        prereqs.push_to_var_if_complex(offset(args.into_iter().next().expect("an index"), 1.0), "index");
+    let index_exp = prereqs.push_to_var_if_complex(offset(args.into_iter().next().expect("an index"), 1.0), "index");
 
     let length_id = prereqs.push_to_var(len(&expression), "length");
 
@@ -692,15 +690,9 @@ type Methods = &'static [(&'static str, PropertyCallMacro)];
 
 const MATH_ADD_SUB_MUL: Methods = &[("add", math_add), ("sub", math_sub), ("mul", math_mul)];
 const MATH_ADD_SUB: Methods = &[("add", math_add), ("sub", math_sub)];
-const MATH_ALL: Methods = &[
-    ("add", math_add),
-    ("sub", math_sub),
-    ("mul", math_mul),
-    ("div", math_div),
-    ("idiv", math_idiv),
-];
-const MATH_NO_IDIV: Methods =
-    &[("add", math_add), ("sub", math_sub), ("mul", math_mul), ("div", math_div)];
+const MATH_ALL: Methods =
+    &[("add", math_add), ("sub", math_sub), ("mul", math_mul), ("div", math_div), ("idiv", math_idiv)];
+const MATH_NO_IDIV: Methods = &[("add", math_add), ("sub", math_sub), ("mul", math_mul), ("div", math_div)];
 
 /// `PROPERTY_CALL_MACROS`, by interface, in roblox-ts's order.
 pub const PROPERTY_CALL_MACROS: &[(&str, Methods)] = &[
@@ -769,12 +761,7 @@ pub const PROPERTY_CALL_MACROS: &[(&str, Methods)] = &[
     ),
     (
         "ReadonlySet",
-        &[
-            ("isEmpty", set_map_is_empty),
-            ("size", set_map_size),
-            ("has", set_map_has),
-            ("forEach", set_for_each),
-        ],
+        &[("isEmpty", set_map_is_empty), ("size", set_map_size), ("has", set_map_has), ("forEach", set_for_each)],
     ),
     ("Set", &[("delete", set_map_delete), ("clear", clear), ("add", set_add)]),
     (

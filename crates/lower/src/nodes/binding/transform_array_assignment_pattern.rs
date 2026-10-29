@@ -28,8 +28,11 @@ pub fn transform_array_assignment_pattern(
 
         let mut value_prereqs = Prereqs::new();
         let spread = element.kind() == Kind::SpreadElement;
-        let value =
-            if spread { accessor.rest(&mut value_prereqs, index) } else { accessor.read(&mut value_prereqs, index, false) };
+        let value = if spread {
+            accessor.rest(&mut value_prereqs, index)
+        } else {
+            accessor.read(&mut value_prereqs, index, false)
+        };
         let target = if spread { element.as_spread_element().expression } else { element };
         transform_assignment_pattern_element(state, prereqs, target, value_prereqs, value, None);
     }

@@ -1,6 +1,5 @@
 //! `Shared/constants.ts` (the transformer's part).
 
-
 /// `NODE_MODULES`
 pub const NODE_MODULES: &str = "node_modules";
 

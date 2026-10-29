@@ -19,8 +19,8 @@ use crate::classes::prereqs::reset_temp_ids;
 use crate::classes::transform_state::TransformState;
 use crate::locate::Locator;
 use crate::macros::compile_time::Input;
-use crate::options::Options;
 use crate::nodes::transform_source_file::transform_source_file;
+use crate::options::Options;
 use crate::program::Project;
 use crate::shared::diagnostics::internal_error;
 
@@ -92,7 +92,10 @@ pub fn lower_files(project: &Project, locator: &Locator, options: &Options, file
             None => Lowered {
                 file,
                 ast: None,
-                diagnostics: vec![internal_error(file.as_node(), "not lowered: an earlier file of its checker panicked")],
+                diagnostics: vec![internal_error(
+                    file.as_node(),
+                    "not lowered: an earlier file of its checker panicked",
+                )],
                 spans: Vec::new(),
                 inputs: Vec::new(),
             },

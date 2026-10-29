@@ -34,7 +34,8 @@ pub fn transform_object_binding_pattern(
             let value = if is_spread {
                 create_object_rest(state, prereqs, element, t, parent_id.clone(), &keys)
             } else {
-                let ObjectAccess { key, value } = object_accessor(state, prereqs, parent_id.clone(), t, prop.unwrap_or(name));
+                let ObjectAccess { key, value } =
+                    object_accessor(state, prereqs, parent_id.clone(), t, prop.unwrap_or(name));
                 keys.push(key);
                 value
             };

@@ -28,15 +28,7 @@ fn scan_of(routes: &Routes, files: &[&str]) -> Scan {
 }
 
 fn codes(s: &Scan) -> Vec<(&'static str, String)> {
-    s.diags
-        .iter()
-        .map(|d| {
-            (
-                d.code.as_str(),
-                d.path.strip_prefix("/src").unwrap().display().to_string(),
-            )
-        })
-        .collect()
+    s.diags.iter().map(|d| (d.code.as_str(), d.path.strip_prefix("/src").unwrap().display().to_string())).collect()
 }
 
 #[test]
@@ -48,10 +40,7 @@ fn outermost_route_wins() {
     assert_eq!(at(&r, "a/server/b@client.ts"), "route.nested");
     assert_eq!(at(&r, "a@server/client/b.ts"), "route.nested");
     // The governing key restated: the folder stays a folder, the suffix comes off.
-    assert_eq!(
-        at(&r, "a/server/x/server/b.ts"),
-        "ServerScriptService/server/a/x/server/b"
-    );
+    assert_eq!(at(&r, "a/server/x/server/b.ts"), "ServerScriptService/server/a/x/server/b");
     assert_eq!(at(&r, "a/server/b@server.ts"), "ServerScriptService/server/a/b");
     // `*` only catches what nothing routes; it never conflicts with a route below it.
     assert_eq!(at(&r, "a/client/b.ts"), "ReplicatedStorage/client/a/b");
@@ -63,14 +52,7 @@ fn only_folders_and_at_suffixes_route() {
     let r = standard(false);
     assert_eq!(at(&r, "Server/a.ts"), "ServerScriptService/server/a");
     assert_eq!(at(&r, "SERVER/a.ts"), "route.unrouted");
-    for name in [
-        "a-server.ts",
-        "a_server.ts",
-        "aServer.ts",
-        "a.server.ts",
-        "server.ts",
-        "x/HttpClient.ts",
-    ] {
+    for name in ["a-server.ts", "a_server.ts", "aServer.ts", "a.server.ts", "server.ts", "x/HttpClient.ts"] {
         assert_eq!(at(&r, name), "route.unrouted", "{name}");
     }
 }
@@ -87,16 +69,8 @@ fn names_drop_suffixes_and_extensions() {
     assert_eq!(at(&r, "shared/deck.spec.ts"), "ReplicatedStorage/shared/deck.spec");
     assert_eq!(at(&r, "shared/x.server.json"), "ReplicatedStorage/shared/x.server");
     let m = route(&r, Path::new("server/boot@server.server.luau"), &HashSet::new()).unwrap().unwrap();
-    assert_eq!(
-        (m.instance.join("/"), m.class),
-        ("ServerScriptService/server/boot".into(), Class::Server)
-    );
-    for never in [
-        "shared/x.d.ts",
-        "shared/README.md",
-        "shared/.luaurc",
-        "shared/notes.txt",
-    ] {
+    assert_eq!((m.instance.join("/"), m.class), ("ServerScriptService/server/boot".into(), Class::Server));
+    for never in ["shared/x.d.ts", "shared/README.md", "shared/.luaurc", "shared/notes.txt"] {
         assert_eq!(at(&r, never), "-", "{never}");
     }
 }
@@ -106,21 +80,12 @@ fn init_files_make_the_folder_the_module() {
     let r = standard(true);
     assert_eq!(at(&r, "mods/noise/init.luau"), "ReplicatedStorage/shared/mods/noise");
     assert_eq!(at(&r, "mods/flux/index.ts"), "ReplicatedStorage/shared/mods/flux");
-    assert_eq!(
-        at(&r, "mods/flux/index.luau"),
-        "ReplicatedStorage/shared/mods/flux/index"
-    );
+    assert_eq!(at(&r, "mods/flux/index.luau"), "ReplicatedStorage/shared/mods/flux/index");
     // A routing folder holding the init file is consumed, so the module takes its parent's name.
     let m = route(&r, Path::new("app/server/index.server.ts"), &HashSet::new()).unwrap().unwrap();
+    assert_eq!((m.instance.join("/"), m.class, m.init), ("ServerScriptService/server/app".into(), Class::Server, true));
     assert_eq!(
-        (m.instance.join("/"), m.class, m.init),
-        ("ServerScriptService/server/app".into(), Class::Server, true)
-    );
-    assert_eq!(
-        at(
-            &Routes::new([("server", "ServerScriptService")]).unwrap(),
-            "server/init.luau"
-        ),
+        at(&Routes::new([("server", "ServerScriptService")]).unwrap(), "server/init.luau"),
         "tree.instanceClash"
     );
 
@@ -142,10 +107,7 @@ fn init_files_make_the_folder_the_module() {
     assert_eq!(at("m/core/shared/init.luau"), "ReplicatedStorage/shared/m/core/shared");
     assert_eq!(s.modules[0].types.as_deref(), Some(Path::new("/src/m/index.d.ts")));
     assert_eq!(s.decls, [PathBuf::from("/src/t.d.ts")]);
-    assert_eq!(
-        s.find(Path::new("m/index.d.ts")).map(|m| &m.file),
-        Some(&PathBuf::from("/src/m/init.luau"))
-    );
+    assert_eq!(s.find(Path::new("m/index.d.ts")).map(|m| &m.file), Some(&PathBuf::from("/src/m/init.luau")));
 }
 
 #[test]
@@ -201,10 +163,7 @@ fn require_spelling() {
     assert_eq!(req("f/shared/m/d.ts", "f/shared/m/index.ts").as_deref(), Ok("../m"));
     assert_eq!(req("f/shared/a.ts", "lib/x.ts").as_deref(), Ok("../lib/x"));
     assert_eq!(req("f/client/e.ts", "f/client/g.ts").as_deref(), Ok("./g"));
-    assert_eq!(
-        req("f/client/e.ts", "f/shared/a.ts").as_deref(),
-        Ok("@game/ReplicatedStorage/shared/f/a")
-    );
+    assert_eq!(req("f/client/e.ts", "f/shared/a.ts").as_deref(), Ok("@game/ReplicatedStorage/shared/f/a"));
     assert_eq!(req("f/server/h.ts", "f/client/e.ts"), Err(Code::Boundary));
     // the client route lives in ReplicatedStorage but its key makes it client code, out of shared code's reach
     assert_eq!(req("f/shared/a.ts", "f/client/e.ts"), Err(Code::Boundary));
@@ -216,17 +175,10 @@ fn require_spelling() {
     assert_eq!((m.file.as_path(), line), (Path::new("/src/f/client/e.ts"), Some(12)));
 
     // ReplicatedFirst code stays where it is, so other client code reaches it by @game; Starter copies never.
-    let r = Routes::new([
-        ("ui", "StarterPlayer/StarterPlayerScripts/ui"),
-        ("boot", "ReplicatedFirst/boot"),
-    ])
-    .unwrap();
+    let r = Routes::new([("ui", "StarterPlayer/StarterPlayerScripts/ui"), ("boot", "ReplicatedFirst/boot")]).unwrap();
     let s = scan_of(&r, &["ui/a.ts", "boot/b.ts", "ui/main.client.ts"]);
     assert_eq!(codes(&s), [("tree.starterScript", "ui/main.client.ts".into())]);
     let req = |from: &str, to: &str| require(&r, s.find(Path::new(from)).unwrap(), s.find(Path::new(to)).unwrap());
-    assert_eq!(
-        req("ui/a.ts", "boot/b.ts").as_deref(),
-        Ok("@game/ReplicatedFirst/boot/b")
-    );
+    assert_eq!(req("ui/a.ts", "boot/b.ts").as_deref(), Ok("@game/ReplicatedFirst/boot/b"));
     assert_eq!(req("boot/b.ts", "ui/a.ts"), Err(Code::Boundary));
 }

@@ -160,7 +160,6 @@ impl<'a> TransformState<'a> {
         self.diagnostics.add_diagnostic(diagnostic);
     }
 
-
     /// rbxts-rs: a compiler bug at `node`; the file is not written.
     pub fn internal_error(&mut self, node: P<Node>, message: &str) {
         self.diagnostics.add_diagnostic(internal_error(node, message));

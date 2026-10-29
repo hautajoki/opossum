@@ -50,10 +50,7 @@ pub fn transform_assignment_pattern_element(
             transform_object_assignment_pattern(state, prereqs, target, value);
         }
     } else {
-        if !matches!(
-            target.kind(),
-            Kind::Identifier | Kind::PropertyAccessExpression | Kind::ElementAccessExpression
-        ) {
+        if !matches!(target.kind(), Kind::Identifier | Kind::PropertyAccessExpression | Kind::ElementAccessExpression) {
             // rbxts-rs: roblox-ts asserts here (a crash); an internal error diagnostic keeps the build going
             state.internal_error(
                 target,

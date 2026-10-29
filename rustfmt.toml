@@ -1,2 +1,4 @@
+# `cargo fmt` formats the workspace's crates. `--all` would also reach the vendored path dependencies under vendor/,
+# which keep upstream's formatting.
 max_width = 120
 use_small_heuristics = "Max"

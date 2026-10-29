@@ -5,8 +5,7 @@
 //! accessor between its own transforms.
 
 use luau::{
-    AnyIdentifier, Assignment, AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, UnaryOperator, create,
-    globals,
+    AnyIdentifier, Assignment, AssignmentOperator, BinaryOperator, ElseBody, Expr, Stmt, UnaryOperator, create, globals,
 };
 use tsrs_ast::Node;
 use tsrs_checker::Type;
@@ -116,7 +115,8 @@ impl StepKind {
         match self {
             StepKind::Function { iterator, tuple } => {
                 let call = create::call(iterator.clone(), Vec::new());
-                let value = prereqs.push_to_var(if *tuple && !omitted { create::array(vec![call]) } else { call }, "value");
+                let value =
+                    prereqs.push_to_var(if *tuple && !omitted { create::array(vec![call]) } else { call }, "value");
                 let first = if *tuple && !omitted {
                     create::computed_index(value.clone(), create::number(1.0))
                 } else {
@@ -173,7 +173,10 @@ impl StepKind {
             }
             StepKind::Next { next } => {
                 let result = prereqs.push_to_var(create::call(next.clone(), Vec::new()), "result");
-                IteratorStep { value: create::property(result.clone(), "value"), done: create::property(result, "done") }
+                IteratorStep {
+                    value: create::property(result.clone(), "value"),
+                    done: create::property(result, "done"),
+                }
             }
         }
     }
@@ -234,11 +237,7 @@ impl IteratorAccessor {
         let IteratorStep { value, done } = self.step.step(&mut body, false);
         body.push(create::if_stmt(done, vec![create::break_stmt()], ElseBody::default()));
         body.push(create::assignment(length.clone(), AssignmentOperator::Add, create::number(1.0)));
-        body.push(create::assignment(
-            create::computed_index(rest.clone(), length),
-            AssignmentOperator::Assign,
-            value,
-        ));
+        body.push(create::assignment(create::computed_index(rest.clone(), length), AssignmentOperator::Assign, value));
         rest_prereqs.push(create::while_stmt(create::bool(true), body.statements));
         match &self.done_id {
             Some(done_id) => prereqs.push(create::if_stmt(
@@ -267,10 +266,8 @@ pub struct CollectionAccessor {
 impl CollectionAccessor {
     fn new(prereqs: &mut Prereqs, parent_id: Expr, map: bool, element_count: usize) -> CollectionAccessor {
         let key = prereqs.push_to_var_empty("key");
-        let inner = IteratorAccessor::new(
-            StepKind::Collection { parent_id, key: key.clone(), map, consumed: None },
-            map,
-        );
+        let inner =
+            IteratorAccessor::new(StepKind::Collection { parent_id, key: key.clone(), map, consumed: None }, map);
         CollectionAccessor { inner, key, element_count }
     }
 

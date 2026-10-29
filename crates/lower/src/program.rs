@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 
 use rustc_hash::FxHashMap;
 use tsrs_ast::{Diagnostic, SourceFile, is_json_source_file};
-use tsrs_compiler::{Context, Program, ProgramOptions, new_cached_fs_compiler_host, new_program, sort_and_deduplicate_diagnostics};
+use tsrs_compiler::{
+    Context, Program, ProgramOptions, new_cached_fs_compiler_host, new_program, sort_and_deduplicate_diagnostics,
+};
 use tsrs_core::collections::ordered_map::OrderedMap;
 use tsrs_core::tspath::{self, ComparePathsOptions};
 use tsrs_core::{
@@ -166,7 +168,11 @@ pub fn load(opts: &LoadOptions, cache: Option<&Arc<SourceFileCache>>) -> Result<
     })
 }
 
-fn new_host(root: &str, fs: &Arc<dyn FS>, cache: Option<&Arc<SourceFileCache>>) -> Arc<dyn tsrs_compiler::CompilerHost> {
+fn new_host(
+    root: &str,
+    fs: &Arc<dyn FS>,
+    cache: Option<&Arc<SourceFileCache>>,
+) -> Arc<dyn tsrs_compiler::CompilerHost> {
     let host = new_cached_fs_compiler_host(root, Arc::clone(fs), &bundled::default_lib_path(), None, None, None);
     match cache {
         Some(cache) => Arc::new(CachingHost { inner: host, cache: Arc::clone(cache) }),

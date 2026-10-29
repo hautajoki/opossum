@@ -144,7 +144,13 @@ fn find<F: Copy>(table: &[(&'static str, F)], name: &str) -> Option<(&'static st
 }
 
 /// The macro of a macro-only class method opossum has no lowering for: reported at the call.
-fn missing_property_call(state: &mut TransformState<'_>, _: &mut Prereqs, node: P<Node>, _: Expr, _: Vec<Expr>) -> Expr {
+fn missing_property_call(
+    state: &mut TransformState<'_>,
+    _: &mut Prereqs,
+    node: P<Node>,
+    _: Expr,
+    _: Vec<Expr>,
+) -> Expr {
     let callee = node.expression().expect("a call has a callee");
     let t = state.get_type(callee);
     let name = match get_first_defined_symbol(state, t) {
@@ -167,9 +173,9 @@ impl MacroManager {
                 symbols.insert(name, checker.skip_alias(symbol));
             }
         }
-        let lua_tuple_alias = symbols.get(symbol_names::LUA_TUPLE).and_then(|s| {
-            s.declarations().iter().copied().find(|d| d.kind() == tsrs_ast::Kind::TypeAliasDeclaration)
-        });
+        let lua_tuple_alias = symbols
+            .get(symbol_names::LUA_TUPLE)
+            .and_then(|s| s.declarations().iter().copied().find(|d| d.kind() == tsrs_ast::Kind::TypeAliasDeclaration));
         if let Some(declaration) = lua_tuple_alias {
             let t = checker.get_type_at_location(declaration);
             if let Some(nominal) = checker.get_property_of_type_exported(t, NOMINAL_LUA_TUPLE_NAME) {
@@ -220,7 +226,12 @@ impl MacroManager {
 
     /// The global interface a member symbol belongs to, by name: `None` for a member of any other interface.
     /// Augmented interface members keep their original, unmerged parent symbol, so the parent is merged first.
-    fn global_interface_of(&self, checker: &mut Checker, member: P<Symbol>, names: &[&'static str]) -> Option<&'static str> {
+    fn global_interface_of(
+        &self,
+        checker: &mut Checker,
+        member: P<Symbol>,
+        names: &[&'static str],
+    ) -> Option<&'static str> {
         let parent = checker.get_merged_symbol_exported(member.parent()?);
         let name = names.iter().copied().find(|&n| n == parent.name())?;
         (self.global(checker, name, SymbolFlags::Interface) == Some(parent)).then_some(name)
@@ -236,7 +247,11 @@ impl MacroManager {
 
     /// `getPropertyCallMacro`: the macro of a method symbol. A method of a macro-only class (`Array`, `Map`, …) with
     /// no lowering gets a macro that reports `macro.missing` at the call.
-    pub fn get_property_call_macro(&self, checker: &mut Checker, symbol: P<Symbol>) -> Option<Macro<PropertyCallMacro>> {
+    pub fn get_property_call_macro(
+        &self,
+        checker: &mut Checker,
+        symbol: P<Symbol>,
+    ) -> Option<Macro<PropertyCallMacro>> {
         if let Some(&found) = self.property_calls.borrow().get(&symbol) {
             return found;
         }

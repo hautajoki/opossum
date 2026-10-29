@@ -216,7 +216,11 @@ fn transform_switch_middle_default(
         tests.push(Stmt::If(Box::new(first)));
         if can_fall_through_to {
             // a case that fell into the default skips the tests (`_case` stays nil)
-            tests = vec![create::if_stmt(create::unary(UnaryOperator::Not, fall_through_flag.clone()), tests, ElseBody::default())];
+            tests = vec![create::if_stmt(
+                create::unary(UnaryOperator::Not, fall_through_flag.clone()),
+                tests,
+                ElseBody::default(),
+            )];
         }
         statements.extend(tests);
     }
@@ -244,13 +248,8 @@ fn transform_switch_middle_default(
         if can_fall_through_to {
             condition = create::binary(fall_through_flag.clone(), BinaryOperator::Or, condition);
         }
-        let (clause_statements, can_fall_through_from) = transform_case_clause_body(
-            state,
-            case_clause_node,
-            condition,
-            &fall_through_flag_id,
-            i + 1 < later.len(),
-        );
+        let (clause_statements, can_fall_through_from) =
+            transform_case_clause_body(state, case_clause_node, condition, &fall_through_flag_id, i + 1 < later.len());
         statements.extend(clause_statements);
         can_fall_through_to = can_fall_through_from;
         is_fall_through_flag_needed |= can_fall_through_from && i + 1 < later.len();

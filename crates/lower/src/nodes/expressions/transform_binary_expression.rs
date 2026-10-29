@@ -159,10 +159,8 @@ fn transform_optimized_array_assignment_pattern(
         OptimizedRhs::Single(rhs) => {
             if !effects_commute(&get_effects(&rhs), &target_effects) {
                 let captures: Vec<_> = writes.iter().map(|_| temp_id("binding")).collect();
-                prereqs.push(create::locals(
-                    captures.iter().cloned().map(AnyIdentifier::Temporary).collect(),
-                    vec![rhs],
-                ));
+                prereqs
+                    .push(create::locals(captures.iter().cloned().map(AnyIdentifier::Temporary).collect(), vec![rhs]));
                 captures.into_iter().map(Expr::TemporaryIdentifier).collect()
             } else {
                 vec![rhs]

@@ -159,10 +159,7 @@ impl Routes {
             }
             let target: Vec<String> = target.split('/').map(str::to_owned).collect();
             if target.iter().any(|s| s.is_empty()) {
-                return Err(format!(
-                    "route `{key}`: target `{}` has an empty segment",
-                    target.join("/")
-                ));
+                return Err(format!("route `{key}`: target `{}` has an empty segment", target.join("/")));
             }
             if routes.list.iter().any(|r| key_matches(&r.key, key)) {
                 return Err(format!("route key `{key}` is declared twice"));
@@ -171,11 +168,7 @@ impl Routes {
                 routes.fallback = Some(routes.list.len());
             }
             let realm = route_realm(key, &target[0]);
-            routes.list.push(Route {
-                key: key.to_owned(),
-                target,
-                realm,
-            });
+            routes.list.push(Route { key: key.to_owned(), target, realm });
         }
         Ok(routes)
     }
@@ -202,12 +195,7 @@ impl Routes {
 }
 
 enum FileType<'a> {
-    Source {
-        kind: Kind,
-        stem: &'a str,
-        class: Class,
-        init: bool,
-    },
+    Source { kind: Kind, stem: &'a str, class: Class, init: bool },
     Dts,
 }
 
@@ -240,21 +228,11 @@ fn file_type(name: &str) -> Option<FileType<'_>> {
         Kind::Ts | Kind::Tsx => stem == "init" || stem == "index",
         Kind::Json => false,
     };
-    Some(FileType::Source {
-        kind,
-        stem,
-        class,
-        init,
-    })
+    Some(FileType::Source { kind, stem, class, init })
 }
 
 fn diag(code: Code, path: &Path, message: String) -> Diag {
-    Diag {
-        code,
-        path: path.to_path_buf(),
-        other: None,
-        message,
-    }
+    Diag { code, path: path.to_path_buf(), other: None, message }
 }
 
 /// Routes one file, given its path relative to the source root and the folders (relative too) that are modules,
@@ -272,24 +250,14 @@ pub fn route(routes: &Routes, rel: &Path, module_dirs: &HashSet<PathBuf>) -> Res
                 None => return Err(diag(Code::PortableName, rel, "the path is not valid UTF-8".into())),
             },
             _ => {
-                return Err(diag(
-                    Code::PortableName,
-                    rel,
-                    "the path must be relative to the source root".into(),
-                ));
+                return Err(diag(Code::PortableName, rel, "the path must be relative to the source root".into()));
             }
         }
     }
     let Some((&file, dirs)) = parts.split_last() else {
         return Ok(None);
     };
-    let Some(FileType::Source {
-        kind,
-        stem,
-        class,
-        init,
-    }) = file_type(file)
-    else {
+    let Some(FileType::Source { kind, stem, class, init }) = file_type(file) else {
         return Ok(None);
     };
 
@@ -339,11 +307,7 @@ pub fn route(routes: &Routes, rel: &Path, module_dirs: &HashSet<PathBuf>) -> Res
         if !kept.is_empty() {
             names.push(kept.to_owned());
         } else if is_file {
-            return Err(diag(
-                Code::PortableName,
-                rel,
-                format!("`{file}` leaves an empty instance name"),
-            ));
+            return Err(diag(Code::PortableName, rel, format!("`{file}` leaves an empty instance name")));
         }
     }
 
@@ -362,10 +326,7 @@ pub fn route(routes: &Routes, rel: &Path, module_dirs: &HashSet<PathBuf>) -> Res
             return Err(diag(
                 Code::Unrouted,
                 rel,
-                format!(
-                    "no route matches; put it under a routing folder ({}) or add an @key suffix",
-                    keys.join(", ")
-                ),
+                format!("no route matches; put it under a routing folder ({}) or add an @key suffix", keys.join(", ")),
             ));
         }
     };
@@ -374,10 +335,7 @@ pub fn route(routes: &Routes, rel: &Path, module_dirs: &HashSet<PathBuf>) -> Res
         return Err(diag(
             Code::InstanceClash,
             rel,
-            format!(
-                "an init module at the root of route {} would replace the service {}",
-                r.key, r.target[0]
-            ),
+            format!("an init module at the root of route {} would replace the service {}", r.key, r.target[0]),
         ));
     }
     let mut instance = r.target.clone();

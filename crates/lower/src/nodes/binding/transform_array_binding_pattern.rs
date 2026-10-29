@@ -43,7 +43,8 @@ pub fn transform_array_binding_pattern(
         let name = binding_element.name().expect("a binding element has a name");
 
         let is_spread_element = binding_element.dot_dot_dot_token().is_some();
-        let value = if is_spread_element { accessor.rest(prereqs, index) } else { accessor.read(prereqs, index, false) };
+        let value =
+            if is_spread_element { accessor.rest(prereqs, index) } else { accessor.read(prereqs, index, false) };
 
         if name.kind() == Kind::Identifier {
             let id = transform_variable(state, prereqs, name, Some(value));

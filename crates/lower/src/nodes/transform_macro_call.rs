@@ -95,7 +95,9 @@ pub fn transform_macro_call(
         let args: Vec<Expr> = references.filter(|arg| !arg.is_none()).collect();
         match r#macro {
             MacroKind::Call(_) => transform(state, expansion_prereqs, node, receiver, args),
-            MacroKind::PropertyCall(_) => wrap_comments(name, transform, state, expansion_prereqs, node, receiver, args),
+            MacroKind::PropertyCall(_) => {
+                wrap_comments(name, transform, state, expansion_prereqs, node, receiver, args)
+            }
         }
     });
     wrap_return_if_lua_tuple(state, node, result)

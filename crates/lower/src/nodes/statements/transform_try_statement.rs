@@ -8,8 +8,8 @@ use tsrs_core::P;
 use crate::classes::prereqs::{as_any_identifier, temp_id};
 use crate::classes::transform_state::{TransformState, TryUse, TryUses};
 use crate::nodes::binding::transform_binding_name::transform_binding_name;
-use crate::nodes::transform_statement_list::transform_statement_list;
 use crate::nodes::statements::transform_continue_statement::create_continue;
+use crate::nodes::transform_statement_list::transform_statement_list;
 use crate::util::is_blocked_by_try_statement::{is_break_blocked_by_try_statement, is_return_blocked_by_try_statement};
 
 fn transform_catch_clause(state: &mut TransformState<'_>, node: P<Node>) -> Expr {

@@ -119,8 +119,8 @@ pub fn create_string_from_literal(node: P<Node>) -> String {
 /// backslash as itself.
 pub fn create_string_from_value(value: &str) -> luau::Expr {
     let long_bracket = value.contains('\n') || (value.contains('"') && value.contains('\''));
-    let renders_as_itself = !value.contains(['\r', '\0'])
-        && if long_bracket { !value.starts_with('\n') } else { !value.contains('\\') };
+    let renders_as_itself =
+        !value.contains(['\r', '\0']) && if long_bracket { !value.starts_with('\n') } else { !value.contains('\\') };
     luau::create::string(if renders_as_itself { value.to_owned() } else { escape_text(value) })
 }
 

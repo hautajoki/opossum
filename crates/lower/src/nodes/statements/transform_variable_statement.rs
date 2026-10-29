@@ -6,11 +6,11 @@ use tsrs_core::P;
 
 use crate::classes::prereqs::{Prereqs, as_any_identifier, temp_id};
 use crate::classes::transform_state::TransformState;
-use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::binding::transform_array_binding_pattern::{
     is_omitted_binding_element, transform_array_binding_pattern,
 };
 use crate::nodes::binding::transform_object_binding_pattern::transform_object_binding_pattern;
+use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::nodes::expressions::transform_identifier::transform_identifier_defined;
 use crate::nodes::transform_initializer::transform_initializer;
 use crate::shared::diagnostics::errors;
