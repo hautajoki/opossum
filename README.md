@@ -175,7 +175,8 @@ opossum migrate          # convert a Rojo, tessera or hexagon project once
 ## Speed
 
 The whole project is one in-memory graph, and Studio patches, the `.rbxl`, the luau-lsp sourcemap and `where` are views
-of it. On a 1,107-module game, a one-file save is republished in 0.11 to 0.16 ms and reaches Studio in 50 to 250 ms,
+of it. On a 1,107-module project, a full build, 1,107 modules type-checked, compiled and written into an
+`.rbxl`, takes 0.27 s. A one-file save is republished in 0.11 to 0.16 ms and reaches Studio in 50 to 250 ms,
 almost all of that the macOS file watcher. An `exec` sent right after a save runs the saved code, about 65 ms end to
 end. `test --local` runs 1,107 local cases in 5.5 s, where hexagon took 9.9 s. `plan` over 1,223 asset files
 takes 0.07 s, and a deploy with nothing to upload, against the Open Cloud mock below, 1.2 s.
