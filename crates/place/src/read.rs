@@ -40,6 +40,8 @@ pub struct Place {
     assets: HashMap<(Ref, Ustr), AssetSpec>,
     /// The holders of a map `$asset` the last [`Place::resolve_assets`] found no upload or read for.
     waiting: HashSet<Ref>,
+    /// The MeshParts whose `Size` [`Place::resolve_assets`] set, having none of their own.
+    sized: HashSet<Ref>,
 }
 
 /// A Ref property as written in a model file or a properties file: a path from its holder.
@@ -76,6 +78,7 @@ impl Place {
             refs: Vec::new(),
             assets: HashMap::new(),
             waiting: HashSet::new(),
+            sized: HashSet::new(),
         }
     }
 
@@ -437,9 +440,9 @@ impl Place {
     }
 
     /// Sets every `$asset` property from `resolver` (a glb part's mesh also sets its MeshPart's `InitialSize`, the
-    /// size that mesh was made at), and reports the references that do not resolve and every literal
-    /// `rbxassetid://` repeating an id the lock holds. Runs before each tree is made from the place: one resolver
-    /// gives one dom however often it runs.
+    /// size that mesh was made at, and its `Size` too when the template sets none, as Roblox's import does), and
+    /// reports the references that do not resolve and every literal `rbxassetid://` repeating an id the lock holds.
+    /// Runs before each tree is made from the place: one resolver gives one dom however often it runs.
     pub fn resolve_assets(&mut self, resolver: &Resolver) -> Vec<Diag> {
         let mut diags = Vec::new();
         let mut writes = Vec::with_capacity(self.assets.len());
@@ -501,7 +504,12 @@ impl Place {
             if let Some([x, y, z]) = size
                 && props::is_a(&class, "MeshPart")
             {
-                inst.properties.insert(ustr("InitialSize"), Variant::Vector3(Vector3::new(x, y, z)));
+                let size = Variant::Vector3(Vector3::new(x, y, z));
+                if !inst.properties.contains_key(&ustr("Size")) || self.sized.contains(&holder) {
+                    inst.properties.insert(ustr("Size"), size.clone());
+                    self.sized.insert(holder);
+                }
+                inst.properties.insert(ustr("InitialSize"), size);
             }
         }
         if !resolver.by_id.is_empty() {
@@ -598,6 +606,7 @@ impl Place {
         for inst in self.dom.descendants_of(r) {
             self.files.remove(&inst.referent());
             self.entries.remove(&inst.referent());
+            self.sized.remove(&inst.referent());
         }
         self.dom.destroy(r);
     }

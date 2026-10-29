@@ -390,6 +390,7 @@ export = ids
                        "properties": {{ "ColorMap": {lid}, "MetalnessMap": {lid} }} }}
                 ] }},
                 {{ "name": "Lids", "className": "MeshPart", "properties": {{ "MeshContent": {lids} }} }},
+                {{ "name": "Sized", "className": "MeshPart", "properties": {{ "MeshContent": {lid}, "Size": [1, 1, 1] }} }},
                 {{ "name": "Fresh", "className": "MeshPart",
                    "properties": {{ "MeshContent": {{ "$asset": "art/fresh.glb", "part": "A" }} }} }},
                 {{ "name": "Stone", "className": "Decal", "properties": {{ "Texture": {{ "$asset": "art/stone.png" }} }} }},
@@ -416,10 +417,14 @@ export = ids
             place.dom.get_by_ref(at).unwrap().properties.get(&place::ustr(name)).cloned()
         };
         let uri = |uri: &str| Some(place::Variant::Content(Content::from_uri(uri)));
-        // a glb part's mesh, with the size it was made at, and its maps
+        // a glb part's mesh, with the size it was made at, also its Size unless the template sets one, and its maps
+        let size = |x, y, z| Some(place::Variant::Vector3(Vector3::new(x, y, z)));
         assert_eq!(prop(&place, "Lid", "MeshContent"), uri("rbxassetid://11"));
         assert_eq!(prop(&place, "Lid", "MeshId"), None);
-        assert_eq!(prop(&place, "Lid", "InitialSize"), Some(place::Variant::Vector3(Vector3::new(0.4272, 8.0, 1e-7))));
+        assert_eq!(prop(&place, "Lid", "InitialSize"), size(0.4272, 8.0, 1e-7));
+        assert_eq!(prop(&place, "Lid", "Size"), size(0.4272, 8.0, 1e-7));
+        assert_eq!(prop(&place, "Sized", "InitialSize"), size(0.4272, 8.0, 1e-7));
+        assert_eq!(prop(&place, "Sized", "Size"), size(1.0, 1.0, 1.0));
         assert_eq!(prop(&place, "Lid/SA", "ColorMapContent"), uri("rbxassetid://12"));
         // a channel or part the read doesn't have, and an unread glb: drawn empty
         assert_eq!(prop(&place, "Lid/SA", "MetalnessMapContent"), Some(place::Variant::Content(Content::none())));
@@ -475,9 +480,15 @@ export = ids
             roughness: None,
             metalness: None,
         };
+        // and a Size the read set follows a new one, where the template's stays
+        let lid = place::Part { mesh: 13, size: [2.0, 2.0, 2.0], ..fresh.clone() };
         resolver.by_file.insert("art/fresh.glb".into(), place::Value::Parts([("A".to_owned(), fresh)].into()));
+        resolver.by_file.insert("art/crate.glb".into(), place::Value::Parts([("Lid".to_owned(), lid)].into()));
         place.resolve_assets(&resolver);
         assert_eq!(prop(&place, "Fresh", "MeshContent"), uri("rbxassetid://31"));
+        assert_eq!(prop(&place, "Fresh", "Size"), size(1.0, 2.0, 3.0));
+        assert_eq!(prop(&place, "Lid", "Size"), size(2.0, 2.0, 2.0));
+        assert_eq!(prop(&place, "Sized", "Size"), size(1.0, 1.0, 1.0));
     }
 
     /// Only a glb's upload is unread without `parts`: an image with an id is complete.
