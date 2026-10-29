@@ -557,9 +557,11 @@ pub fn save(lock: &mut Lock, root: &Path, _guard: &RemoteGuard) -> Result<Option
     let tmp = root.join(format!(".{FILE}.tmp-{}", std::process::id()));
     let mut file = fs::File::create(&tmp).map_err(io)?;
     file.write_all(text.as_bytes()).and_then(|_| file.sync_all()).map_err(io)?;
+    // the stamp of what this process wrote, taken before the rename (which keeps it): a stat after it could take the
+    // stamp of a lock git wrote in between, and the next save would overwrite that lock
+    let meta = file.metadata().map_err(io)?;
     fs::rename(&tmp, &path).map_err(io)?;
     fs::File::open(root).and_then(|d| d.sync_all()).map_err(io)?;
-    let meta = fs::metadata(&path).map_err(io)?;
     let created = lock.disk.is_none();
     lock.disk = Some(Disk { text, len: meta.len(), mtime: meta.modified().ok() });
     if !created {
