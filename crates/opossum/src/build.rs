@@ -70,6 +70,16 @@ impl Stats {
     }
 }
 
+/// What rendering the id modules again changed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Changed {
+    Nothing,
+    /// Their sources or diagnostics (a new id): the tree takes the sources.
+    Sources,
+    /// Their types (a file came or went): the program loads again, and the tree changes shape.
+    Types,
+}
+
 pub struct Session {
     pub cfg: Config,
     /// The environment whose ids `opossum/resources` holds; None without `[environments]`.
@@ -215,11 +225,9 @@ impl Session {
         Ok(session)
     }
 
-    /// Renders the virtual modules again from the lock and the asset roots as they are now. Returns None when nothing
-    /// changed, Some(false) when only their sources or diagnostics did (a new id: the tree takes the sources),
-    /// Some(true) when their types did (a file came or went: the program loads again, and the tree changes shape).
-    /// Fails only when the lock cannot be read.
-    pub fn render_modules(&mut self) -> Result<Option<bool>, String> {
+    /// Renders the virtual modules again from the lock and the asset roots as they are now, saying what changed. Fails
+    /// only when the lock cannot be read.
+    pub fn render_modules(&mut self) -> Result<Changed, String> {
         let root = &self.cfg.root;
         let environment = self.cfg.build_environment(self.environment.as_deref())?;
         let (lock, mut diags) = lock::read(root)?;
@@ -239,9 +247,11 @@ impl Session {
         let types = |m: &[Module]| m.iter().map(|m| (m.name.clone(), m.types.clone())).collect::<Vec<_>>();
         let sources = |m: &[Module]| m.iter().map(|m| m.luau.clone()).collect::<Vec<_>>();
         let changed = if types(&modules) != types(&self.modules) {
-            Some(true)
+            Changed::Types
+        } else if sources(&modules) != sources(&self.modules) || diags != self.module_diags {
+            Changed::Sources
         } else {
-            (sources(&modules) != sources(&self.modules) || diags != self.module_diags).then_some(false)
+            Changed::Nothing
         };
         self.modules = modules;
         self.module_diags = diags;
@@ -775,11 +785,11 @@ mod tests {
         assert!(a.contains("require(\"@game/ReplicatedStorage/rbxts/opossum/sfx\")"), "{a}");
 
         write("art/sfx/boom.ogg", "new bytes");
-        assert_eq!(session.render_modules().unwrap(), None);
+        assert_eq!(session.render_modules().unwrap(), Changed::Nothing);
         write("opossum.lock", &lock(6));
-        assert_eq!(session.render_modules().unwrap(), Some(false));
+        assert_eq!(session.render_modules().unwrap(), Changed::Sources);
         write("art/sfx/bang.ogg", "ogg");
-        assert_eq!(session.render_modules().unwrap(), Some(true));
+        assert_eq!(session.render_modules().unwrap(), Changed::Types);
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

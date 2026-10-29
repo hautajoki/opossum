@@ -40,7 +40,7 @@ use rustc_hash::FxHashMap;
 use serde_json::{Value, json};
 use sync::{LogKind, Realm, Report};
 
-use crate::build::{LineMap, MODULES, RUNTIME, Session, script_class, script_kind, slashed};
+use crate::build::{Changed, LineMap, MODULES, RUNTIME, Session, script_class, script_kind, slashed};
 use crate::config::{self, Config};
 use crate::diag::Severity;
 use crate::event::{Event, Out};
@@ -347,9 +347,9 @@ fn serve(
         let mut modules = false;
         if ids {
             match session.render_modules() {
-                Ok(None) => {}
-                Ok(Some(types)) => {
-                    rescan |= types;
+                Ok(Changed::Nothing) => {}
+                Ok(changed) => {
+                    rescan |= changed == Changed::Types;
                     modules = true;
                     let cfg = &session.cfg;
                     if let Err(message) = editor::write(&cfg.root, &cfg.ts, &session.modules) {

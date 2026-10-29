@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use cloud::Client;
 use serde_json::json;
 
-use crate::build::Session;
+use crate::build::{Changed, Session};
 use crate::cloud_exec::{self, Failure, Placed};
 use crate::config::{self, Config};
 use crate::guard::{Cache, RemoteGuard};
@@ -211,7 +211,7 @@ pub fn deploy(
 /// a resource's first id (which changes its type) loads the program again.
 fn rebuild(session: &mut Session) -> Result<(Vec<u8>, place::PackStats), Failure> {
     let fail = |error| Failure { code: "build", error, ran: true };
-    if session.render_modules().map_err(fail)? == Some(true) {
+    if session.render_modules().map_err(fail)? == Changed::Types {
         editor::write(&session.cfg.root, &session.cfg.ts, &session.modules).map_err(fail)?;
         session.update(&[], true, &[]).map_err(fail)?;
     }
