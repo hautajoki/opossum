@@ -3,10 +3,11 @@
 //! (`place::plan_migration`). Tessera's `tessera.config.ts` becomes opossum.toml's tables and
 //! `tessera.lock` becomes opossum.lock records with no upload and no create: an id whose file is as tessera uploaded
 //! it is current, one whose file changed since is marked changed, and a record with no file goes. Imports of tessera's
-//! generated modules and of hexagon become `opossum/<set>`, `opossum/resources` and `opossum/test`. What opossum
-//! cannot see into (scripts, package.json, other tools' configs) is named in notes for the user to change.
+//! generated modules and of hexagon become `opossum/<set>`, `opossum/resources` and `opossum/test`, and
+//! `place/texture-packs.json`'s packs become opossum.lock's `packs.` lines. What opossum cannot see into (scripts,
+//! package.json, other tools' configs) is named in notes for the user to change.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,8 @@ use crate::tessera::{self, Lit, Value};
 const CONFIG: &str = "tessera.config.ts";
 const LOCK: &str = "tessera.lock";
 const HEXAGON: &str = "@hautajoki/hexagon";
+/// Where the texture packs Studio baked were kept before opossum.lock: pack key -> `rbxassetid://<pack>`.
+const PACKS: &str = "place/texture-packs.json";
 const TSCONFIG: &str = "tsconfig.json";
 /// What the project's tsconfig.json extends, and all it holds once migrated.
 const EXTENDS: &str = "./.opossum/tsconfig.json";
@@ -48,7 +51,7 @@ struct Plan {
     toml: Option<String>,
     /// tsconfig.json's new text, when it does not only extend opossum's yet.
     tsconfig: Option<String>,
-    /// The lock with tessera's records in it, the line saying what came over, and whether its text changes.
+    /// The lock with tessera's records and the json's packs in it, what came over, and whether its text changes.
     lock: Option<(Lock, String, bool)>,
     /// Source files with their imports rewritten, and how many imports that is.
     sources: Vec<(PathBuf, String)>,
@@ -95,7 +98,7 @@ pub fn run(file: &Path) -> Result<bool, String> {
         did = true;
         let guard = RemoteGuard::acquire(&Cache::default_dir()?)?;
         let note = lock::save(&mut lock, root, &guard).map_err(|d| d.human(root))?;
-        println!("{} {} {line}", if changed { "wrote" } else { "unchanged:" }, lock::FILE);
+        println!("{} {} ({line})", if changed { "wrote" } else { "unchanged:" }, lock::FILE);
         if let Some(note) = note {
             println!("{note}");
         }
@@ -241,7 +244,61 @@ fn plan(file: &Path) -> Result<Plan, String> {
             cfg.as_ref().map(|c| c.assets.iter().map(|s| s.root.clone()).collect()).unwrap_or_default();
         leftovers(&mut plan, &generated, &skip);
     }
+    fold_packs(&mut plan)?;
     Ok(plan)
+}
+
+/// `place/texture-packs.json`'s packs into the lock (the one tessera's records went into, when there is one), the
+/// json removed after it. A key the lock already has keeps the higher id, as a merge of two `packs.` lines does.
+fn fold_packs(plan: &mut Plan) -> Result<(), String> {
+    let root = plan.root.clone();
+    let path = root.join(PACKS);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    let refuse = |message: String| Diag::new("migrate.packs", Severity::Error, Some(&path), message);
+    let packs: BTreeMap<String, String> = match serde_json::from_str(&text) {
+        Ok(packs) => packs,
+        Err(e) => {
+            plan.diags.push(refuse(e.to_string()));
+            return Ok(());
+        }
+    };
+    let mut ids = Vec::with_capacity(packs.len());
+    for (key, uri) in &packs {
+        let id = uri.strip_prefix("rbxassetid://").and_then(|n| n.parse::<u64>().ok()).filter(|&n| n > 0);
+        match id {
+            Some(id) if key.split('|').count() == 5 => ids.push((key, id)),
+            _ => plan.diags.push(refuse(format!(
+                "`{key}`: `{uri}` is not an rbxassetid:// pack of a <class>|<color>|<normal>|<roughness>|<metalness> key"
+            ))),
+        }
+    }
+    if plan.diags.iter().any(Diag::is_error) {
+        return Ok(());
+    }
+    let (mut lock, line, changed) = match plan.lock.take() {
+        Some(taken) => taken,
+        None => {
+            let (lock, problems) = lock::read(&root)?;
+            plan.diags.extend(problems.into_iter().filter(Diag::is_error));
+            plan.diags.extend(lock::recovered(&root));
+            (lock, String::new(), false)
+        }
+    };
+    let before = lock::render(&lock);
+    for (key, id) in ids {
+        let old = lock.packs.entry(key.clone()).or_default();
+        *old = id.max(*old);
+    }
+    let changed = changed || lock::render(&lock) != before;
+    let packs = format!("{} packs from {PACKS}", count(packs.len()));
+    let line = if line.is_empty() { packs } else { format!("{line}; {packs}") };
+    plan.lock = Some((lock, line, changed));
+    plan.removals.push(path);
+    Ok(())
 }
 
 /// What a `tessera.config.ts` came to.
@@ -847,7 +904,7 @@ fn import_lock(
         if fresh { current += 1 } else { changed += 1 }
     }
     let mut line = format!(
-        "({} assets: {} current, {} changed since upload, {} orphans dropped",
+        "{} assets: {} current, {} changed since upload, {} orphans dropped",
         count(current + changed),
         count(current),
         count(changed),
@@ -856,7 +913,6 @@ fn import_lock(
     if kept > 0 {
         let _ = write!(line, ", {} already there", count(kept));
     }
-    line.push(')');
     let changed_text = lock::render(&lock) != before || !root.join(lock::FILE).exists();
     Some((lock, line, changed_text))
 }
@@ -1261,7 +1317,7 @@ mod tests {
             "0".repeat(32)
         );
         assert_eq!(lock::render(lock), expected);
-        assert_eq!(line, "(2 assets: 1 current, 1 changed since upload, 1 orphans dropped)");
+        assert_eq!(line, "2 assets: 1 current, 1 changed since upload, 1 orphans dropped");
         assert!(changed);
         assert_eq!(plan.removals, [root.join(LOCK)]);
 
@@ -1327,7 +1383,28 @@ mod tests {
                 ("art/c.png", Some(13), Some(&*c))
             ]
         );
-        assert_eq!(line, "(3 assets: 2 current, 1 changed since upload, 0 orphans dropped, 1 already there)");
+        assert_eq!(line, "3 assets: 2 current, 1 changed since upload, 0 orphans dropped, 1 already there");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// With no tessera in the project the packs still need a lock to go into, and nothing of tessera's is touched;
+    /// a pack the lock already holds keeps the higher id.
+    #[test]
+    fn texture_packs_json_folds_into_the_lock_and_goes() {
+        let (sa, mv) = ("SurfaceAppearance|rbxassetid://1|rbxassetid://2||", "MaterialVariant|rbxassetid://4|||");
+        let json = format!(r#"{{ "{sa}": "rbxassetid://30", "{mv}": "rbxassetid://5" }}"#);
+        let ours = format!("version = 1\npacks.\"{mv}\" = 9\n");
+        let files: [(&str, &[u8]); 3] =
+            [("opossum.toml", TOML.as_bytes()), ("opossum.lock", ours.as_bytes()), (PACKS, json.as_bytes())];
+        let root = project("packs", &files);
+        let plan = plan(&root.join(config::FILE)).unwrap();
+        assert_eq!(codes(&plan), Vec::<&str>::new(), "{:?}", plan.diags);
+        let (lock, line, changed) = plan.lock.as_ref().unwrap();
+        assert_eq!(lock.packs, BTreeMap::from([(sa.to_owned(), 30), (mv.to_owned(), 9)]));
+        assert_eq!(line, "2 packs from place/texture-packs.json");
+        assert!(changed);
+        assert_eq!(plan.removals, [root.join(PACKS)]);
+        assert!(plan.generated.is_none() && plan.sources.is_empty());
         let _ = fs::remove_dir_all(root);
     }
 

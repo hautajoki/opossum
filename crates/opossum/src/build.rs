@@ -88,6 +88,8 @@ pub struct Session {
     pub modules: Vec<Module>,
     /// What rendering them reported: asset discovery, the lock, resources not provisioned, the O2 gate.
     module_diags: Vec<Diag>,
+    /// The lock's texture packs, read with the modules: every place write sets them.
+    pub packs: place::TexturePacks,
     /// The asset files discovery found, relative to the root: an event on one that is still there changed its
     /// content, never the modules.
     pub asset_files: FxHashSet<String>,
@@ -196,6 +198,7 @@ impl Session {
             environment,
             modules: Vec::new(),
             module_diags: Vec::new(),
+            packs: place::TexturePacks::new(),
             asset_files: FxHashSet::default(),
             exclude,
             native,
@@ -225,8 +228,8 @@ impl Session {
         Ok(session)
     }
 
-    /// Renders the virtual modules again from the lock and the asset roots as they are now, saying what changed. Fails
-    /// only when the lock cannot be read.
+    /// Renders the virtual modules again from the lock and the asset roots as they are now, and takes the lock's packs,
+    /// saying what changed (packs never change the modules or the tree). Fails only when the lock cannot be read.
     pub fn render_modules(&mut self) -> Result<Changed, String> {
         let root = &self.cfg.root;
         let environment = self.cfg.build_environment(self.environment.as_deref())?;
@@ -255,6 +258,7 @@ impl Session {
         };
         self.modules = modules;
         self.module_diags = diags;
+        self.packs = lock.packs;
         Ok(changed)
     }
 

@@ -20,7 +20,7 @@ pub use tree::{
     Id, NESTED, NONE, Node, Origin, PACKAGES, PackageFile, ROOT, ScriptKind, Source, Tree, package_tree_root,
 };
 pub use value::{db, descriptor};
-pub use write::{PackStats, TexturePacks, read_texture_packs, write_rbxl, write_rbxm};
+pub use write::{PackStats, TexturePacks, write_rbxl, write_rbxm};
 
 /// One part of an uploaded model as Roblox's import made it, read back once and kept in `opossum.lock`: the MeshPart's
 /// mesh, its `InitialSize`, and its SurfaceAppearance's maps (a channel the import gave no id is `None`).

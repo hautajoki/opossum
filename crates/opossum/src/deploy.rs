@@ -223,8 +223,8 @@ fn rebuild(session: &mut Session) -> Result<(Vec<u8>, place::PackStats), Failure
 }
 
 /// `packs: 168 applied, 3 without a pack yet (SurfaceAppearance 2, MaterialVariant 1)`: the only sign that a map
-/// uploaded again lost its texture packs.
-fn packed(packs: &place::PackStats) -> String {
+/// uploaded again lost its texture packs. `build` prints it too.
+pub fn packed(packs: &place::PackStats) -> String {
     let mut line = format!("packs: {} applied", count(packs.packed));
     if !packs.missing.is_empty() {
         let missing: Vec<String> = packs.missing.iter().map(|(class, n)| format!("{class} {n}")).collect();

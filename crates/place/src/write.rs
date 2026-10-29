@@ -1,28 +1,26 @@
 //! `.rbxl`/`.rbxm` output through rbx_binary, with texture packs written into the place.
 //!
-//! When Studio publishes a place it bakes each SurfaceAppearance's, MaterialVariant's and PBR Decal's maps into
-//! one texture pack asset (TexturePackContent), and a live server draws PBR only from that pack. A place
-//! published through Open Cloud has none, so the packs Studio baked are kept in `place/texture-packs.json`,
-//! keyed `Class|map uri|map uri|...` (the class's maps in order, colour first), and every place write sets them.
+//! Studio bakes each SurfaceAppearance's and MaterialVariant's maps into one texture pack asset
+//! (TexturePackContent), and a live server draws PBR only from that pack. A place published through Open Cloud has
+//! none, so the packs Studio baked are kept in opossum.lock, keyed `Class|map uri|map uri|...` (the class's maps in
+//! order, colour first), and every place write sets them.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
-use std::path::Path;
 
 use rbx_dom_weak::types::{Content, Ref, Variant};
 use rbx_dom_weak::{Instance, ustr};
 
 use crate::read::Place;
 
-/// Pack key -> pack uri, as in `place/texture-packs.json`.
-pub type TexturePacks = HashMap<String, String>;
+/// Pack key -> the pack's asset id, as opossum.lock's `packs.` lines hold them.
+pub type TexturePacks = BTreeMap<String, u64>;
 
-/// Each packed class's maps, its colour first. A Decal's colour is its Texture, and a Decal is PBR (so packed)
-/// only once it has more than a colour.
+/// Each packed class's maps, its colour first. PBR decals are left out: Studio never bakes them in edit mode, so no
+/// Decal pack can be kept.
 const PACKED: &[(&str, [&str; 4])] = &[
     ("SurfaceAppearance", ["ColorMap", "NormalMap", "RoughnessMap", "MetalnessMap"]),
     ("MaterialVariant", ["ColorMap", "NormalMap", "RoughnessMap", "MetalnessMap"]),
-    ("Decal", ["Texture", "NormalMap", "RoughnessMap", "MetalnessMap"]),
 ];
 
 const PACK: &str = "TexturePackContent";
@@ -33,15 +31,6 @@ pub struct PackStats {
     pub packed: usize,
     /// PBR instances with no pack yet, by class: new or re-uploaded maps that Studio has not baked.
     pub missing: Vec<(String, usize)>,
-}
-
-/// A missing file is no packs.
-pub fn read_texture_packs(path: &Path) -> Result<TexturePacks, String> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(TexturePacks::new()),
-        Err(e) => Err(format!("{}: {e}", path.display())),
-    }
 }
 
 /// Writes the whole DataModel as a place, with texture packs set on everything that has none of its own.
@@ -86,9 +75,9 @@ fn apply_packs(place: &mut Place, packs: &TexturePacks) -> (PackStats, Vec<(Ref,
             continue;
         };
         match packs.get(&key) {
-            Some(uri) => {
+            Some(&id) => {
                 stats.packed += 1;
-                set.push((inst.referent(), uri.clone()));
+                set.push((inst.referent(), id));
             }
             None => *missing.entry(class).or_default() += 1,
         }
@@ -96,21 +85,22 @@ fn apply_packs(place: &mut Place, packs: &TexturePacks) -> (PackStats, Vec<(Ref,
     stats.missing = missing.into_iter().map(|(class, n)| (class.to_string(), n)).collect();
     stats.missing.sort();
     let mut before = Vec::with_capacity(set.len());
-    for (r, uri) in set {
+    for (r, id) in set {
         if let Some(inst) = place.dom.get_by_ref_mut(r) {
-            before.push((r, inst.properties.insert(ustr(PACK), Variant::Content(Content::from_uri(uri)))));
+            let pack = Variant::Content(Content::from_uri(format!("rbxassetid://{id}")));
+            before.push((r, inst.properties.insert(ustr(PACK), pack)));
         }
     }
     (stats, before)
 }
 
-/// The pack key of a PBR instance, or None for one that would not be packed.
+/// The pack key of an instance with maps, or None for one with none.
 fn pack_key(inst: &Instance, class: &str, maps: &[&str; 4]) -> Option<String> {
     let mut key = class.to_string();
     let mut pbr = false;
-    for (index, map) in maps.iter().enumerate() {
+    for map in maps {
         let uri = map_uri(inst, map);
-        pbr |= !uri.is_empty() && (index > 0 || class != "Decal");
+        pbr |= !uri.is_empty();
         key.push('|');
         key.push_str(uri);
     }
@@ -133,23 +123,27 @@ fn map_uri<'a>(inst: &'a Instance, map: &str) -> &'a str {
 mod tests {
     use super::*;
     use rbx_dom_weak::InstanceBuilder;
+    use rbx_dom_weak::types::ContentId;
 
-    // The keys must match place/texture-packs.json byte for byte, or packs silently stop applying.
+    // The keys must match the `packs.` lines Studio's bakes were captured into byte for byte, or packs silently stop
+    // applying; a map in the older ContentId spelling keys as its Content does.
     #[test]
     fn pack_keys() {
-        let decal = |maps: &[(&str, &str)]| {
-            let mut b = InstanceBuilder::new("Decal");
-            for &(map, uri) in maps {
+        let sa = |content: &[(&str, &str)], id: &[(&str, &str)]| {
+            let mut b = InstanceBuilder::new("SurfaceAppearance");
+            for &(map, uri) in content {
                 b = b.with_property(format!("{map}Content"), Content::from_uri(uri));
             }
+            for &(map, uri) in id {
+                b = b.with_property(map, ContentId::from(uri));
+            }
             let dom = rbx_dom_weak::WeakDom::new(b);
-            pack_key(dom.root(), "Decal", &PACKED[2].1)
+            pack_key(dom.root(), "SurfaceAppearance", &PACKED[0].1)
         };
-        // A colour alone is a plain decal, never packed.
-        assert_eq!(decal(&[("Texture", "rbxassetid://1")]), None);
+        assert_eq!(sa(&[], &[]), None);
         assert_eq!(
-            decal(&[("Texture", "rbxassetid://1"), ("NormalMap", "rbxassetid://2")]).as_deref(),
-            Some("Decal|rbxassetid://1|rbxassetid://2||")
+            sa(&[("ColorMap", "rbxassetid://1")], &[("NormalMap", "rbxassetid://2")]).as_deref(),
+            Some("SurfaceAppearance|rbxassetid://1|rbxassetid://2||")
         );
     }
 }

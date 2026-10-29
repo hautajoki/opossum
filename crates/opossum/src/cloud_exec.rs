@@ -92,9 +92,8 @@ pub fn rbxl(session: &mut Session) -> Result<(Vec<u8>, place::PackStats), Failur
         }
         return Err(refused("build", "the project does not compile, so nothing was sent to Open Cloud".into()));
     }
-    let packs = place::read_texture_packs(&root.join("place/texture-packs.json")).map_err(|e| refused("build", e))?;
     let mut rbxl = Vec::new();
-    let stats = place::write_rbxl(&mut tree.to_place(), &packs, &mut rbxl).map_err(|e| refused("build", e))?;
+    let stats = place::write_rbxl(&mut tree.to_place(), &session.packs, &mut rbxl).map_err(|e| refused("build", e))?;
     if rbxl.len() > cloud::MAX_PLACE {
         let error = format!("the place is {} MiB, over Roblox's 100 MiB", rbxl.len() >> 20);
         return Err(refused("place.tooLarge", error));

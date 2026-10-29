@@ -547,11 +547,11 @@ fn build(
     let t = Instant::now();
     // written with errors too (without the modules that failed), as `dev` syncs; the exit status tells
     let path = out.unwrap_or_else(|| dir.join("place.rbxl"));
-    let packs = place::read_texture_packs(&root.join("place/texture-packs.json"))?;
     let file = std::fs::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    place::write_rbxl(&mut place, &packs, std::io::BufWriter::new(file))?;
+    let packs = place::write_rbxl(&mut place, &session.packs, std::io::BufWriter::new(file))?;
     editor::write_if_changed(&dir.join("sourcemap.json"), &tree.sourcemap_json(Some(&root)))?;
     println!("wrote {}", path.display());
+    println!("{}", deploy::packed(&packs));
     let modules = session.scan.modules.len();
     println!(
         "{modules} modules, {} packages in {}",
