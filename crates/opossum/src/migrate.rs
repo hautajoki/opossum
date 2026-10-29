@@ -821,8 +821,19 @@ fn import_lock(
             diags.push(Diag::new("migrate.tesseraConfig", Severity::Error, Some(&root.join(CONFIG)), message));
             continue;
         }
+        // an orphan is a file gone from a set opossum knows; a set it does not know would drop every id in it
         let Some(a) = mine else {
-            orphans += 1;
+            let set = r.key.split_once('/').map_or(r.key.as_str(), |(set, _)| set);
+            if cfg.assets.iter().any(|s| s.name == set) {
+                orphans += 1;
+            } else {
+                let message = format!(
+                    "tessera set `{set}` is not an [assets] set in {}; name the set holding its files so and migrate \
+                     again, or its ids are lost",
+                    config::FILE
+                );
+                diags.push(refuse("migrate.lock", message));
+            }
             continue;
         };
         if let (Some(theirs), Some(ours)) = (r.creator, cfg.creator)
@@ -1408,6 +1419,25 @@ export default defineConfig({
         assert_eq!(plan.sources, [(root.join("src/a.ts"), expected)]);
         assert_eq!(plan.imports, 5);
         assert_eq!(plan.removals, [root.join(CONFIG), root.join("src/generated/assets.luau")]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A tessera.lock a merge brought back after the set was renamed: its records are not orphans, whose ids may go.
+    #[test]
+    fn a_merged_back_tessera_lock_of_a_set_opossum_does_not_know_refuses() {
+        let fp = legacy::fingerprint(b"c", ".png", ImageOptions::DEFAULT);
+        let lock = tessera_lock(&[asset("art/c", 13, &fp)], &[]);
+        let toml = TOML.replace("art = \"art\"", "pictures = \"art\"");
+        let files: [(&str, &[u8]); 4] = [
+            ("opossum.toml", toml.as_bytes()),
+            ("opossum.lock", b"version = 1\ncreator = { user = 7 }\n"),
+            ("art/c.png", b"c"),
+            ("tessera.lock", &lock),
+        ];
+        let root = project("renamed", &files);
+        let plan = plan(&root.join(config::FILE)).unwrap();
+        assert_eq!(codes(&plan), ["migrate.lock"]);
+        assert!(plan.diags[0].message.contains("tessera set `art`"), "{}", plan.diags[0].message);
         let _ = fs::remove_dir_all(root);
     }
 }
