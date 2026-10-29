@@ -152,7 +152,7 @@ The first message is JSON text: `{"t":"hello","project","place","unpublished","s
 the socket unless `place == game.PlaceId`, or `PlaceId == 0` and `unpublished`; otherwise it drops its id map and queue,
 waits for any apply in flight, and answers with its own `hello`. Every later server message is a binary **frame**, or an
 exec: four zero bytes (generation 0, which no frame has), then
-`{"t":"exec","id","name","source","modules","timeout","start","limit","now"}`, or the same way `{"t":"attach","port"}`
+`{"t":"exec","id","name","source","timeout","start","limit","now"}`, or the same way `{"t":"attach","port"}`
 (Attach). The server sends no frame before its first publish, so
 a Studio that connects during the first build is never answered from an empty tree. A config change to `placeId`,
 `unpublished` or `hotReload` closes every socket, so each plugin checks the new hello; other changes keep them.
@@ -428,9 +428,9 @@ it never ran is only ever given when it never will.
 **Running.** The chunk is a nil-parented ModuleScript named after the file, holding
 `return function(print, warn, ...) ` spliced in front of the source's first code, on that line (directives such as
 `--!native` stay first, line numbers stay the user's, a top-level `...` is legal as in any script), and `\nend` after
-it; `modules` become its children (`@self/<name>`). A source of 200,000 characters or more is set with
-`UpdateSourceAsync`, which `Source` refuses. Its print and warn record into the answer's `output`, so only its own
-output is captured; what the modules it requires print goes to Output and the dev terminal as usual. It runs in a
+it. A source of 200,000 characters or more is set with `UpdateSourceAsync`, which `Source` refuses. Its print and
+warn record into the answer's `output`, so only its own output is captured; what the modules it requires print goes to
+Output and the dev terminal as usual. It runs in a
 thread under `xpcall`: an error answers with its message and `debug.traceback` less the plugin's own frames; returned
 values are JSON, every leaf JSON has no word for (an Instance, a Vector3, a function, inf, nan) as its `tostring`,
 nested ones included, and a value with a cycle or keys JSON cannot hold as its `tostring` whole. A `tostring` that
@@ -446,7 +446,7 @@ the stamps watch.luau keeps catch any synced instance it touched).
 **Require.** Studio caches a ModuleScript's result per instance for the life of the plugin's VM: after a `Source`
 write, a rename, a reparent or `UpdateSourceAsync`, `require` of the same instance returns the first result, and only
 a new instance loads anew (measured in Studio 0.745, 2026-10-28). Sync writes `Source` in place, so the plugin's
-`require` would run stale code from the second exec on. So the chunk, its modules and everything they require load
+`require` would run stale code from the second exec on. So the chunk and everything it requires load
 through exec.luau's own `require`, which runs each module's **body**: its `Source` wrapped as
 `return function(script, require, ...) <source> end` (spliced in front of the first code line, so `--!native` stays a
 directive and lines keep their numbers), compiled by requiring a copy placed in a nil-parented mirror of the

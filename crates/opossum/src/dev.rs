@@ -496,7 +496,7 @@ impl Execs {
         Ok(request)
     }
 
-    /// `{root, realm?, name, source, modules?, timeout?, report?, fresh?}` (DESIGN.md, Exec).
+    /// `{root, realm?, name, source, timeout?, report?, fresh?}` (DESIGN.md, Exec).
     fn exec(&self, request: &Value) -> Result<Value, (u16, String)> {
         let connected = self.server.realms();
         let realm = match request["realm"].as_str() {
@@ -520,7 +520,6 @@ impl Execs {
             "t": "exec",
             "name": name,
             "source": request["source"],
-            "modules": request["modules"],
         });
         if report {
             message["limit"] = REPORT_LIMIT.into();

@@ -29,7 +29,6 @@ export type Request = {
 	id: number,
 	name: string,
 	source: string,
-	modules: { [string]: string }?,
 	timeout: number?,
 	-- seconds it may wait in the plugin's queue before it starts; past that dev no longer waits, so it never runs
 	start: number?,
@@ -310,12 +309,6 @@ local function run(request: Request, at: number): string
 				made,
 				if code then `{string.sub(source, 1, code - 1)}{open}{string.sub(source, code)}\nend` else `{source}\n{open}\nend`
 			)
-			for name, text in request.modules or {} do
-				local module = Instance.new("ModuleScript")
-				module.Name = name
-				set_source(module, text)
-				module.Parent = made
-			end
 			return load(session, made)(capture("output"), capture("warning"))
 		end, function(e: unknown)
 			local trace = if type(e) == "string" then session.traces[e] else nil
