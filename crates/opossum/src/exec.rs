@@ -125,10 +125,7 @@ pub fn exec_cloud(
         Err(failure) if !failure.ran => return Outcome::refused(failure.code, failure.error),
         Err(failure) => {
             eprintln!("opossum: {}", failure.error);
-            answer["ran"] = true.into();
-            answer["code"] = failure.code.into();
-            answer["error"] = failure.error.into();
-            return Outcome { exit: 1, json: answer, text: String::new() };
+            return Outcome::failed(answer, String::new(), failure.code, failure.error);
         }
     };
     let output: Vec<Value> = mapped_logs(&ran, &index);
@@ -388,11 +385,15 @@ pub fn test_cloud(
     tests: &Tests,
 ) -> Result<bool, String> {
     let json = options.json;
-    let refused = |code, error| refused_as(json, code, error);
-    let at = cloud_exec::resolve(&cfg, run.environment.as_deref(), run.place.as_deref())
-        .map_err(|e| refused("config", e))?;
-    let (session, rbxl) =
-        cloud_exec::build(cfg, run.profile.as_deref(), &at.environment).map_err(|f| refused(f.code, f.error))?;
+    let refused = |code, error| crate::finish(Outcome::refused(code, error), json);
+    let at = match cloud_exec::resolve(&cfg, run.environment.as_deref(), run.place.as_deref()) {
+        Ok(at) => at,
+        Err(e) => return refused("config", e),
+    };
+    let (session, rbxl) = match cloud_exec::build(cfg, run.profile.as_deref(), &at.environment) {
+        Ok(built) => built,
+        Err(f) => return refused(f.code, f.error),
+    };
     let root = session.cfg.root.clone();
     let index = dev::log_index(&session);
     let suites = suites(&session.scan, &root, tests.mode);
@@ -401,7 +402,7 @@ pub fn test_cloud(
     let timeout = Duration::from_secs_f64(options.timeout.unwrap_or(CLOUD_TIMEOUT));
     let ran = match cloud_exec::run(client, cache, &at, Some(&rbxl), reproducible(&session), &script, timeout) {
         Ok(ran) => ran,
-        Err(failure) if !failure.ran => return Err(refused(failure.code, failure.error)),
+        Err(failure) if !failure.ran => return refused(failure.code, failure.error),
         Err(failure) => return cloud_failed(json, about(&at, None), Vec::new(), failure.code, failure.error),
     };
     let output = mapped_logs(&ran, &index);
@@ -856,14 +857,6 @@ pub fn attach(cfg: &Config, options: &Options, force: bool) -> Result<bool, Stri
 fn refused(json: bool, error: String) -> String {
     if json {
         println!("{}", json!({ "ok": false, "ran": false, "error": error }));
-    }
-    error
-}
-
-/// As [`refused`], with the diagnostic code `--json` adds for agents to branch on.
-fn refused_as(json: bool, code: &str, error: String) -> String {
-    if json {
-        println!("{}", json!({ "ok": false, "ran": false, "error": error, "code": code }));
     }
     error
 }

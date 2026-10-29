@@ -544,7 +544,7 @@ fn outcome(r: Report, broken: Option<Diag>, auth: bool, stopped: bool) -> Outcom
     }
     let failed: Vec<_> =
         r.failed.iter().map(|(file, error, code)| json!({ "file": file, "error": error, "code": code })).collect();
-    let mut json = json!({
+    let json = json!({
         "ok": true, "uploaded": r.uploaded, "reused": r.reused, "unchanged": r.unchanged, "dropped": r.dropped,
         "pending": r.pending, "ambiguous": r.ambiguous.iter().map(|(file, _)| file).collect::<Vec<_>>(),
         "failed": failed,
@@ -565,11 +565,7 @@ fn outcome(r: Report, broken: Option<Diag>, auth: bool, stopped: bool) -> Outcom
     } else {
         return Outcome { exit: 0, json, text };
     };
-    json["ok"] = false.into();
-    json["ran"] = true.into();
-    json["code"] = code.into();
-    json["error"] = error.into();
-    Outcome { exit: 1, json, text }
+    Outcome::failed(json, text, code, error)
 }
 
 /// `opossum adopt asset <file> (<id> | --none)`: settles an upload whose create may or may not have happened. With an

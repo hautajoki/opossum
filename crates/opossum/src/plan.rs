@@ -155,11 +155,7 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
     } else {
         return Outcome { exit: 0, json, text };
     };
-    json["ok"] = false.into();
-    json["ran"] = true.into();
-    json["code"] = error.0.into();
-    json["error"] = error.1.into();
-    Outcome { exit: 1, json, text }
+    Outcome::failed(json, text, error.0, error.1)
 }
 
 /// Whether a file binds an id another file holds for its content, or joins another file's upload of it. An FBX model

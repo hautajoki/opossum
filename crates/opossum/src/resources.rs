@@ -824,8 +824,8 @@ pub fn provision(
 
 /// What provision did, as `provision` and `deploy` report it: exit 1 with the failure when it stopped part way.
 pub fn outcome(env: &Environment, ops: &[Op], tally: &Tally, fail: Option<Fail>) -> Outcome {
-    let mut json = json!({
-        "ok": fail.is_none(), "environment": env.name, "universeId": env.universe, "applied": tally.applied,
+    let json = json!({
+        "ok": true, "environment": env.name, "universeId": env.universe, "applied": tally.applied,
         "noop": tally.noop, "retained": tally.retained, "deleted": tally.deleted, "operations": ops_json(ops),
     });
     let mut text = format!(
@@ -834,10 +834,7 @@ pub fn outcome(env: &Environment, ops: &[Op], tally: &Tally, fail: Option<Fail>)
     );
     let Some(fail) = fail else { return Outcome { exit: 0, json, text } };
     let _ = writeln!(text, "failed: {}", fail.error);
-    json["ran"] = true.into();
-    json["code"] = fail.code.into();
-    json["error"] = fail.error.into();
-    Outcome { exit: 1, json, text }
+    Outcome::failed(json, text, fail.code, fail.error)
 }
 
 /// The lock, refused when it cannot be read or has errors.

@@ -386,6 +386,15 @@ impl Outcome {
     pub fn refused(code: &str, error: String) -> Outcome {
         Outcome { exit: 2, json: json!({ "ok": false, "ran": false, "error": error, "code": code }), text: error }
     }
+
+    /// It ran and stopped short: `json` with `ok` false, `ran` true and the `code` and `error` that say why.
+    pub fn failed(mut json: Value, text: String, code: impl Into<Value>, error: impl Into<Value>) -> Outcome {
+        json["ok"] = false.into();
+        json["ran"] = true.into();
+        json["code"] = code.into();
+        json["error"] = error.into();
+        Outcome { exit: 1, json, text }
+    }
 }
 
 /// Prints `outcome` on stdout: its JSON object with `--json`, else its text. A refusal's error comes back for `main`

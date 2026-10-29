@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use cloud::Client;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::build::Session;
 use crate::cloud_exec::{self, Failure, Placed};
@@ -114,13 +114,13 @@ pub fn deploy(
                            "places": [] });
     if upload.exit != 0 {
         let (code, error) = (json["upload"]["code"].clone(), json["upload"]["error"].clone());
-        return failed(json, upload.text + "nothing was provisioned and no place saved\n", &code, &error);
+        return Outcome::failed(json, upload.text + "nothing was provisioned and no place saved\n", code, error);
     }
     let mut lock = match resources::read(cfg) {
         Ok(lock) => lock,
         Err(refusal) => {
             let text = format!("{}\nnothing was provisioned and no place saved\n", refusal.text);
-            return failed(json, text, &refusal.json["code"], &refusal.json["error"]);
+            return Outcome::failed(json, text, refusal.json["code"].clone(), refusal.json["error"].clone());
         }
     };
     let target = resources::Target::new(cfg, env, client, guard);
@@ -131,7 +131,8 @@ pub fn deploy(
         format!("{}: {} assets uploaded, {} resources applied\n", env.name, count(uploaded), count(tally.applied));
     if provision.exit != 0 {
         let _ = writeln!(text, "failed: {}\nno place was saved", provision.json["error"].as_str().unwrap_or(""));
-        return failed(json, text, &provision.json["code"], &provision.json["error"]);
+        let (code, error) = (provision.json["code"].clone(), provision.json["error"].clone());
+        return Outcome::failed(json, text, code, error);
     }
 
     // the places with the ids the lock holds now, each build's bytes for every place of its profile
@@ -203,7 +204,7 @@ pub fn deploy(
     json["places"] = list.into();
     let Some(code) = first else { return Outcome { exit: 0, json, text } };
     let error = format!("{} of {} places were not saved", failures, places.len());
-    failed(json, text, &code.into(), &error.into())
+    Outcome::failed(json, text, code, error)
 }
 
 /// A session built before the upload, built again for the ids it gave: new ids only set the id modules' sources, and
@@ -227,15 +228,6 @@ fn packed(packs: &place::PackStats) -> String {
         let _ = write!(line, ", {} without a pack yet ({})", count(n), missing.join(", "));
     }
     line
-}
-
-/// It ran and stopped short: `ok` false with the code and error that say why.
-fn failed(mut json: Value, text: String, code: &Value, error: &Value) -> Outcome {
-    json["ok"] = false.into();
-    json["ran"] = true.into();
-    json["code"] = code.clone();
-    json["error"] = error.clone();
-    Outcome { exit: 1, json, text }
 }
 
 #[cfg(test)]
