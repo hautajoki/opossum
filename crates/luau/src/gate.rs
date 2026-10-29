@@ -2,11 +2,24 @@
 //! Register and constant limits depend on Luau's folding, dead-branch elimination and inlining, so only the real
 //! compiler can answer. The only `unsafe` is the call into Luau ([`compile_raw`]), through `src/shim.cpp`, which turns
 //! any C++ exception into an error so that none unwinds into Rust.
+//!
+//! Luau's fast flags follow one policy, [`init`], applied before the first compile here or in a VM.
 
 use std::ffi::{c_char, c_int, c_void};
+use std::sync::Once;
 
 /// The Luau release compiled in, as `0.740`.
 pub const LUAU_VERSION: &str = env!("LUAU_VERSION");
+
+/// Turns on every fast flag named `Luau*` except the analysis flags Luau calls experimental, as the `luau` CLI does
+/// (hexagon's local runs used it). On luau0-src's defaults many are off (`LuauIntegerLibrary`, `LuauFastpcall`,
+/// `LuauCompileIifeInline`, …), which would load a different library surface and compile differently from the CLI
+/// and from Roblox. Flags are process-global; this runs once, and every compile calls it first.
+pub fn init() {
+    static INIT: Once = Once::new();
+    // SAFETY: the shim only writes Luau's flag globals; `Once` runs it before any compile can read them.
+    INIT.call_once(|| unsafe { opossum_luau_init() });
+}
 
 /// Luau refused the source: the line it reports (1-based; 0 when the message has none) and its message (`Out of
 /// local registers when trying to allocate x: exceeded limit 200`, a syntax error, …).
@@ -21,6 +34,7 @@ pub struct CompileError {
 /// Compiles `source` as Roblox loads a script, at `optimization_level` (0–2) and `debug_level` (0–2). A
 /// `--!optimize N` directive in the source overrides the optimisation level, as it does in Roblox.
 pub fn compile(source: &str, optimization_level: u8, debug_level: u8) -> Result<(), CompileError> {
+    init();
     let Some(bytecode) = compile_raw(source, c_int::from(optimization_level.min(2)), c_int::from(debug_level.min(2)))
     else {
         return Err(CompileError { line: 0, message: "Luau's compiler ran out of memory".to_owned() });
@@ -70,6 +84,11 @@ unsafe extern "C" {
     ) -> *mut c_char;
     /// `src/shim.cpp`: `free` of the C runtime Luau's `malloc` came from.
     fn opossum_luau_free(buffer: *mut c_void);
+    /// `src/shim.cpp`: applies the flag policy of [`init`].
+    fn opossum_luau_init();
+    /// `src/shim.cpp`: every flag linked in as `name=value` lines, `malloc`ed (`*outsize` bytes), or null.
+    #[cfg(test)]
+    fn opossum_luau_flags(outsize: *mut usize) -> *mut c_char;
 }
 
 /// Calls `luau_compile` (through the shim) and copies its output; `None` when there was no memory for it.
@@ -137,6 +156,26 @@ mod tests {
         let error = compile("local a = 1\nlocal = 2\n", 1, 1).unwrap_err();
         assert_eq!(error.line, 2);
         assert!(!error.message.is_empty());
+    }
+
+    /// The value of every flag after [`init`], sorted, against `flags.txt`. A luau0-src bump (or a new part of Luau
+    /// linked in) shows here exactly which flags appeared, went or moved.
+    #[test]
+    fn flag_values_are_pinned() {
+        init();
+        let mut size = 0usize;
+        // SAFETY: the shim returns null or a `malloc`ed buffer of `size` bytes, copied and freed exactly once here.
+        let text = unsafe {
+            let out = opossum_luau_flags(&mut size);
+            assert!(!out.is_null());
+            let text = String::from_utf8_lossy(std::slice::from_raw_parts(out.cast::<u8>(), size)).into_owned();
+            opossum_luau_free(out.cast());
+            text
+        };
+        let mut lines: Vec<&str> = text.lines().collect();
+        lines.sort_unstable();
+        let actual = lines.iter().map(|line| format!("{line}\n")).collect::<String>();
+        assert!(actual == include_str!("flags.txt"), "flags moved; crates/luau/src/flags.txt should be:\n{actual}");
     }
 
     #[test]
