@@ -71,7 +71,7 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>                        
   where <file | Instance.Path[:line]>                        a file's instance, or an instance's file
   sourcemap                                                  .opossum/sourcemap.json for luau-lsp
   plugin install [<path>]                                    the Studio plugin .rbxm
-  migrate                                                    convert Rojo meta files, refs and [place], and adopt
+  migrate                                                    convert Rojo meta files and refs, and adopt
                                                              tessera's config, lock and ids and hexagon's imports";
 
 enum Command {

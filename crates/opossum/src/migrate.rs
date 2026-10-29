@@ -1,6 +1,6 @@
 //! `opossum migrate`: the one-time conversions into opossum, every one planned before anything is written, so a
-//! refusal changes nothing and a second run finds nothing to do. A Rojo-era `place/` and an old `[place]` table move
-//! into properties files (`place::plan_migration`). Tessera's `tessera.config.ts` becomes opossum.toml's tables and
+//! refusal changes nothing and a second run finds nothing to do. A Rojo-era `place/` moves into properties files
+//! (`place::plan_migration`). Tessera's `tessera.config.ts` becomes opossum.toml's tables and
 //! `tessera.lock` becomes opossum.lock records with no upload and no create: an id whose file is as tessera uploaded
 //! it is current, one whose file changed since is marked changed, and a record with no file goes. Imports of tessera's
 //! generated modules and of hexagon become `opossum/<set>`, `opossum/resources` and `opossum/test`. What opossum
@@ -143,25 +143,12 @@ fn plan(file: &Path) -> Result<Plan, String> {
         diags: Vec::new(),
     };
 
-    // place/ and [place]
-    let cut = config::cut_place(&text).map_err(|e| format!("{}: {e}", file.display()))?;
-    let moved = match &cut {
-        Some((_, table)) => {
-            place::entries_from_toml(table, file).map_err(|e| format!("{}: [place] {e}", file.display()))?
-        }
-        None => Vec::new(),
-    };
-    match place::plan_migration(&root.join("place"), moved) {
+    // a Rojo-era place/
+    match place::plan_migration(&root.join("place")) {
         Ok(writes) => plan.place = writes,
         Err(diags) => plan.diags.extend(diags.iter().map(diag::from_place)),
     }
-    let mut toml = match cut {
-        Some((rest, _)) => {
-            plan.toml = Some(rest.clone());
-            rest
-        }
-        None => text,
-    };
+    let mut toml = text;
 
     // tessera.config.ts
     let ts = root.join(CONFIG);

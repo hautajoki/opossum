@@ -1,7 +1,7 @@
 //! `opossum migrate`: the one-time conversion of a Rojo-era `place/`, in place. `init.meta.json` files become
 //! properties files (`place/<service>.toml`, one per service, holding its nested containers), model.json refs written
-//! as `Rojo_Id` / `Rojo_Target_<Property>` attributes become relative instance paths (`"Part0": "../hull"`), and the
-//! entries of opossum.toml's former `[place]` table join the properties files. The whole conversion is planned before
+//! as `Rojo_Id` / `Rojo_Target_<Property>` attributes become relative instance paths (`"Part0": "../hull"`). The whole
+//! conversion is planned before
 //! anything is written, so a conflict changes nothing, and a converted project plans no writes.
 
 use std::collections::HashMap;
@@ -22,13 +22,12 @@ pub struct Write {
 
 const ONLY_INIT: &str = "only a directory's init.meta.json converts; move its properties by hand";
 
-/// The writes, by path, that convert `dir` (a project's `place/`) with `moved` (opossum.toml's `[place]` entries)
-/// joining the properties files; Err with every reason it cannot. A path that meta files and `moved` both set merges
-/// when they agree; one an existing properties file already sets is a conflict.
-pub fn plan_migration(dir: &Path, moved: Vec<PlaceEntry>) -> Result<Vec<Write>, Vec<Diag>> {
+/// The writes, by path, that convert `dir` (a project's `place/`); Err with every reason it cannot. A path an existing
+/// properties file already sets is a conflict.
+pub fn plan_migration(dir: &Path) -> Result<Vec<Write>, Vec<Diag>> {
     let root = dir.parent().unwrap_or(dir).to_path_buf();
     let mut plan = Plan { root, entries: Vec::new(), writes: Vec::new(), diags: Vec::new() };
-    // no place/ yet is nothing to convert; moved entries make it
+    // no place/ is nothing to convert
     let tops = if dir.is_dir() { entries(dir, &mut plan.diags) } else { Vec::new() };
     for (name, path, is_dir) in tops {
         if let Some(service) = service_for_dir(&name).filter(|_| is_dir) {
@@ -36,9 +35,6 @@ pub fn plan_migration(dir: &Path, moved: Vec<PlaceEntry>) -> Result<Vec<Write>, 
         } else if !is_dir && name.ends_with(".meta.json") {
             plan.diags.push(Diag::error("migrate.meta", &path, ONLY_INIT));
         }
-    }
-    for entry in moved {
-        plan.add(entry);
     }
     let existing = read_properties(dir, &mut plan.diags);
     for entry in &plan.entries {
