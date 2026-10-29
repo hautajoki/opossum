@@ -327,6 +327,19 @@ impl Session {
     /// Loads the program afresh (parsed files come from the session's cache), routes the package files it reached
     /// and gathers the packages to mount.
     fn load(&self) -> Result<Project, String> {
+        // without them no global exists (Array, print, Instance), and every file fails a dozen ways that hide why
+        let ts = self.scan.modules.iter().any(|m| matches!(m.kind, route::Kind::Ts | route::Kind::Tsx));
+        let types = ["@rbxts/compiler-types", "@rbxts/types"];
+        let missing: Vec<&str> =
+            types.into_iter().filter(|p| !self.cfg.root.join("node_modules").join(p).is_dir()).collect();
+        if ts && !missing.is_empty() {
+            return Err(format!(
+                "node_modules has no {}: install the Roblox types as dev dependencies (`bun add -d {}`, or your \
+                 package manager's add)",
+                missing.join(" or "),
+                missing.join(" ")
+            ));
+        }
         let checkers = std::thread::available_parallelism().map_or(4, usize::from);
         let root = slashed(&self.cfg.root);
         let options = LoadOptions {
@@ -748,7 +761,8 @@ mod tests {
     fn id_modules_build_and_say_what_an_edit_changed() {
         let root = std::env::temp_dir().join(format!("opossum-build-ids-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        for dir in ["src/shared", "art/sfx"] {
+        // the type packages empty: a build needs them, and the program's global types missing is only its own errors
+        for dir in ["src/shared", "art/sfx", "node_modules/@rbxts/types", "node_modules/@rbxts/compiler-types"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
         }
         let write = |file: &str, text: &str| std::fs::write(root.join(file), text).unwrap();
@@ -770,7 +784,6 @@ mod tests {
                 let mut session = Session::new(cfg, None, None).unwrap();
                 session.build().unwrap();
                 let tree = session.tree(false);
-                // without node_modules the program lacks the global types, which only the program's own errors say
                 let errors: Vec<Diag> =
                     session.diagnostics().into_iter().filter(|d| d.is_error() && d.file.is_some()).collect();
                 (session, errors, tree)

@@ -22,7 +22,8 @@ pub fn is_builtin_library(state: &mut TransformState<'_>, node: P<Node>) -> bool
     if node.kind() != Kind::Identifier || !LIBRARIES.contains(&node.text()) {
         return false;
     }
-    let symbol = state.checker.get_symbol_at_location_exported(node).expect("a library identifier has a symbol");
+    // none when the Roblox types are not installed (the checker reports the name)
+    let Some(symbol) = state.checker.get_symbol_at_location_exported(node) else { return false };
     let declarations = symbol.declarations();
     !declarations.is_empty()
         && declarations.iter().all(|&d| d.kind() == Kind::ModuleDeclaration && is_in_rbxts_types(state, d))

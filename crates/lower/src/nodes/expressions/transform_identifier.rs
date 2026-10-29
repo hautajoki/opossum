@@ -155,7 +155,8 @@ pub fn transform_identifier(state: &mut TransformState<'_>, node: P<Node>) -> Ex
         return create::id(node.text());
     }
 
-    let symbol = identifier_symbol(state, node).expect("an identifier has a symbol");
+    // an undeclared name, which the checker reports (ts.2304): lowering goes on as if it were a global
+    let Some(symbol) = identifier_symbol(state, node) else { return create::id(node.text()) };
 
     // a compile-time macro not at the head of a chain (`transform_optional_chain` folds those)
     if let Some(name) = compile_time::macro_name(state, symbol) {
