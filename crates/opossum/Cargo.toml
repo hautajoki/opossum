@@ -1,5 +1,6 @@
 [package]
 name = "opossum"
+description = "Roblox games in TypeScript and Luau: compile, route, sync to Studio, build places, upload assets, deploy and test"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
