@@ -144,8 +144,11 @@ fn env(state: &mut TransformState<'_>, item: &ChainItem) -> Expr {
         },
         _ => return misuse(state, item.node, "$env"),
     };
-    if name == API_KEY {
-        let message = format!("{API_KEY} is opossum's Open Cloud key; $env would inline it into the place");
+    // the key under another name is the key all the same (`env` holds the key opossum sends as API_KEY)
+    let env = &state.options.env;
+    let key = env.get(API_KEY).map(|k| k.trim()).filter(|k| !k.is_empty());
+    if name == API_KEY || key.is_some() && env.get(name).map(|v| v.trim()) == key {
+        let message = format!("{name} holds opossum's Open Cloud key; $env would inline it into the place");
         return error(state, item.node, "secretEnv", &message);
     }
     record(state, Input::Env(name.to_owned()));

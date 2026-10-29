@@ -103,13 +103,15 @@ fn env_falls_back_only_when_the_variable_is_unset() {
 fn env_never_inlines_the_open_cloud_key() {
     let mut options = lower::Options { native_types: false, ..lower::Options::default() };
     options.env.insert("ROBLOX_OPEN_CLOUD_API_KEY".into(), "secret".into());
+    options.env.insert("ALIAS".into(), " secret".into());
     let (_, inputs, diagnostics) = lower_one(
         "env_secret",
-        "export const a = $env(\"ROBLOX_OPEN_CLOUD_API_KEY\", \"none\");\nexport const b = $env.ROBLOX_OPEN_CLOUD_API_KEY;\n",
+        "export const a = $env(\"ROBLOX_OPEN_CLOUD_API_KEY\", \"none\");\nexport const b = $env.ROBLOX_OPEN_CLOUD_API_KEY;\n\
+         export const c = $env.ALIAS;\n",
         &[],
         options,
     );
-    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    assert_eq!(diagnostics.len(), 3, "{diagnostics:?}");
     assert!(diagnostics.iter().all(|d| d.starts_with("macro.secretEnv: ")), "{diagnostics:?}");
     assert_eq!(inputs, []);
 }

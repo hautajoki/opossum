@@ -8,7 +8,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use lower::options::Git;
 use rustc_hash::FxHashMap;
 
-/// `.env`, then `.env.local` over it, then the process environment over both.
+const KEY: &str = "ROBLOX_OPEN_CLOUD_API_KEY";
+
+/// `.env`, then `.env.local` over it, then the process environment over both; `ROBLOX_OPEN_CLOUD_API_KEY` is the key
+/// [`api_key`] resolves, so `$env` refuses that value under any name.
 pub fn env(root: &Path) -> FxHashMap<String, String> {
     let mut env = FxHashMap::default();
     for name in [".env", ".env.local"] {
@@ -17,13 +20,16 @@ pub fn env(root: &Path) -> FxHashMap<String, String> {
         }
     }
     env.extend(std::env::vars());
+    match api_key(root) {
+        Some(key) => env.insert(KEY.to_owned(), key),
+        None => env.remove(KEY),
+    };
     env
 }
 
 /// The Open Cloud API key: `ROBLOX_OPEN_CLOUD_API_KEY` from the process environment, then `.env.local`, then `.env`,
 /// each trimmed, an empty value falling through (an empty export must not hide `.env`). Never printed.
 pub fn api_key(root: &Path) -> Option<String> {
-    const KEY: &str = "ROBLOX_OPEN_CLOUD_API_KEY";
     let present = |v: Option<String>| v.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
     present(std::env::var(KEY).ok()).or_else(|| {
         [".env.local", ".env"].into_iter().find_map(|name| {
