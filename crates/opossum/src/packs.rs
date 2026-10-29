@@ -6,8 +6,9 @@
 //! takes dev's lifecycle lock, so play, stop and pull are never refused because of it.
 //!
 //! The capture writes the lock beside the user's own commands, so it never waits on them and never leaves them a
-//! `lock.recovered`: with the remote guard held elsewhere it keeps what it found for the next tick, and a lock changed
-//! on disk under it is read again then ([`lock::save_or_drop`]). dev's own watcher sees nothing in a pack line.
+//! `lock.recovered`: with the remote guard held elsewhere it keeps what it found for the next tick, a lock changed on
+//! disk under it is read again then ([`lock::save_or_drop`]), and one with a line it refuses is never rewritten (that
+//! would delete the line) until the line is fixed. dev's own watcher sees nothing in a pack line.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -123,10 +124,7 @@ impl Capture {
         if !realms.contains(&Realm::Edit) || realms.iter().any(|r| matches!(r, Realm::Server | Realm::Client)) {
             return;
         }
-        let lock = match lock::read(&self.root) {
-            Ok((lock, _)) => lock,
-            Err(e) => return self.fail(e),
-        };
+        let Some(lock) = self.read() else { return };
         let mut missing = Missing::new();
         for s in self.surfaces.lock().unwrap_or_else(|e| e.into_inner()).iter() {
             if s.waiting || s.packed || lock.packs.contains_key(&s.key) || self.found.contains_key(&s.key) {
@@ -206,13 +204,7 @@ impl Capture {
                 return 0;
             }
         };
-        let mut lock = match lock::read(&self.root) {
-            Ok((lock, _)) => lock,
-            Err(e) => {
-                self.fail(e);
-                return 0;
-            }
-        };
+        let Some(mut lock) = self.read() else { return 0 };
         for (key, &id) in &self.found {
             let pack = lock.packs.entry(key.clone()).or_insert(id);
             *pack = (*pack).max(id);
@@ -227,10 +219,67 @@ impl Capture {
         }
     }
 
+    /// The lock as it is now, or None (said as an error) when it cannot be read or refuses a line: a lock written
+    /// from that parse would lose the refused records, so the capture waits, keeping what it found, until it reads
+    /// clean.
+    fn read(&mut self) -> Option<lock::Lock> {
+        let error = match lock::read(&self.root) {
+            Ok((lock, diags)) => match diags.iter().find(|d| d.is_error()) {
+                None => return Some(lock),
+                Some(d) => format!("{}; no pack is saved until it reads clean", d.human(&self.root)),
+            },
+            Err(e) => e,
+        };
+        self.fail(error);
+        None
+    }
+
     fn fail(&mut self, error: String) {
         if self.error.as_ref() != Some(&error) {
             self.out.emit(&Event::Error { message: &format!("packs: {error}"), fatal: false });
             self.error = Some(error);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A lock with a line it refuses is never rewritten from that parse, which would delete the line: the pack found
+    /// waits, said once, and is saved once the lock reads clean.
+    #[test]
+    fn a_found_pack_waits_while_the_lock_refuses_a_line() {
+        let root = std::env::temp_dir().join(format!("opossum-packs-refused-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let (reports, requests) = (std::sync::mpsc::channel().0, std::sync::mpsc::channel().0);
+        let config = sync::Config {
+            project: "p".into(),
+            place: 0,
+            unpublished: true,
+            hot_reload: false,
+            port: 0,
+            reports,
+            requests,
+        };
+        let server = sync::Server::start(config).unwrap();
+        let out = Out { json: true, root: root.clone() };
+        let cache = Cache { dir: root.join(".cache") };
+        let mut capture = Capture::new(server, Arc::default(), out, root.clone(), cache);
+        let key = "SurfaceAppearance|rbxassetid://1|||";
+        capture.found.insert(key.into(), 7);
+
+        let refused = "version = 1\nassets.\"art/a.png\" = { id = 5, hash = \"0\" }\n";
+        std::fs::write(root.join(lock::FILE), refused).unwrap();
+        assert_eq!((capture.save(), capture.save()), (0, 0));
+        assert_eq!(std::fs::read_to_string(root.join(lock::FILE)).unwrap(), refused);
+        assert!(capture.found.contains_key(key) && capture.error.as_ref().is_some_and(|e| e.contains("lock.syntax")));
+
+        std::fs::write(root.join(lock::FILE), "version = 1\n").unwrap();
+        assert_eq!(capture.save(), 1);
+        let text = std::fs::read_to_string(root.join(lock::FILE)).unwrap();
+        assert!(text.contains(&format!("packs.\"{key}\" = 7")), "{text}");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
