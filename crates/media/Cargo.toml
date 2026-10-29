@@ -1,0 +1,18 @@
+[package]
+name = "media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Versions are pinned by Cargo.lock; the blake3 goldens in the tests say when an update moves output bytes. resvg
+# without its default features renders paths only (no text, fonts or raster images), and roxmltree is the version
+# usvg parses with, for the checks that refuse what it would silently drop. Audio headers are parsed by hand.
+[dependencies]
+png = "0.18"
+zune-jpeg = "0.5"
+resvg = { version = "0.49", default-features = false }
+roxmltree = "0.21"
+
+[dev-dependencies]
+blake3.workspace = true

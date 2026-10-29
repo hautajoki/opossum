@@ -32,7 +32,14 @@ lower = { path = "crates/lower" }
 route = { path = "crates/route" }
 place = { path = "crates/place" }
 sync = { path = "crates/sync" }
+cloud = { path = "crates/cloud" }
+media = { path = "crates/media" }
+spec = { path = "crates/spec" }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
+toml = { version = "1.1.8", features = ["preserve_order"] }
+globset = "0.4"
+blake3 = "1.8"
+libc = "0.2"
 
 # luau0-src with the include directories, defines and build stamp crates/luau needs (vendor/luau0-src/VENDOR.md).
 [patch.crates-io]

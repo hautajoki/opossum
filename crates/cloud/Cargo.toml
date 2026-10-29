@@ -1,0 +1,13 @@
+[package]
+name = "cloud"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Blocking HTTP on rustls with ring and webpki-roots: no async, no OpenSSL, no aws-lc (cmake). ureq's defaults are
+# overridden in code (DESIGN.md, Cloud).
+[dependencies]
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+serde_json.workspace = true
+blake3.workspace = true

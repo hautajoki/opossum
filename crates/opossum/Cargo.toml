@@ -15,6 +15,9 @@ luau.workspace = true
 route.workspace = true
 place.workspace = true
 sync.workspace = true
+cloud.workspace = true
+media.workspace = true
+spec.workspace = true
 tsrs_core.workspace = true
 tsrs_ast.workspace = true
 tsrs_compiler.workspace = true
@@ -22,6 +25,11 @@ tsrs_diagnostics.workspace = true
 mimalloc-safe.workspace = true
 rustc-hash.workspace = true
 serde_json.workspace = true
-toml = { version = "1.1.8", features = ["preserve_order"] }
-globset = "0.4"
+toml.workspace = true
+globset.workspace = true
+blake3.workspace = true
+libc.workspace = true
+# tessera's lock (gzip) and input fingerprints (sha256), read only by migrate
+flate2 = "1"
+sha2 = "0.11"
 notify = { version = "8.2.0", default-features = false, features = ["macos_fsevent"] }
