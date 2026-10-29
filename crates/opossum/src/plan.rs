@@ -81,7 +81,7 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
             }
             let record = lock.assets.get(&a.file);
             let mut state = state(record, hash);
-            let copy = unsettled.get(hash).filter(|_| matches!(state, State::New | State::Changed));
+            let copy = unsettled.get(hash).filter(|_| shares(a) && matches!(state, State::New | State::Changed));
             if copy.is_some() {
                 state = State::Ambiguous;
             }
@@ -160,6 +160,12 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
     json["code"] = error.0.into();
     json["error"] = error.1.into();
     Outcome { exit: 1, json, text }
+}
+
+/// Whether a file binds an id another file holds for its content, or joins another file's upload of it. An FBX model
+/// never does: its id may be updated in place, and another branch's file sharing it would silently change with it.
+pub fn shares(a: &assets::Asset) -> bool {
+    a.ext != ".fbx"
 }
 
 /// Content an upload that may or may not have happened sent, and the file it was for: a new or changed file holding the

@@ -131,6 +131,7 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
             eprintln!("{}", warning.human(root));
         }
         let record = lock.assets.get(&a.file).cloned().unwrap_or_default();
+        let shares = plan::shares(a);
         let (hash, op) = match plan::state(Some(&record), hash) {
             State::Current => {
                 report.unchanged += 1;
@@ -146,11 +147,11 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
             }
             // a later change waits for the next run: this one finishes what was started
             State::Pending => (record.next.clone().unwrap_or_default(), record.op.clone()),
-            State::New | State::Changed if unsettled.contains_key(hash) => {
+            State::New | State::Changed if shares && unsettled.contains_key(hash) => {
                 report.ambiguous.push((a.file.clone(), plan::copy_of(&unsettled[hash])));
                 continue;
             }
-            State::New | State::Changed => match held.get(hash) {
+            State::New | State::Changed => match held.get(hash).filter(|_| shares) {
                 Some(&id) => {
                     let bound = Asset { id: Some(id), hash: Some(hash.clone()), rejected: None, ..record };
                     lock.assets.insert(a.file.clone(), bound);
@@ -161,8 +162,12 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
             },
         };
         // files waiting on an upload of this content join it instead of sending it again
-        let g = *by_hash.entry(hash.clone()).or_insert_with(|| {
-            groups.push((hash, Vec::new(), None));
+        let joined = by_hash.get(&hash).copied().filter(|_| shares);
+        let g = joined.unwrap_or_else(|| {
+            groups.push((hash.clone(), Vec::new(), None));
+            if shares {
+                by_hash.insert(hash, groups.len() - 1);
+            }
             groups.len() - 1
         });
         groups[g].1.push(i);
@@ -315,9 +320,9 @@ fn compile(cfg: &Config, a: &File, hash: &str) -> Result<Compiled, Diag> {
     assets::compile(&path, &a.ext, image, bytes)
 }
 
-/// The id a changed FBX model replaces in place: Roblox lets only FBX content change. Only when the file is alone in
-/// its group and no other file holds its id, so one file's change never silently changes another's (copy-on-write: a
-/// shared id splits off a new asset instead).
+/// The id a changed FBX model replaces in place: Roblox lets only FBX content change. Only when no other file in this
+/// lock holds its id (one migrated from tessera may), so one file's change never silently changes another's
+/// (copy-on-write: a shared id splits off a new asset instead); an FBX never comes to share one ([`plan::shares`]).
 fn in_place(lock: &Lock, a: &File, compiled: &Compiled, members: usize) -> Option<u64> {
     if a.ext != ".fbx" || compiled.kind != cloud::AssetKind::Model || members != 1 {
         return None;
@@ -883,6 +888,12 @@ mod tests {
             record(&root, "art/model.fbx"),
             Some(Asset { id: Some(split), hash: Some(newer), ..Asset::default() })
         );
+
+        // a copy gets an asset of its own: on another branch, the next in-place update would change it unseen
+        std::fs::write(root.join("art/copy.fbx"), "newer").unwrap();
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!((out.exit, sent(&mock, "POST", "assets/v1/assets")), (0, 2));
+        assert!(record(&root, "art/copy.fbx").and_then(|r| r.id).is_some_and(|id| id != split));
         let _ = std::fs::remove_dir_all(&root);
     }
 
