@@ -38,7 +38,7 @@ pub struct Place {
     refs: Vec<RefSpec>,
     /// Every `$asset` property, by holder and the name its value is stored under.
     assets: HashMap<(Ref, Ustr), AssetSpec>,
-    /// The holders of a map `$asset` the last [`Place::resolve_assets`] left empty: no upload or read yet.
+    /// The holders of a map `$asset` the last [`Place::resolve_assets`] found no upload or read for.
     waiting: HashSet<Ref>,
 }
 
@@ -446,6 +446,7 @@ impl Place {
         for (&(holder, stored), spec) in &self.assets {
             let Some(class) = self.dom.get_by_ref(holder).map(|i| i.class) else { continue };
             let file = &spec.file;
+            let unset = matches!(resolver.by_file.get(file), Some(Asset::Unset));
             let empty = Some((String::new(), None));
             let resolved = match (resolver.by_file.get(file), &spec.part) {
                 (None, _) => {
@@ -484,13 +485,11 @@ impl Place {
                 // not uploaded, or uploaded and not read back: the file's own `asset.*` warning says so, once
                 _ => empty,
             };
-            writes.push((holder, class, stored, spec.property, resolved));
+            writes.push((holder, class, stored, spec.property, resolved, unset));
         }
         self.waiting.clear();
-        for (holder, class, stored, property, resolved) in writes {
-            if resolved.as_ref().is_some_and(|(uri, _)| uri.is_empty())
-                && Channel::of(property).is_some_and(|c| c != Channel::Mesh)
-            {
+        for (holder, class, stored, property, resolved, unset) in writes {
+            if unset && Channel::of(property).is_some_and(|c| c != Channel::Mesh) {
                 self.waiting.insert(holder);
             }
             let Some(inst) = self.dom.get_by_ref_mut(holder) else { continue };
@@ -522,12 +521,12 @@ impl Place {
                 continue;
             };
             let waiting = self.waiting.contains(&inst.referent());
-            // a surface whose every map waits has no key yet, but still waits
-            let Some(key) = pack_key(inst, class, &maps).or_else(|| waiting.then(|| format!("{class}||||"))) else {
+            let key = pack_key(inst, class, &maps).filter(|_| !waiting);
+            if key.is_none() && !waiting {
                 continue;
-            };
+            }
             let packed = crate::write::own_pack(inst).is_some();
-            surfaces.push(Surface { class, key, packed, waiting, file: self.source_of(inst.referent()) });
+            surfaces.push(Surface { class, key, packed, file: self.source_of(inst.referent()) });
         }
         surfaces
     }

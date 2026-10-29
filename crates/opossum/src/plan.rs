@@ -270,22 +270,24 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
 
 /// The texture packs the place's SurfaceAppearances and MaterialVariants need, by key: baked (the lock or the model
 /// file holds a pack), unbaked (each with the files using it: `opossum dev` bakes them in Studio, and `deploy` refuses
-/// until it did), and waiting (a map's `$asset` has no upload or read yet, so its key is not known). The text (empty
-/// for a place with none) and `{baked, unbaked: [{class, maps, usedBy}], waiting}`.
+/// until it did), and the surfaces waiting (a map's `$asset` has no upload or read yet, so the key is not known). The
+/// text (empty for a place with none) and `{baked, unbaked: [{class, maps, usedBy}], waiting}`.
 fn packs(cfg: &Config, lock: &Lock, found: &[assets::Asset]) -> (String, serde_json::Value) {
     let (mut place, _) = place::read_place(&cfg.root.join("place"), &cfg.asset_roots());
     place.resolve_assets(&ids::resolver(lock, found));
-    let (mut baked, mut waiting) = (BTreeSet::new(), BTreeSet::new());
+    let (mut baked, mut waiting) = (BTreeSet::new(), 0);
     let mut unbaked: BTreeMap<String, (&str, BTreeSet<String>)> = BTreeMap::new();
     let surfaces = place.surfaces();
     for s in &surfaces {
-        if s.waiting {
-            waiting.insert(&s.key);
-        } else if s.packed || lock.packs.contains_key(&s.key) {
-            baked.insert(&s.key);
+        let Some(key) = &s.key else {
+            waiting += 1;
+            continue;
+        };
+        if s.packed || lock.packs.contains_key(key) {
+            baked.insert(key);
         } else {
             let file = s.file.strip_prefix(&cfg.root).unwrap_or(&s.file).display().to_string();
-            unbaked.entry(s.key.clone()).or_insert((s.class, BTreeSet::new())).1.insert(file);
+            unbaked.entry(key.clone()).or_insert((s.class, BTreeSet::new())).1.insert(file);
         }
     }
     let list: Vec<serde_json::Value> = unbaked
@@ -295,7 +297,7 @@ fn packs(cfg: &Config, lock: &Lock, found: &[assets::Asset]) -> (String, serde_j
             json!({ "class": class, "maps": maps, "usedBy": files })
         })
         .collect();
-    let json = json!({ "baked": baked.len(), "unbaked": list, "waiting": waiting.len() });
+    let json = json!({ "baked": baked.len(), "unbaked": list, "waiting": waiting });
     if surfaces.is_empty() {
         return (String::new(), json);
     }
@@ -308,8 +310,8 @@ fn packs(cfg: &Config, lock: &Lock, found: &[assets::Asset]) -> (String, serde_j
         let classes: Vec<String> = classes.iter().map(|(class, n)| format!("{class} {n}")).collect();
         let _ = write!(text, ", {} unbaked ({})", count(unbaked.len()), classes.join(", "));
     }
-    if !waiting.is_empty() {
-        let _ = write!(text, ", {} waiting on uploads", count(waiting.len()));
+    if waiting > 0 {
+        let _ = write!(text, ", {} waiting on uploads", counted(waiting, "surface"));
     }
     text.push('\n');
     for (key, (_, files)) in &unbaked {
@@ -497,8 +499,8 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
-    /// Packs are counted by key, as the lock keeps them: surfaces sharing maps are one pack to bake, and a surface whose
-    /// map waits on an upload has no key yet, so it is waiting, not unbaked.
+    /// Packs are counted by key, as the lock keeps them: surfaces sharing maps are one pack to bake. A surface whose
+    /// map waits on an upload has no key yet, so it is counted as a waiting surface, not as a pack.
     #[test]
     fn plan_counts_texture_packs_by_key() {
         let root = std::env::temp_dir().join(format!("opossum-plan-packs-{}", std::process::id()));
@@ -519,6 +521,7 @@ mod tests {
             surface("Twin", "SurfaceAppearance", "\"rbxassetid://2\""),
             surface("Variant", "MaterialVariant", "\"rbxassetid://3\""),
             surface("Waiting", "SurfaceAppearance", "{\"$asset\": \"art/color.mp4\"}"),
+            surface("Waits", "MaterialVariant", "{\"$asset\": \"art/color.mp4\"}"),
         ];
         let model = format!("{{\"className\": \"Model\", \"children\": [{}]}}", children.join(", "));
         std::fs::write(root.join("place/replicated-storage/m.model.json"), model).unwrap();
@@ -536,13 +539,13 @@ mod tests {
                 { "class": "MaterialVariant", "maps": ["rbxassetid://3", "rbxassetid://9", "", ""], "usedBy": used },
                 { "class": "SurfaceAppearance", "maps": ["rbxassetid://2", "rbxassetid://9", "", ""], "usedBy": used },
             ],
-            "waiting": 1,
+            "waiting": 2,
         });
         assert_eq!(outcome.json["packs"], expected);
         assert!(
-            outcome
-                .text
-                .contains("packs: 1 baked, 2 unbaked (MaterialVariant 1, SurfaceAppearance 1), 1 waiting on uploads\n"),
+            outcome.text.contains(
+                "packs: 1 baked, 2 unbaked (MaterialVariant 1, SurfaceAppearance 1), 2 surfaces waiting on uploads\n"
+            ),
             "{}",
             outcome.text
         );

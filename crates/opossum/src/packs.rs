@@ -127,10 +127,11 @@ impl Capture {
         let Some(lock) = self.read() else { return };
         let mut missing = Missing::new();
         for s in self.surfaces.lock().unwrap_or_else(|e| e.into_inner()).iter() {
-            if s.waiting || s.packed || lock.packs.contains_key(&s.key) || self.found.contains_key(&s.key) {
+            let Some(key) = &s.key else { continue };
+            if s.packed || lock.packs.contains_key(key) || self.found.contains_key(key) {
                 continue;
             }
-            missing.entry(s.key.clone()).or_insert((s.class, BTreeSet::new())).1.insert(s.file.clone());
+            missing.entry(key.clone()).or_insert((s.class, BTreeSet::new())).1.insert(s.file.clone());
         }
         let now = Instant::now();
         self.since.retain(|key, _| missing.contains_key(key));

@@ -31,12 +31,11 @@ const PACK: &str = "TexturePackContent";
 #[derive(Debug, Clone, PartialEq)]
 pub struct Surface {
     pub class: &'static str,
-    /// Its pack key, as opossum.lock's `packs.` lines hold it.
-    pub key: String,
+    /// Its pack key, as opossum.lock's `packs.` lines hold it; None while a map's `$asset` has no upload or read yet,
+    /// so the key it will have is not known.
+    pub key: Option<String>,
     /// It holds a pack of its own (one Studio baked into a model file), which the lock's never replaces.
     pub packed: bool,
-    /// A map's `$asset` has no upload or read yet, so its key is not the one it will have.
-    pub waiting: bool,
     /// The file it was read from.
     pub file: PathBuf,
 }

@@ -430,6 +430,9 @@ export = ids
         // a literal id the lock holds is left as written
         let pasted = Some(place::Variant::Content(Content::from_uri("rbxassetid://12")));
         assert_eq!(prop(&place, "Pasted", "TextureContent"), pasted);
+        // a map the read lacks is drawn empty, not waited on: the surface's key is what it will stay
+        let keys: Vec<Option<String>> = place.surfaces().into_iter().map(|s| s.key).collect();
+        assert_eq!(keys, [Some("SurfaceAppearance|rbxassetid://12|||".to_owned())]);
 
         let mut got: Vec<(&str, String)> = diags.iter().map(|d| (d.code, d.message.clone())).collect();
         got.sort();
