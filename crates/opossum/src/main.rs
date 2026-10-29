@@ -16,6 +16,7 @@ mod inputs;
 #[allow(dead_code)] // until the asset commands use all of it
 mod lock;
 mod packages;
+mod plan;
 #[allow(dead_code)] // until the asset commands use it
 mod signals;
 
@@ -27,6 +28,7 @@ use std::time::Instant;
 use build::Session;
 use config::Config;
 use diag::Diag;
+use serde_json::{Value, json};
 
 #[global_allocator]
 static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
@@ -44,6 +46,7 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
               --local [--interpreted]                        in fresh Luau VMs here, src/**/*.local.spec.luau
               --cloud [--place <p>] [--environment <e>]      not exec: on Open Cloud through tessera (saves a
                                                              place version to Roblox)
+  plan [--environment <e>] [--json]                          every asset's state against opossum.lock; offline
   play [--run] [--timeout <s>] [--json]                      start a Studio playtest through opossum dev
   stop [--timeout <s>] [--json]                              end it and sum up what it logged
   pull [--timeout <s>] [--json] <Instance.Path> [<file.rbxm>]
@@ -59,6 +62,7 @@ enum Command {
     Build { profile: Option<String>, environment: Option<String>, out: Option<PathBuf>, emit: Option<PathBuf> },
     Check { profile: Option<String>, environment: Option<String>, json: bool },
     Dev { environment: Option<String>, json: bool },
+    Plan { environment: Option<String>, json: bool },
     Exec(exec::Options, exec::Target, exec::Source),
     Test(exec::Options, exec::Target, exec::Tests),
     Play(exec::Options, bool),
@@ -134,7 +138,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     let timed = runs || matches!(verb, Some("play" | "stop" | "pull" | "attach"));
     let targeted = realm.is_some() || local || interpreted || cloud || place.is_some();
     // the ids `opossum/resources` holds, or where a cloud run runs
-    let environed = tests || matches!(verb, Some("build" | "check" | "dev"));
+    let environed = tests || matches!(verb, Some("build" | "check" | "dev" | "plan"));
     let stray = targeted && !runs
         || environment.is_some() && !environed
         || timeout.is_some() && !timed
@@ -149,6 +153,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         (Some("build"), [], _) if !json => Command::Build { profile, environment, out, emit },
         (Some("check"), [], _) if out.is_none() && emit.is_none() => Command::Check { profile, environment, json },
         (Some("dev"), [], _) if !built => Command::Dev { environment, json },
+        (Some("plan"), [], _) if !built => Command::Plan { environment, json },
         (Some("exec"), [], Some(target)) if code.is_some() && !built => {
             Command::Exec(options(), target, exec::Source::Code(code.clone().unwrap_or_default()))
         }
@@ -236,6 +241,13 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         }
         _ => {}
     }
+    if let Command::Plan { environment, json } = &command {
+        let outcome = match config::load(&file) {
+            Ok(cfg) => plan::plan(&cfg, environment.as_deref()),
+            Err(error) => Outcome::refused("config", error),
+        };
+        return finish(outcome, *json);
+    }
     let cfg = config::load(&file)?;
     // dev wrote what the editor reads; these only talk to it
     match command {
@@ -266,6 +278,7 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Command::Plugin(_)
         | Command::Migrate
         | Command::Dev { .. }
+        | Command::Plan { .. }
         | Command::Exec(..)
         | Command::Test(..)
         | Command::Play(..)
@@ -273,6 +286,37 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         | Command::Pull(..)
         | Command::Status(..)
         | Command::Attach(..) => unreachable!("handled above"),
+    }
+}
+
+/// What a command that may change Roblox state or `opossum.lock` did, for [`finish`] to print: its exit status (0
+/// done, 1 it ran and something failed or needs the user, 2 it never ran and sent nothing), its `--json` object and
+/// its text. A refusal's text is its error.
+pub struct Outcome {
+    pub exit: u8,
+    pub json: Value,
+    pub text: String,
+}
+
+impl Outcome {
+    /// It never ran: `{"ok": false, "ran": false, "error", "code"}`, `code` a diagnostic code agents branch on.
+    pub fn refused(code: &str, error: String) -> Outcome {
+        Outcome { exit: 2, json: json!({ "ok": false, "ran": false, "error": error, "code": code }), text: error }
+    }
+}
+
+/// Prints `outcome` on stdout: its JSON object with `--json`, else its text. A refusal's error comes back for `main`
+/// to print on stderr and exit 2 with.
+fn finish(outcome: Outcome, json: bool) -> Result<bool, String> {
+    if json {
+        println!("{}", outcome.json);
+    } else if outcome.exit != 2 {
+        print!("{}", outcome.text);
+    }
+    match outcome.exit {
+        0 => Ok(true),
+        1 => Ok(false),
+        _ => Err(outcome.text),
     }
 }
 
