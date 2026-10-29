@@ -7,30 +7,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cloud::AssetKind;
-use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use media::{Image, ImageOptions};
 
+use crate::config::AssetSet;
 use crate::diag::{Diag, Severity};
-
-/// One `[assets]` entry: module `opossum/<name>` holds the ids of the files under `root` (project-relative,
-/// `/`-separated) that `include` matches and `exclude` does not, outside any other set's root nested in it.
-pub struct Set {
-    pub name: String,
-    pub root: String,
-    pub image: ImageOptions,
-    pub include: GlobSet,
-    pub exclude: GlobSet,
-}
-
-/// A set's `include` or `exclude` patterns: relative to its root, matched against the whole path, `*` within one
-/// segment and `**` across any number of them.
-pub fn globs(patterns: &[String]) -> Result<GlobSet, String> {
-    let mut set = GlobSetBuilder::new();
-    for p in patterns {
-        set.add(GlobBuilder::new(p).literal_separator(true).build().map_err(|e| format!("`{p}`: {e}"))?);
-    }
-    set.build().map_err(|e| e.to_string())
-}
 
 pub struct Asset {
     /// Its set's index.
@@ -71,7 +51,7 @@ fn supported(ext: &str) -> Option<(&'static str, AssetKind)> {
 /// that is another set's root: the innermost root owns its files. Errors (a root that cannot be read, a file opossum
 /// cannot upload, two files with one key, a key that is also a directory) are build errors, and the files they name
 /// are left out.
-pub fn discover(root: &Path, sets: &[Set]) -> (Vec<Asset>, Vec<Diag>) {
+pub fn discover(root: &Path, sets: &[AssetSet]) -> (Vec<Asset>, Vec<Diag>) {
     let mut assets = Vec::new();
     let mut diags = Vec::new();
     for (i, set) in sets.iter().enumerate() {
@@ -82,7 +62,7 @@ pub fn discover(root: &Path, sets: &[Set]) -> (Vec<Asset>, Vec<Diag>) {
         walk(root, &set.root, "", &others, &mut files, &mut diags);
         let mut found: Vec<Asset> = Vec::new();
         for rel in files {
-            if !set.include.is_match(&rel) || set.exclude.is_match(&rel) {
+            if !set.selects(&rel) {
                 continue;
             }
             let file = join(&set.root, &rel);
@@ -195,7 +175,7 @@ pub fn hash(ext: &str, image: ImageOptions, bytes: &[u8]) -> String {
 
 /// Every asset's input hash, read and hashed on all cores, in `assets` order; a file that cannot be read is an error
 /// in its slot.
-pub fn hash_all(root: &Path, sets: &[Set], assets: &[Asset]) -> Vec<Result<String, String>> {
+pub fn hash_all(root: &Path, sets: &[AssetSet], assets: &[Asset]) -> Vec<Result<String, String>> {
     let next = AtomicUsize::new(0);
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(assets.len());
     let mut out: Vec<Result<String, String>> = assets.iter().map(|_| Err(String::new())).collect();
@@ -296,6 +276,7 @@ mod tests {
     use media::Preset;
 
     use super::*;
+    use crate::config::glob_set;
 
     fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("opossum-assets-{name}-{}", std::process::id()));
@@ -304,14 +285,14 @@ mod tests {
         dir
     }
 
-    fn set(name: &str, root: &str, include: &[&str], exclude: &[&str]) -> Set {
-        let strings = |p: &[&str]| p.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        Set {
+    fn set(name: &str, root: &str, include: &[&str], exclude: &[&str]) -> AssetSet {
+        let globs = |p: &[&str]| glob_set(&p.iter().map(|s| s.to_string()).collect::<Vec<_>>(), name).unwrap();
+        AssetSet {
             name: name.into(),
             root: root.into(),
             image: ImageOptions::DEFAULT,
-            include: globs(&strings(include)).unwrap(),
-            exclude: globs(&strings(exclude)).unwrap(),
+            include: Some(globs(include)),
+            exclude: globs(exclude),
         }
     }
 

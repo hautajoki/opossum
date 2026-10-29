@@ -437,7 +437,7 @@ fn normalize(path: &str) -> Option<String> {
 }
 
 /// Git-style globs on `/`-separated relative paths: `*` stays within a segment and `**` spans them.
-fn glob_set(patterns: &[String], path: &str) -> Result<GlobSet, String> {
+pub(crate) fn glob_set(patterns: &[String], path: &str) -> Result<GlobSet, String> {
     let mut set = GlobSetBuilder::new();
     for p in patterns {
         if p.is_empty() || p.starts_with('/') || p.split('/').any(|s| s == "." || s == "..") {
