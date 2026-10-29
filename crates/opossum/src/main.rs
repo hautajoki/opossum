@@ -443,21 +443,25 @@ fn adopt(file: &Path, cwd: &Path, what: &Adopted, id: Option<u64>) -> Outcome {
     }
 }
 
-/// The Open Cloud client with the project's API key, refused without one. `OPOSSUM_OPEN_CLOUD_URL` may point it at a
-/// [`cloud::loopback`] mock (for end-to-end checks) and nowhere else, so the variable can never send the key off the
-/// machine.
+/// The Open Cloud client with the project's API key, refused without one. `OPOSSUM_OPEN_CLOUD_URL` points it at a mock
+/// on this machine instead (`http://127.0.0.1:<port>` or `http://localhost:<port>`, nothing else), which is sent the
+/// key `mock`: the project's key is not even read then, so an end-to-end check never hands it to whatever listens on
+/// that port.
 fn open_cloud(root: &Path) -> Result<Client, Outcome> {
-    let base = match std::env::var("OPOSSUM_OPEN_CLOUD_URL") {
-        Err(std::env::VarError::NotPresent) => cloud::ROBLOX.to_owned(),
-        Ok(url) if cloud::loopback(&url) => url,
+    let (base, key) = match std::env::var("OPOSSUM_OPEN_CLOUD_URL") {
+        Err(std::env::VarError::NotPresent) => match inputs::api_key(root) {
+            Some(key) => (cloud::ROBLOX.to_owned(), key),
+            None => {
+                let error =
+                    "no Open Cloud API key: set ROBLOX_OPEN_CLOUD_API_KEY in the environment, .env.local or .env";
+                return Err(Outcome::refused("cloud.credentials", error.into()));
+            }
+        },
+        Ok(url) if cloud::loopback(&url) => (url, "mock".to_owned()),
         _ => {
             let error = "OPOSSUM_OPEN_CLOUD_URL must be http://127.0.0.1:<port> or http://localhost:<port>";
             return Err(Outcome::refused("cloud.baseUrl", error.into()));
         }
-    };
-    let Some(key) = inputs::api_key(root) else {
-        let error = "no Open Cloud API key: set ROBLOX_OPEN_CLOUD_API_KEY in the environment, .env.local or .env";
-        return Err(Outcome::refused("cloud.credentials", error.into()));
     };
     Client::new(&key, &base, Clock::Real).map_err(|error| Outcome::refused("cloud.credentials", error))
 }
