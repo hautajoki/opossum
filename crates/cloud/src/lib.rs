@@ -309,7 +309,8 @@ fn agent(pool: bool) -> ureq::Agent {
         .into()
 }
 
-/// One request with its connect, send-body, receive-response and receive-body limits.
+/// One request with a limit on every phase: resolve and connect (`connect` each), send the request and its body
+/// (`send` each), receive the response and its body.
 fn exchange<S: ureq::AsSendBody>(
     agent: &ureq::Agent,
     request: http::Request<S>,
@@ -317,7 +318,9 @@ fn exchange<S: ureq::AsSendBody>(
 ) -> Result<http::Response<ureq::Body>, ureq::Error> {
     let request = agent
         .configure_request(request)
+        .timeout_resolve(Some(connect))
         .timeout_connect(Some(connect))
+        .timeout_send_request(Some(send))
         .timeout_send_body(Some(send))
         .timeout_recv_response(Some(recv))
         .timeout_recv_body(Some(body))
