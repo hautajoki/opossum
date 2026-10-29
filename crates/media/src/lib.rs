@@ -1,8 +1,10 @@
 //! Asset media as pure functions over bytes: the image pipeline (PNG, SVG, JPEG headers, bleed, resize, encode),
 //! audio inspection (Ogg, WAV, MP3, FLAC) and the MIME table. No files, cache or config.
 
+mod audio;
 mod image;
 
+pub use audio::{Audio, inspect_audio};
 pub use image::{Fit, IMAGE_VERSION, Image, ImageOptions, MAX_SIDE, Preset, fit, pipeline, process};
 
 /// Open Cloud takes no asset over 20 MB (decimal); the caller reports a larger file as too large.
