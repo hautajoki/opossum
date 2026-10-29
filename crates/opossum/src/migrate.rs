@@ -923,8 +923,7 @@ fn import_lock(
         let new = lock::Asset {
             id: Some(im.record.id),
             hash: Some(if fresh { hash.clone() } else { "0".repeat(32) }),
-            next: None,
-            op: None,
+            ..lock::Asset::default()
         };
         // a merge's several records for the file settle on the one holding it as it is
         let _ = lock.settle(root, file, &hash);

@@ -25,13 +25,15 @@ const HEADER: &str =
 const VERSION: i64 = 1;
 
 /// One source file's record. `hash` is the input hash of what `id` holds; `next` is the input hash of a create in
-/// flight and `op` its operation, so `next` without `op` is a create that may or may not have happened.
+/// flight and `op` its operation, so `next` without `op` is a create that may or may not have happened. `rejected` is
+/// the input hash of content Roblox refused (moderation, processing): the same bytes are never sent again.
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub struct Asset {
     pub id: Option<u64>,
     pub hash: Option<String>,
     pub next: Option<String>,
     pub op: Option<String>,
+    pub rejected: Option<String>,
 }
 
 /// One resource's applied values: what Roblox holds, not a fingerprint of it, so a plan diffs field by field. Image
@@ -317,6 +319,7 @@ fn asset(v: &toml::Value) -> Result<Asset, String> {
             "id" => a.id = Some(positive(v, k)?),
             "hash" => a.hash = Some(hash(v, k)?),
             "next" => a.next = Some(hash(v, k)?),
+            "rejected" => a.rejected = Some(hash(v, k)?),
             "op" => {
                 let op = v.as_str().filter(|op| {
                     op.strip_prefix("operations/").is_some_and(|id| {
@@ -331,8 +334,8 @@ fn asset(v: &toml::Value) -> Result<Asset, String> {
     if a.id.is_some() != a.hash.is_some() {
         return Err("`id` and `hash` come together".into());
     }
-    if a.id.is_none() && a.next.is_none() {
-        return Err("a record needs `id` or `next`".into());
+    if a.id.is_none() && a.next.is_none() && a.rejected.is_none() {
+        return Err("a record needs `id`, `next` or `rejected`".into());
     }
     if a.op.is_some() && a.next.is_none() {
         return Err("`op` needs `next`".into());
@@ -433,7 +436,7 @@ fn asset_fields(a: &Asset) -> String {
     if let Some(id) = a.id {
         fields.push(("id", id.to_string()));
     }
-    for (name, value) in [("hash", &a.hash), ("next", &a.next), ("op", &a.op)] {
+    for (name, value) in [("hash", &a.hash), ("next", &a.next), ("op", &a.op), ("rejected", &a.rejected)] {
         if let Some(s) = value {
             fields.push((name, string(s)));
         }
@@ -706,7 +709,7 @@ universes.15302144394."thumbnail/main" = { id = 55, altText = "Lobby", image = "
             ("assets.\"a\" = { id = 1 }", "`id` and `hash` come together"),
             ("assets.\"a\" = { id = 0, hash = \"H\" }", "`id` must be a positive integer"),
             ("assets.\"a\" = { next = \"H\", op = \"operations/a/b\" }", "`op` must be operations/<id>"),
-            ("assets.\"a\" = { op = \"operations/a\" }", "a record needs `id` or `next`"),
+            ("assets.\"a\" = { op = \"operations/a\" }", "a record needs `id`, `next` or `rejected`"),
             ("assets.\"a\" = { id = 1, hash = \"H\", url = \"x\" }", "unknown field `url`"),
             ("assets = { a = { next = \"H\" }, b = { next = \"H\" } }", "one record per line"),
             ("universes.1.\"pass/vip\" = { price = \"1\" }", "`price` must be a positive integer"),

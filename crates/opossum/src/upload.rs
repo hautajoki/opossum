@@ -136,11 +136,16 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
                 report.ambiguous.push((a.file.clone(), settle(&a.file)));
                 continue;
             }
+            State::Rejected => {
+                report.failed.push((a.file.clone(), plan::refused(&a.file), "asset.rejected".into()));
+                continue;
+            }
             // a later change waits for the next run: this one finishes what was started
             State::Pending => (record.next.clone().unwrap_or_default(), record.op.clone()),
             State::New | State::Changed => match held.get(hash) {
                 Some(&id) => {
-                    lock.assets.insert(a.file.clone(), Asset { id: Some(id), hash: Some(hash.clone()), ..record });
+                    let bound = Asset { id: Some(id), hash: Some(hash.clone()), rejected: None, ..record };
+                    lock.assets.insert(a.file.clone(), bound);
                     report.reused += 1;
                     continue;
                 }
@@ -318,14 +323,15 @@ fn intent(lock: &mut Lock, g: &Group, found: &[File]) {
     }
 }
 
-/// Forgets a file's upload in flight: its operation, and with `next` the intent too. A record left with no id goes.
+/// Forgets a file's upload in flight: its operation, and with `next` the intent too. A record left holding nothing
+/// goes.
 fn forget(lock: &mut Lock, file: &str, next: bool) {
     let Some(r) = lock.assets.get_mut(file) else { return };
     r.op = None;
     if next {
         r.next = None;
     }
-    if r.id.is_none() && r.next.is_none() {
+    if r.id.is_none() && r.next.is_none() && r.rejected.is_none() {
         lock.assets.remove(file);
     }
 }
@@ -446,8 +452,8 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
         }
         Event::Done(id, reviewing) => {
             for file in files() {
-                lock.assets
-                    .insert(file.into(), Asset { id: Some(id), hash: Some(g.hash.clone()), next: None, op: None });
+                let bound = Asset { id: Some(id), hash: Some(g.hash.clone()), ..Asset::default() };
+                lock.assets.insert(file.into(), bound);
             }
             report.uploaded += g.members.len();
             if reviewing {
@@ -455,9 +461,12 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
             }
         }
         Event::Terminal(code, message) => {
+            // the same bytes would be refused again (and each moderation hit counts against the account)
             for file in files() {
                 forget(lock, file, true);
-                report.failed.push((file.into(), message.clone(), code.into()));
+                lock.assets.entry(file.to_owned()).or_default().rejected = Some(g.hash.clone());
+                let message = format!("{message}; not sent again until the file changes");
+                report.failed.push((file.into(), message, code.into()));
             }
         }
         Event::Expired => {
@@ -532,9 +541,9 @@ fn outcome(r: Report, broken: Option<Diag>, auth: bool, stopped: bool) -> Outcom
 }
 
 /// `opossum adopt asset <file> (<id> | --none)`: settles an upload whose create may or may not have happened. With an
-/// id, the file is bound to it as holding the content the upload sent; with `--none` (`id` None) the upload is
-/// forgotten, so the next `opossum upload` sends it again. An upload with an operation to ask is `opossum upload`'s to
-/// resume, unless it is forgotten.
+/// id, the file is bound to it as holding the content the upload sent; with `--none` (`id` None) the upload, or
+/// Roblox's refusal of the content, is forgotten, so the next `opossum upload` sends it again. An upload with an
+/// operation to ask is `opossum upload`'s to resume, unless it is forgotten.
 pub fn adopt_asset(cfg: &Config, guard: &RemoteGuard, cwd: &Path, file: &str, id: Option<u64>) -> Outcome {
     let root = &cfg.root;
     let key = match canonical_prefix(&cwd.join(file)).map(|p| p.strip_prefix(root).map(Path::to_path_buf)) {
@@ -552,28 +561,31 @@ pub fn adopt_asset(cfg: &Config, guard: &RemoteGuard, cwd: &Path, file: &str, id
     let Some(record) = lock.assets.get(&key).cloned() else {
         return refuse(format!("{key} has no record in opossum.lock"));
     };
-    let Some(next) = record.next.clone() else {
-        return refuse(format!("{key} has no upload in flight, so there is nothing to adopt"));
-    };
-    match (id, &record.op) {
-        (Some(_), Some(op)) => {
+    let text = match (id, record.next, &record.op) {
+        (Some(_), Some(_), Some(op)) => {
             return refuse(format!("{key}'s upload has an operation ({op}) to ask; `opossum upload` resumes it"));
         }
-        (Some(id), None) => {
-            lock.assets.insert(key.clone(), Asset { id: Some(id), hash: Some(next), next: None, op: None });
+        (Some(id), Some(next), None) => {
+            lock.assets.insert(key.clone(), Asset { id: Some(id), hash: Some(next), ..Asset::default() });
+            format!("adopted {key} as {id}\n")
         }
-        (None, _) => forget(&mut lock, &key, true),
-    }
+        (None, next, _) if next.is_some() || record.rejected.is_some() => {
+            if let Some(r) = lock.assets.get_mut(&key) {
+                r.rejected = None;
+            }
+            forget(&mut lock, &key, true);
+            let what = if next.is_some() { "the upload" } else { "Roblox's refusal" };
+            format!("forgot {what} of {key}; `opossum upload` sends it again\n")
+        }
+        _ => return refuse(format!("{key} has no upload in flight, so there is nothing to adopt")),
+    };
     lock.merged.remove(&key);
     if let Err(d) = lock::save(&mut lock, root, guard) {
         return Outcome::refused(&d.code, d.message);
     }
-    let (json, text) = match id {
-        Some(id) => (json!({ "ok": true, "asset": key, "id": id }), format!("adopted {key} as {id}\n")),
-        None => (
-            json!({ "ok": true, "asset": key }),
-            format!("forgot the upload of {key}; `opossum upload` sends it again\n"),
-        ),
+    let json = match id {
+        Some(id) => json!({ "ok": true, "asset": key, "id": id }),
+        None => json!({ "ok": true, "asset": key }),
     };
     Outcome { exit: 0, json, text }
 }
@@ -660,7 +672,7 @@ mod tests {
         let out = run(&root, &mock, &stop);
         assert_eq!((out.exit, &out.json["uploaded"]), (0, &json!(2)), "{}", out.json);
         assert_eq!((sent(&mock, "POST", ""), sent(&mock, "GET", "")), (1, 1));
-        let bound = Asset { id: Some(77), hash: Some(hash("x")), next: None, op: None };
+        let bound = Asset { id: Some(77), hash: Some(hash("x")), ..Asset::default() };
         assert_eq!((record(&root, "art/a.glb"), record(&root, "art/b.glb")), (Some(bound.clone()), Some(bound)));
 
         std::fs::rename(root.join("art/a.glb"), root.join("art/c.glb")).unwrap();
@@ -842,6 +854,30 @@ mod tests {
             record(&root, "art/model.fbx"),
             Some(Asset { id: Some(split), hash: Some(newer), ..Asset::default() })
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Every moderation hit counts against the account, so refused bytes stay unsent until the user says otherwise.
+    #[test]
+    fn content_roblox_refused_is_not_sent_again_until_it_changes_or_the_refusal_is_forgotten() {
+        let root = project("rejected", &[("a.glb", "x")]);
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        let rejected = json!({ "path": "operations/1", "done": true,
+                               "response": { "assetId": 5, "moderationResult": { "moderationState": "Rejected" } } });
+        mock.on("POST", "assets/v1/assets", Reply::json(200, &rejected));
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!((out.exit, &out.json["failed"][0]["code"]), (1, &json!("asset.moderated")));
+        assert_eq!(record(&root, "art/a.glb"), Some(Asset { rejected: Some(hash("x")), ..Asset::default() }));
+
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!(
+            (out.exit, &out.json["failed"][0]["code"], sent(&mock, "POST", "")),
+            (1, &json!("asset.rejected"), 1)
+        );
+        assert_eq!(adopt(&root, "art/a.glb", None).exit, 0);
+        assert_eq!(record(&root, "art/a.glb"), None);
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!((out.exit, sent(&mock, "POST", "")), (0, 2));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

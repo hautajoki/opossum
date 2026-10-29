@@ -24,6 +24,9 @@ pub enum State {
     Pending,
     /// An upload may or may not have happened, and nothing says which: `opossum adopt asset` decides.
     Ambiguous,
+    /// Roblox refused this content when it was sent: it is not sent again until the file changes, or `opossum adopt
+    /// asset --none` forgets the refusal.
+    Rejected,
 }
 
 impl State {
@@ -34,6 +37,7 @@ impl State {
             State::New => "new",
             State::Pending => "pending",
             State::Ambiguous => "ambiguous",
+            State::Rejected => "rejected",
         }
     }
 }
@@ -44,6 +48,7 @@ pub fn state(record: Option<&Asset>, hash: &str) -> State {
     match record {
         Some(Asset { next: Some(_), op: None, .. }) => State::Ambiguous,
         Some(Asset { next: Some(_), .. }) => State::Pending,
+        Some(Asset { rejected: Some(r), .. }) if r == hash => State::Rejected,
         Some(Asset { id: Some(_), hash: Some(h), .. }) if h == hash => State::Current,
         Some(Asset { id: Some(_), .. }) => State::Changed,
         _ => State::New,
@@ -64,9 +69,9 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
     };
     let mut text = String::new();
     let mut sets = Vec::new();
-    let mut ambiguous = 0;
+    let (mut ambiguous, mut rejected) = (0, 0);
     for (i, set) in cfg.assets.iter().enumerate() {
-        let (mut files, mut lines, mut counts) = (Vec::new(), String::new(), [0; 5]);
+        let (mut files, mut lines, mut counts) = (Vec::new(), String::new(), [0; 6]);
         for (a, hash) in found.iter().zip(&hashes).filter(|(a, _)| a.set == i) {
             // a merge's records for the file: the one whose id holds it, if any
             if let Some(warning) = lock.settle(root, &a.file, hash) {
@@ -87,21 +92,24 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
                     "ambiguous {0} (an upload may have happened: opossum adopt asset {0} <id>, or --none)",
                     a.file
                 ),
+                State::Rejected => writeln!(lines, "rejected  {} ({})", a.file, refused(&a.file)),
                 _ => writeln!(lines, "{:<9} {}", state.name(), a.file),
             };
         }
         ambiguous += counts[State::Ambiguous as usize];
+        rejected += counts[State::Rejected as usize];
         let n = |state: State| count(counts[state as usize]);
         let _ = writeln!(
             text,
-            "{}: {} files, {} current, {} changed, {} new, {} pending, {} ambiguous",
+            "{}: {} files, {} current, {} changed, {} new, {} pending, {} ambiguous, {} rejected",
             set.name,
             count(files.len()),
             n(State::Current),
             n(State::Changed),
             n(State::New),
             n(State::Pending),
-            n(State::Ambiguous)
+            n(State::Ambiguous),
+            n(State::Rejected)
         );
         text.push_str(&lines);
         sets.push(json!({ "set": set.name, "module": format!("opossum/{}", set.name), "files": files }));
@@ -128,6 +136,9 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
         let error =
             format!("uploads of {ambiguous} files may or may not have happened; `opossum adopt asset` settles each");
         ("asset.ambiguous", error)
+    } else if rejected > 0 {
+        let error = format!("Roblox refused the content of {rejected} files; change them or forget the refusal");
+        ("asset.rejected", error)
     } else if blocked > 0 {
         let error =
             format!("creates of {blocked} resources may or may not have happened; `opossum adopt` settles each");
@@ -140,6 +151,14 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
     json["code"] = error.0.into();
     json["error"] = error.1.into();
     Outcome { exit: 1, json, text }
+}
+
+/// What to do about a file whose content Roblox refused.
+pub fn refused(file: &str) -> String {
+    format!(
+        "Roblox refused this content when it was sent; change the file, or `opossum adopt asset {file} --none` to send \
+         it again"
+    )
 }
 
 /// The lock, every asset file and each file's input hash, for a command about to compare them. Errors in the lock or
