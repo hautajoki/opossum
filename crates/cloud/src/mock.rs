@@ -7,6 +7,7 @@
 //! a stateful stand-in for every endpoint opossum calls.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -129,6 +130,11 @@ impl Reply {
         Reply::Status { status, headers, body: value.to_string().into_bytes() }
     }
 
+    /// A body that is not JSON, such as an asset's content.
+    pub fn bytes(status: u16, body: Vec<u8>) -> Reply {
+        Reply::Status { status, headers: vec![("Content-Type".into(), "application/octet-stream".into())], body }
+    }
+
     pub fn header(mut self, name: &str, value: &str) -> Reply {
         if let Reply::Status { headers, .. } = &mut self {
             headers.push((name.into(), value.into()));
@@ -236,7 +242,8 @@ pub fn serve(port: u16, results: Vec<Value>) -> Result<(), String> {
 }
 
 /// A stateful stand-in for the endpoints opossum calls. Asset creates answer with an operation that is done at its
-/// first poll (new ids count up from 1000001); place saves count versions up per place; tasks run at the version asked
+/// first poll (new ids count up from 1000001); a glb's id is also given a delivery `location` on this server, which
+/// serves the import Roblox would make of it ([`import`]), gzipped as the CDN sends it; place saves count versions up per place; tasks run at the version asked
 /// for, or the place's last saved one, and complete at their first poll with no results and no logs; pass, product,
 /// badge and thumbnail creates answer with ids counting up from 2000001, and every other resource call succeeds.
 pub fn auto() -> Fallback {
@@ -251,6 +258,8 @@ struct Auto {
     operations: HashMap<String, u64>,
     /// `universe/place` → its last version.
     versions: HashMap<String, u64>,
+    /// A created glb's id → its JSON chunk.
+    models: HashMap<u64, Value>,
     /// What every task returns.
     results: Vec<Value>,
 }
@@ -261,8 +270,28 @@ impl Auto {
         match (r.method.as_str(), &segments[..]) {
             ("POST", ["assets", "v1", "assets"]) => {
                 self.next += 1;
-                self.operation(1_000_000 + self.next)
+                let id = 1_000_000 + self.next;
+                if let Some(gltf) = form_part(r, "fileContent").and_then(glb_json) {
+                    self.models.insert(id, gltf);
+                }
+                self.operation(id)
             }
+            ("GET", ["asset-delivery-api", "v1", "assetId", id]) => match id.parse() {
+                Ok(id) if self.models.contains_key(&id) => {
+                    let host = r.header("host").unwrap_or("127.0.0.1");
+                    Reply::json(200, &json!({"location": format!("http://{host}/_mock/content/{id}")}))
+                }
+                _ => not_found(r),
+            },
+            ("GET", ["_mock", "content", id]) => match id.parse().ok().and_then(|id| Some((id, self.models.get(&id)?)))
+            {
+                Some((id, gltf)) => {
+                    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+                    gz.write_all(import(id, gltf).as_bytes()).expect("gzip into memory");
+                    Reply::bytes(200, gz.finish().expect("gzip into memory"))
+                }
+                None => not_found(r),
+            },
             ("GET", ["assets", "v1", "operations", _]) => match self.operations.get(&r.path["assets/v1/".len()..]) {
                 Some(id) => Reply::json(
                     200,
@@ -327,6 +356,108 @@ impl Auto {
     }
 }
 
+/// The bytes of form-data part `name` in a body [`crate::multipart`] built.
+fn form_part<'a>(r: &'a Request, name: &str) -> Option<&'a [u8]> {
+    let boundary = r.header("content-type")?.split_once("boundary=")?.1;
+    let body = &r.body[..];
+    let at = find(body, format!("name=\"{name}\"").as_bytes())?;
+    let start = at + find(&body[at..], b"\r\n\r\n")? + 4;
+    let len = find(&body[start..], format!("\r\n--{boundary}").as_bytes())?;
+    Some(&body[start..start + len])
+}
+
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w[0] == needle[0] && w == needle)
+}
+
+/// A glb's JSON chunk, or `None` for anything that is not a glb.
+fn glb_json(bytes: &[u8]) -> Option<Value> {
+    let len = u32::from_le_bytes(bytes.get(12..16)?.try_into().ok()?) as usize;
+    if bytes.get(..4)? != b"glTF" || bytes.get(16..20)? != b"JSON" {
+        return None;
+    }
+    serde_json::from_slice(bytes.get(20..20 + len)?).ok()
+}
+
+/// The rbxmx Roblox's import makes of the glb whose JSON is `gltf`, uploaded as asset `id`, in the shape of a real one
+/// (a real one, loaded in Studio): a Model holding the node tree as `<name>_Node` Models, a mesh node's own MeshPart
+/// named after it inside its `_Node`, with `MeshContent`, `InitialSize` (the POSITION extent times the node's scale)
+/// and, when its material has textures, a SurfaceAppearance with a map per channel. Ids are made up from `id`: meshes
+/// `id + 10^12 + node`, maps `id + 2·10^12 + 4·material + channel`, so parts sharing a material share maps as they do.
+fn import(id: u64, gltf: &Value) -> String {
+    let nodes = gltf["nodes"].as_array().map_or(&[][..], Vec::as_slice);
+    let scene = &gltf["scenes"][gltf["scene"].as_u64().unwrap_or(0) as usize]["nodes"];
+    let roots: Vec<usize> = match scene.as_array() {
+        Some(roots) => roots.iter().filter_map(Value::as_u64).map(|n| n as usize).collect(),
+        None => {
+            let child =
+                |i: usize| nodes.iter().any(|n| n["children"].as_array().is_some_and(|c| c.contains(&json!(i))));
+            (0..nodes.len()).filter(|&i| !child(i)).collect()
+        }
+    };
+    let mut xml = String::from("<roblox version=\"4\">\n");
+    let mut refs = 0;
+    open(&mut xml, &mut refs, "Model", "Model");
+    xml += "</Properties>\n";
+    for root in roots {
+        node(&mut xml, &mut refs, id, gltf, root);
+    }
+    xml += "</Item>\n</roblox>\n";
+    xml
+}
+
+fn node(xml: &mut String, refs: &mut usize, id: u64, gltf: &Value, i: usize) {
+    let n = &gltf["nodes"][i];
+    let name = n["name"].as_str().unwrap_or("Node");
+    open(xml, refs, "Model", &format!("{name}_Node"));
+    *xml += "</Properties>\n";
+    if let Some(mesh) = n["mesh"].as_u64() {
+        let primitive = &gltf["meshes"][mesh as usize]["primitives"][0];
+        let position = &gltf["accessors"][primitive["attributes"]["POSITION"].as_u64().unwrap_or(u64::MAX) as usize];
+        let axis = |k: usize| {
+            let at = |v: &Value| v[k].as_f64().unwrap_or(0.0);
+            ((at(&position["max"]) - at(&position["min"])) * n["scale"][k].as_f64().unwrap_or(1.0).abs()) as f32
+        };
+        open(xml, refs, "MeshPart", name);
+        let mesh = id + 1_000_000_000_000 + i as u64;
+        let _ = writeln!(xml, "<Content name=\"MeshContent\"><uri>rbxassetid://{mesh}</uri></Content>");
+        let (x, y, z) = (axis(0), axis(1), axis(2));
+        let _ = writeln!(xml, "<Vector3 name=\"InitialSize\"><X>{x}</X><Y>{y}</Y><Z>{z}</Z></Vector3>\n</Properties>");
+        if let Some(material) = primitive["material"].as_u64() {
+            let m = &gltf["materials"][material as usize];
+            let pbr = &m["pbrMetallicRoughness"];
+            let maps = [
+                ("ColorMapContent", &pbr["baseColorTexture"]),
+                ("NormalMapContent", &m["normalTexture"]),
+                ("RoughnessMapContent", &pbr["metallicRoughnessTexture"]),
+                ("MetalnessMapContent", &pbr["metallicRoughnessTexture"]),
+            ];
+            if maps.iter().any(|(_, t)| !t.is_null()) {
+                open(xml, refs, "SurfaceAppearance", "SurfaceAppearance");
+                for (channel, (property, _)) in maps.iter().enumerate().filter(|(_, (_, t))| !t.is_null()) {
+                    let map = id + 2_000_000_000_000 + 4 * material + channel as u64;
+                    let _ = writeln!(xml, "<Content name=\"{property}\"><uri>rbxassetid://{map}</uri></Content>");
+                }
+                *xml += "</Properties>\n</Item>\n";
+            }
+        }
+        *xml += "</Item>\n";
+    }
+    for child in n["children"].as_array().into_iter().flatten().filter_map(Value::as_u64) {
+        node(xml, refs, id, gltf, child as usize);
+    }
+    *xml += "</Item>\n";
+}
+
+/// Opens an `<Item>` and its `<Properties>` with its Name; the caller adds properties and closes both.
+fn open(xml: &mut String, refs: &mut usize, class: &str, name: &str) {
+    let _ = write!(
+        xml,
+        "<Item class=\"{class}\" referent=\"RBX{refs}\">\n<Properties>\n<string name=\"Name\">{name}</string>\n"
+    );
+    *refs += 1;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,5 +492,64 @@ mod tests {
         let seen = c.json(&call).unwrap();
         assert_eq!(seen.as_array().unwrap().len(), 7);
         assert_eq!(seen[2]["path"], "universes/v1/12/places/34/versions");
+    }
+
+    /// A glb as Blender exports it, but only the JSON chunk the mock reads.
+    fn glb(gltf: &Value) -> Vec<u8> {
+        let mut json = gltf.to_string().into_bytes();
+        json.resize(json.len().div_ceil(4) * 4, b' ');
+        let mut out = b"glTF".to_vec();
+        for n in [2, 20 + json.len() as u32, json.len() as u32] {
+            out.extend(n.to_le_bytes());
+        }
+        out.extend(b"JSON");
+        out.extend(json);
+        out
+    }
+
+    #[test]
+    fn a_created_glb_reads_back_as_its_import_without_the_key() {
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        let c = Client::new("test-key", &mock.base, Clock::Real).unwrap();
+        let gltf = json!({
+            "scenes": [{"nodes": [0]}],
+            "nodes": [{"name": "hull", "mesh": 0, "children": [1]}, {"name": "Lens", "mesh": 1, "scale": [2, 2, 2]}],
+            "meshes": [
+                {"name": "hull", "primitives": [{"attributes": {"POSITION": 0}, "material": 0}]},
+                {"name": "Lens", "primitives": [{"attributes": {"POSITION": 1}, "material": 0}]},
+            ],
+            "accessors": [{"min": [-1, -2, -3], "max": [1, 2, 3]}, {"min": [0, 0, 0], "max": [0.25, 0.5, 0.125]}],
+            "materials": [{
+                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicRoughnessTexture": {"index": 1}},
+                "normalTexture": {"index": 2},
+            }],
+        });
+        let bytes = glb(&gltf);
+        let model = Upload {
+            kind: AssetKind::Model,
+            name: "lantern",
+            description: "lantern.glb",
+            creator: Creator::User(1),
+            ext: ".glb",
+            mime: "model/gltf-binary",
+            bytes: &bytes,
+        };
+        let op = c.create_asset(&model).unwrap();
+        let id = c.wait_operation(&op.path, c.now(), &std::sync::atomic::AtomicBool::new(false)).unwrap().asset_id;
+        let xml = String::from_utf8(c.asset_content(id.unwrap()).unwrap()).unwrap();
+
+        // Lens_Node sits in hull_Node after hull's MeshPart, and the two parts share their one material's four maps
+        let ids: Vec<&str> = xml.split("rbxassetid://").skip(1).map(|s| &s[..s.find('<').unwrap()]).collect();
+        let maps = ["2000001000001", "2000001000002", "2000001000003", "2000001000004"];
+        assert_eq!(ids, [&["1000001000001"][..], &maps, &["1000001000002"], &maps].concat());
+        let at = |s: &str| xml.find(s).unwrap();
+        assert!(at("hull_Node") < at(">hull<") && at(">hull<") < at("Lens_Node") && at("Lens_Node") < at(">Lens<"));
+        assert_eq!(xml.matches("class=\"MeshPart\"").count(), 2);
+        assert!(xml.contains("<X>2</X><Y>4</Y><Z>6</Z>") && xml.contains("<X>0.5</X><Y>1</Y><Z>0.25</Z>"));
+
+        let requests = mock.requests();
+        let sent = |path: &str| requests.iter().find(|r| r.path.starts_with(path)).unwrap().header("x-api-key");
+        assert_eq!(sent("asset-delivery-api/"), Some("test-key"));
+        assert_eq!(sent("_mock/content/"), None);
     }
 }

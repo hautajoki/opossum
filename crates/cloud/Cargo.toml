@@ -11,3 +11,5 @@ publish.workspace = true
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 serde_json.workspace = true
 blake3.workspace = true
+# a model's content comes back gzipped from asset delivery's CDN, and the mock serves it so
+flate2 = "1"

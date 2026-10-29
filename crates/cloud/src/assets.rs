@@ -1,16 +1,21 @@
-//! Assets: create, and the operation it returns.
+//! Assets: create, the operation it returns, and reading an asset's content back.
 
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use flate2::read::GzDecoder;
 use serde_json::{Value, json};
 
-use crate::{Call, Client, Error, ErrorKind, Part, code, id, multipart};
+use crate::{BODY_LIMIT, Call, Client, Error, ErrorKind, Part, absolute, backoff, code, id, multipart};
 
 /// Roblox's limit on an asset file.
 pub const MAX_ASSET: usize = 20_000_000;
 /// How long [`Client::wait_operation`] polls one operation before it gives the file back as pending.
 pub const OPERATION_DEADLINE: Duration = Duration::from_secs(600);
+/// How long [`Client::asset_content`] retries asset delivery's 404: a model may still be processing right after its
+/// operation is done.
+const DELIVERY_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssetKind {
@@ -82,6 +87,8 @@ impl AssetKind {
 
 const CREATE: &str = "create asset";
 const OPERATION: &str = "get asset operation";
+const DELIVERY: &str = "get asset location";
+const CONTENT: &str = "get asset content";
 
 impl Client {
     /// Creates an asset. Not idempotent: the caller saves its intent first, and an ambiguous error keeps it.
@@ -184,6 +191,49 @@ impl Client {
             return Err(self.error(&call, ErrorKind::Decode, format!("asked for {path} and got {got}")));
         }
         Ok(decode(path, &v))
+    }
+
+    /// An asset's content, as asset delivery hands it out (a Model's is the import's rbxm): its `location`, asked for
+    /// with the key and retrying a 404 for [`DELIVERY_WAIT`], then fetched without it and gunzipped when it is gzip
+    /// (the client never asks for gzip, but a CDN may send it anyway).
+    pub fn asset_content(&self, id: u64) -> Result<Vec<u8>, Error> {
+        let call = Call {
+            op: DELIVERY,
+            method: "GET",
+            path: format!("asset-delivery-api/v1/assetId/{id}"),
+            body: None,
+            create: false,
+            long: false,
+        };
+        let mut deadline = self.now() + DELIVERY_WAIT;
+        let mut attempt = 0;
+        let body = loop {
+            let mut waited = Duration::ZERO;
+            let got = self.retrying(&call, &mut waited);
+            deadline += waited;
+            match got {
+                Err(e) if e.kind == ErrorKind::Status(404) && self.now() + backoff(attempt) <= deadline => {
+                    self.sleep(backoff(attempt));
+                    attempt += 1;
+                }
+                got => break got?,
+            }
+        };
+        let location = self.decode(&call, &body)?["location"].as_str().unwrap_or("").to_string();
+        if !absolute(&location) {
+            return Err(self.error(&call, ErrorKind::Decode, format!("the location {location:?} is not a URL")));
+        }
+        let call = Call { op: CONTENT, method: "GET", path: location, body: None, create: false, long: false };
+        let body = self.send(&call)?;
+        if !body.starts_with(&[0x1f, 0x8b]) {
+            return Ok(body);
+        }
+        let mut out = Vec::new();
+        match GzDecoder::new(&body[..]).take(BODY_LIMIT + 1).read_to_end(&mut out) {
+            Ok(n) if n as u64 <= BODY_LIMIT => Ok(out),
+            Ok(_) => Err(self.error(&call, ErrorKind::Decode, format!("gunzipped past {BODY_LIMIT} bytes"))),
+            Err(e) => Err(self.error(&call, ErrorKind::Decode, format!("gunzip: {e}"))),
+        }
     }
 }
 
@@ -336,6 +386,40 @@ mod tests {
         mock.on("GET", "assets/v1/operations/a", Reply::json(200, &pending));
         let op = c.wait_operation("operations/a", c.now() + Duration::from_secs(600), &AtomicBool::new(true)).unwrap();
         assert!(!op.done && fake.slept().len() == 6 && mock.requests().len() == 8);
+    }
+
+    #[test]
+    fn content_comes_back_as_sent_or_gunzipped() {
+        let mock = Mock::start();
+        let location = json!({"location": format!("{}/cdn/a", mock.base)});
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut gz, b"<roblox!zipped").unwrap();
+        for body in [b"<roblox!plain".to_vec(), gz.finish().unwrap()] {
+            mock.on("GET", "asset-delivery-api/v1/assetId/7", Reply::json(200, &location));
+            mock.on("GET", "cdn/a", Reply::bytes(200, body));
+        }
+        let (c, _) = client(&mock.base);
+        assert_eq!(c.asset_content(7).unwrap(), b"<roblox!plain");
+        assert_eq!(c.asset_content(7).unwrap(), b"<roblox!zipped");
+    }
+
+    /// Right after its operation is done a model may still be processing, and delivery answers 404 until it is not.
+    #[test]
+    fn a_delivery_404_is_retried_for_30_s() {
+        let mock = Mock::start();
+        for _ in 0..3 {
+            mock.on("GET", "asset-delivery-api", Reply::json(404, &json!({})));
+        }
+        mock.on("GET", "asset-delivery-api", Reply::json(200, &json!({"location": format!("{}/cdn/a", mock.base)})));
+        mock.on("GET", "cdn/a", Reply::bytes(200, b"model".to_vec()));
+        let (c, fake) = client(&mock.base);
+        assert_eq!(c.asset_content(7).unwrap(), b"model");
+        assert_eq!(fake.slept(), [Duration::from_millis(250), Duration::from_millis(500), Duration::from_secs(1)]);
+
+        // one that never clears gives up before 30 s have passed (0.25 + 0.5 + 1 + 14 × 2)
+        let (c, fake) = client(&mock.base);
+        assert_eq!(c.asset_content(8).unwrap_err().diag(), "cloud.notFound");
+        assert_eq!(fake.slept().iter().sum::<Duration>(), Duration::from_millis(29_750));
     }
 
     #[test]

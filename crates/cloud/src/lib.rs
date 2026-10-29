@@ -33,8 +33,8 @@ const BACKOFF: Duration = Duration::from_millis(250);
 const BACKOFF_MAX: Duration = Duration::from_secs(2);
 /// The longest `Retry-After` honoured. A longer one fails as `cloud.rateLimit` instead of sleeping for an hour.
 const RETRY_AFTER_MAX: Duration = Duration::from_secs(60);
-/// Response bodies read for a decode, and for an error's code and message.
-const BODY_LIMIT: u64 = 8 << 20;
+/// Response bodies read, the largest being an asset's content (a model's import), and an error's code and message.
+pub(crate) const BODY_LIMIT: u64 = 16 << 20;
 const ERROR_LIMIT: u64 = 64 << 10;
 /// The place save's op name: its 409 means the place is open in Studio.
 const SAVE_PLACE: &str = "save place";
@@ -135,8 +135,9 @@ pub enum ErrorKind {
 }
 
 /// One HTTP exchange as the retry loop sees it. `path` is the resource under the base URL, with its query and no
-/// leading `/`. A `create` is not idempotent: it goes out on a fresh connection and is never resent once a byte may
-/// have reached Roblox. `long` waits [`Timeouts::recv_long`] for the answer (uploads Roblox processes before replying).
+/// leading `/`, sent with the key; or an absolute URL Roblox handed back ([`absolute`]), sent as it is without the key.
+/// A `create` is not idempotent: it goes out on a fresh connection and is never resent once a byte may have reached
+/// Roblox. `long` waits [`Timeouts::recv_long`] for the answer (uploads Roblox processes before replying).
 pub(crate) struct Call<'a> {
     pub op: &'static str,
     pub method: &'static str,
@@ -148,7 +149,7 @@ pub(crate) struct Call<'a> {
 }
 
 impl Client {
-    /// The only constructor. `base` is [`ROBLOX`] or a [`loopback`] mock, so a client can talk to nothing else.
+    /// The only constructor. `base` is [`ROBLOX`] or a [`loopback`] mock, so the key goes nowhere else.
     pub fn new(key: &str, base: &str, clock: Clock) -> Result<Client, String> {
         let key = key.trim();
         if key.is_empty() || !key.bytes().all(|b| b.is_ascii_graphic()) {
@@ -220,7 +221,7 @@ impl Client {
                     *waited += d;
                     d
                 }
-                None => (BACKOFF * (1 << (attempt - 1))).min(BACKOFF_MAX),
+                None => backoff(attempt - 1),
             };
             self.clock.sleep(wait);
         }
@@ -232,7 +233,7 @@ impl Client {
         Error {
             op: call.op,
             method: call.method,
-            url: format!("{}/{}", self.base, call.path),
+            url: self.target(call).0,
             kind,
             code: String::new(),
             message,
@@ -241,14 +242,26 @@ impl Client {
         }
     }
 
+    /// Where `call` goes, and with which key: the base gets it, a URL Roblox handed back (asset delivery's `location`)
+    /// does not. That request carries nothing secret, so it needs no rule for where it may go.
+    fn target(&self, call: &Call) -> (String, Option<&str>) {
+        match absolute(&call.path) {
+            true => (call.path.clone(), None),
+            false => (format!("{}/{}", self.base, call.path), Some(&self.key)),
+        }
+    }
+
     fn once(&self, call: &Call) -> Result<Vec<u8>, Error> {
-        let url = format!("{}/{}", self.base, call.path);
+        let (url, key) = self.target(call);
         let agent = if call.create { &self.fresh } else { &self.pooled };
         let t = &self.timeouts;
         let len = call.body.map_or(0, |(_, bytes)| bytes.len() as u64);
         let limits =
             [t.connect, t.send + Duration::from_secs(len >> 20), if call.long { t.recv_long } else { t.recv }, t.body];
-        let request = http::Request::builder().method(call.method).uri(&url).header("x-api-key", &self.key);
+        let mut request = http::Request::builder().method(call.method).uri(&url);
+        if let Some(key) = key {
+            request = request.header("x-api-key", key);
+        }
         let sent = match call.body {
             None => request.body(()).map(|r| exchange(agent, r, limits)),
             Some((mime, bytes)) => request.header("content-type", mime).body(bytes).map(|r| exchange(agent, r, limits)),
@@ -344,6 +357,16 @@ fn kind(e: &ureq::Error) -> ErrorKind {
         E::Http(_) | E::BadUri(_) | E::RequireHttpsOnly(_) => ErrorKind::Local,
         _ => ErrorKind::Transport,
     }
+}
+
+/// The `n`th wait of the shared backoff, from 0: 250 ms doubling, capped at 2 s.
+pub(crate) fn backoff(n: u32) -> Duration {
+    (BACKOFF * (1 << n.min(8))).min(BACKOFF_MAX)
+}
+
+/// An `http://` or `https://` URL, not a resource under the base.
+pub(crate) fn absolute(path: &str) -> bool {
+    path.starts_with("https://") || path.starts_with("http://")
 }
 
 /// `http://127.0.0.1:<port>` or `http://localhost:<port>`, nothing more: where the mock listens.
@@ -641,7 +664,7 @@ mod tests {
     #[test]
     fn a_response_past_the_cap_is_a_decode_error() {
         let mock = Mock::start();
-        mock.on("GET", "x", Reply::Status { status: 200, headers: vec![], body: vec![b' '; (8 << 20) + 1] });
+        mock.on("GET", "x", Reply::Status { status: 200, headers: vec![], body: vec![b' '; BODY_LIMIT as usize + 1] });
         let (c, _) = client(&mock.base);
         assert_eq!(c.send(&get("x")).unwrap_err().kind, ErrorKind::Decode);
     }
