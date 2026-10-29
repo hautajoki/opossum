@@ -7,7 +7,7 @@
 //! move Studio between them (`POST /status`, `/release`; DESIGN.md, Attach). `opossum test --cloud` runs the specs on
 //! Open Cloud through tessera instead, with no dev or Studio involved (DESIGN.md, Cloud tests).
 
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -151,9 +151,24 @@ pub fn cloud(cfg: Config, options: &Options, cloud: &Cloud, mode: &str, filter: 
         tessera.args(["--environment", environment]);
     }
     tessera.args(["--fresh", cloud.place.as_deref().unwrap_or("main")]);
-    // its progress and errors go straight to the terminal
-    let run = tessera.stderr(Stdio::inherit()).output().map_err(|e| refused(format!("could not run tessera: {e}")))?;
+    // its progress and errors are shown as they come, mapped: a failed run's logs and error are only ever there
+    let mut child = tessera
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| refused(format!("could not run tessera: {e}")))?;
+    let errors = std::io::BufReader::new(child.stderr.take().expect("piped"));
+    let run = std::thread::scope(|s| {
+        s.spawn(|| {
+            errors.lines().map_while(Result::ok).for_each(|line| eprintln!("{}", dev::map_log(&line, &index).0))
+        });
+        child.wait_with_output()
+    });
     let failed = |error| failed(json, error);
+    let run = match run {
+        Ok(run) => run,
+        Err(e) => return failed(format!("tessera: {e}")),
+    };
     if !run.status.success() {
         return failed(format!("tessera failed ({})", run.status));
     }
