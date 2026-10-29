@@ -6,7 +6,7 @@
 fn main() {
     println!("cargo:rerun-if-changed=src/shim.cpp");
     println!("cargo:rerun-if-changed=src/vm.cpp");
-    let luau = luau0_src::Build::new().build();
+    let luau = luau0_src::Build::new().enable_codegen(true).build();
     let mut shim = cc::Build::new();
     shim.cpp(true).std("c++17").warnings(true).includes(luau.include_dirs());
     for (name, value) in luau.defines() {

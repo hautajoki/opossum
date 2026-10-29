@@ -8,7 +8,11 @@
 //! `require` resolves by string from the file system as the `luau` CLI does (`./`, `../`, `@self`, `init.luau`
 //! directories, `.luaurc` aliases), each module on its own sandboxed thread with the chunk name `@<path from the
 //! root>`, so traces read `src/x.luau:12`. A host chunk `c` stands at `<root>/c`: its `./x` is `<root>/x`. The global
-//! `__load(file)` requires a path relative to the root (`__load("src/a.local.spec.luau")`) through the same cache. A VM runs on one thread at a time; it may move
+//! `__load(file)` requires a path relative to the root (`__load("src/a.local.spec.luau")`) through the same cache.
+//!
+//! With codegen on, `--!native` modules and `@native` functions run as machine code, as on Roblox, and nothing else
+//! does, so local bench numbers mean what they will in the engine. One code generation context serves every VM in
+//! the process, so a native module many VMs load is compiled to machine code once. A VM runs on one thread at a time; it may move
 //! between threads, and [`Vm::interrupter`] stops it from another.
 
 use std::ffi::{CString, c_char, c_int};
@@ -24,7 +28,7 @@ struct RawVm {
 }
 
 unsafe extern "C" {
-    fn opossum_vm_new(root: *const c_char, limit: usize) -> *mut RawVm;
+    fn opossum_vm_new(root: *const c_char, codegen: c_int, limit: usize) -> *mut RawVm;
     fn opossum_vm_eval(
         vm: *mut RawVm,
         chunkname: *const c_char,
@@ -34,6 +38,7 @@ unsafe extern "C" {
         outsize: *mut usize,
     ) -> c_int;
     fn opossum_vm_interrupt(vm: *mut RawVm);
+    fn opossum_vm_native_functions(vm: *mut RawVm) -> usize;
     fn opossum_vm_take_output(vm: *mut RawVm, outsize: *mut usize) -> *mut c_char;
     fn opossum_vm_free(vm: *mut RawVm);
     fn opossum_vm_free_buffer(buffer: *mut c_char);
@@ -67,17 +72,18 @@ impl Interrupter {
 }
 
 impl Vm {
-    /// A fresh VM whose `require` resolves from `root`.
-    pub fn new(root: &Path) -> Result<Vm, String> {
-        Vm::with_limit(root, MEMORY_LIMIT)
+    /// A fresh VM whose `require` resolves from `root`, generating native code when `codegen` is on (and the CPU
+    /// supports it).
+    pub fn new(root: &Path, codegen: bool) -> Result<Vm, String> {
+        Vm::with_limit(root, codegen, MEMORY_LIMIT)
     }
 
-    fn with_limit(root: &Path, limit: usize) -> Result<Vm, String> {
+    fn with_limit(root: &Path, codegen: bool, limit: usize) -> Result<Vm, String> {
         crate::gate::init();
         let root = std::path::absolute(root).map_err(|e| format!("{}: {e}", root.display()))?;
         let root = CString::new(root.to_string_lossy().as_bytes()).map_err(|_| "the root holds a NUL".to_owned())?;
         // SAFETY: `root` is a valid C string the VM copies.
-        let raw = unsafe { opossum_vm_new(root.as_ptr(), limit) };
+        let raw = unsafe { opossum_vm_new(root.as_ptr(), c_int::from(codegen), limit) };
         if raw.is_null() {
             return Err("could not create a Luau VM: out of memory".to_owned());
         }
@@ -101,6 +107,12 @@ impl Vm {
     /// A handle that stops this VM from another thread.
     pub fn interrupter(&self) -> Interrupter {
         Interrupter(self.shared.clone())
+    }
+
+    /// How many functions of the chunks and modules loaded so far run as native code.
+    pub fn native_functions(&self) -> usize {
+        // SAFETY: a plain read of a live VM that no other thread runs (`&self` cannot overlap a `&mut self` call).
+        unsafe { opossum_vm_native_functions(self.raw) }
     }
 
     /// Everything `print`ed since the last call, one line per call, arguments tab-separated.
@@ -138,7 +150,7 @@ mod tests {
     use super::*;
 
     fn vm() -> Vm {
-        Vm::new(Path::new("/")).unwrap()
+        Vm::new(Path::new("/"), false).unwrap()
     }
 
     #[test]
@@ -164,15 +176,20 @@ mod tests {
 
     #[test]
     fn an_interrupt_stops_a_loop_inside_pcall() {
-        let mut vm = vm();
-        let interrupter = vm.interrupter();
-        let watchdog = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            interrupter.interrupt();
-        });
-        let error = vm.eval("host", "while true do pcall(function() while true do end end) end").unwrap_err();
-        watchdog.join().unwrap();
-        assert!(error.contains("timed out"), "{error}");
+        // native code checks for the interrupt at the same safepoints
+        for codegen in [false, true] {
+            let mut vm = Vm::new(Path::new("/"), codegen).unwrap();
+            let interrupter = vm.interrupter();
+            let watchdog = std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                interrupter.interrupt();
+            });
+            let error =
+                vm.eval("host", "--!native\nwhile true do pcall(function() while true do end end) end").unwrap_err();
+            watchdog.join().unwrap();
+            assert!(error.contains("timed out"), "{error}");
+            assert_eq!(vm.native_functions() > 0, codegen);
+        }
     }
 
     /// A project in a fresh temporary directory, from `(path, contents)` pairs.
@@ -199,7 +216,7 @@ mod tests {
                 ("src/d.local.spec.luau", "local a = require('./a') return a.b .. a.lib"),
             ],
         );
-        let mut vm = Vm::new(&root).unwrap();
+        let mut vm = Vm::new(&root, true).unwrap();
         let result = vm.eval("host", "return __load('src/d.local.spec.luau') .. require('./src/a').b");
         let missing = vm.eval("host", "require('./src/nope')");
         std::fs::remove_dir_all(&root).unwrap();
@@ -217,14 +234,35 @@ mod tests {
                 ("src/c.luau", "local x = 1\nerror('boom')\nreturn x"),
             ],
         );
-        let error = Vm::new(&root).unwrap().eval("host", "require('./src/a')").unwrap_err();
+        let error = Vm::new(&root, true).unwrap().eval("host", "require('./src/a')").unwrap_err();
         std::fs::remove_dir_all(&root).unwrap();
         assert!(error.contains("src/c.luau:2: boom"), "{error}");
     }
 
     #[test]
+    fn only_native_modules_and_functions_get_native_code() {
+        let root = project(
+            "native",
+            &[
+                ("native.luau", "--!native\nlocal function f(x) return x + 1 end\nreturn f"),
+                ("plain.luau", "local function f(x) return x + 1 end\nreturn f"),
+                ("attribute.luau", "local g = 0\n@native local function f(x) g += x return g end\nreturn f"),
+            ],
+        );
+        let count = |module: &str, codegen: bool| {
+            let mut vm = Vm::new(&root, codegen).unwrap();
+            vm.eval("host", &format!("require('./{module}')")).unwrap();
+            vm.native_functions()
+        };
+        let counts = [count("native", true), count("plain", true), count("attribute", true), count("native", false)];
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(counts[0] > 0 && counts[2] > 0, "{counts:?}");
+        assert_eq!((counts[1], counts[3]), (0, 0));
+    }
+
+    #[test]
     fn the_memory_cap_fails_allocations() {
-        let mut vm = Vm::with_limit(Path::new("/"), 16 << 20).unwrap();
+        let mut vm = Vm::with_limit(Path::new("/"), false, 16 << 20).unwrap();
         let error = vm.eval("host", "local t = {} for i = 1, 1e8 do t[i] = i end").unwrap_err();
         assert!(error.starts_with("not enough memory"), "{error}");
         // the VM survives it

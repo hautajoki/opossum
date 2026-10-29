@@ -5,11 +5,17 @@
 // and a memory cap enforced by its allocator. Host chunks run on one sandboxed thread. Bytecode is cached per process
 // by source, so a module many VMs load is compiled once.
 //
+// Native code is generated as on Roblox: only for `--!native` modules and `@native` functions. Every VM uses one
+// process-wide code generation context, keyed by bytecode, and one state that is never closed holds every native chunk
+// (the context frees a module's machine code when no state's functions use it any more), so a module VMs load one
+// after another is compiled to machine code once per process.
+//
 // require-by-string is Luau's Require library over a file system navigator ported from Luau 0.740's CLI
 // (CLI/src/ReplRequirer.cpp and VfsNavigator.cpp, MIT, Copyright (c) 2019-2025 Roblox Corporation), with its
 // std::filesystem calls replaced by POSIX stat, open and read: `./`, `../`, `@self`, `init.luau`/`init.lua`
 // directories, `.luau`/`.lua` files and `.luaurc`/`.config.luau` aliases resolve exactly as in the `luau` CLI.
 
+#include "Luau/CodeGen.h"
 #include "Luau/Require.h"
 #include "lua.h"
 #include "luacode.h"
@@ -38,6 +44,8 @@ struct opossum_vm
     std::string real;
     size_t used = 0;
     size_t limit = 0;
+    bool codegen = false;
+    size_t native = 0; // functions bound to native code, over every chunk loaded
 };
 
 static opossum_vm* vm_of(lua_State* L)
@@ -69,10 +77,13 @@ static void* vm_alloc(void* ud, void* ptr, size_t osize, size_t nsize)
 struct Bytecode
 {
     std::string bytes;
+    Luau::CodeGen::ModuleId id; // this entry's number in the cache: the native code of equal bytecode is shared
+    mutable std::once_flag anchored;
 };
 
 static std::mutex cache_mutex;
 static std::unordered_map<std::string, std::shared_ptr<const Bytecode>> cache;
+static uint64_t cache_entries = 0;
 
 static std::shared_ptr<const Bytecode> compile(const std::string& source)
 {
@@ -94,7 +105,55 @@ static std::shared_ptr<const Bytecode> compile(const std::string& source)
     compiled->bytes.assign(bytes, size);
     std::free(bytes);
     std::lock_guard<std::mutex> lock(cache_mutex);
-    return cache.emplace(source, std::move(compiled)).first->second; // a racing compile of the same source loses
+    auto it = cache.find(source);
+    if (it != cache.end())
+        return it->second; // a racing compile of the same source won
+    uint64_t number = ++cache_entries;
+    compiled->id = {};
+    std::memcpy(compiled->id.data(), &number, sizeof(number));
+    cache.emplace(source, compiled);
+    return compiled;
+}
+
+// Created on first use and never destroyed: it must outlive every VM, and VMs live until the process ends.
+static Luau::CodeGen::SharedCodeGenContext* shared_codegen()
+{
+    static Luau::CodeGen::SharedCodeGenContext* context = Luau::CodeGen::createSharedCodeGenContext().release();
+    return context;
+}
+
+// Compiles a chunk's native code into the anchor state, which keeps it alive for every VM to bind.
+static void anchor(const Bytecode* bytecode)
+{
+    static std::mutex mutex;
+    static lua_State* L = nullptr;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!L)
+    {
+        L = luaL_newstate();
+        Luau::CodeGen::create(L, shared_codegen());
+    }
+    if (luau_load(L, "=anchor", bytecode->bytes.data(), bytecode->bytes.size(), 0) == 0)
+    {
+        Luau::CodeGen::CompilationResult result = Luau::CodeGen::compile(bytecode->id, L, -1, Luau::CodeGen::CodeGen_OnlyNativeModules);
+        if (result.result == Luau::CodeGen::CodeGenCompilationResult::Success)
+            lua_ref(L, -1); // a plain chunk is left to the collector
+    }
+    lua_settop(L, 0);
+}
+
+// luau_load, then native code for what asks for it. Returns luau_load's status; on 0 the function is on the stack.
+static int load_chunk(opossum_vm* vm, lua_State* L, const char* chunkname, const Bytecode& bytecode)
+{
+    int status = luau_load(L, chunkname, bytecode.bytes.data(), bytecode.bytes.size(), 0);
+    if (status == 0 && vm->codegen)
+    {
+        std::call_once(bytecode.anchored, anchor, &bytecode);
+        Luau::CodeGen::CompilationStats stats;
+        Luau::CodeGen::compile(bytecode.id, L, -1, Luau::CodeGen::CodeGen_OnlyNativeModules, &stats);
+        vm->native += stats.functionsBound;
+    }
+    return status;
 }
 
 static bool is_file(const std::string& path)
@@ -302,7 +361,7 @@ static luarequire_WriteResult get_config(lua_State*, void* ctx, char* buffer, si
 }
 
 // Runs a module on its own sandboxed thread, created on the main thread so it never inherits a caller's globals.
-static int load(lua_State* L, void*, const char*, const char* chunkname, const char* loadname)
+static int load(lua_State* L, void* ctx, const char*, const char* chunkname, const char* loadname)
 {
     std::string source;
     if (!read_file(loadname, source))
@@ -312,7 +371,7 @@ static int load(lua_State* L, void*, const char*, const char* chunkname, const c
     lua_State* ML = lua_newthread(GL);
     lua_xmove(GL, L, 1);
     luaL_sandboxthread(ML);
-    if (luau_load(ML, chunkname, bytecode->bytes.data(), bytecode->bytes.size(), 0) != 0)
+    if (load_chunk(static_cast<opossum_vm*>(ctx), ML, chunkname, *bytecode) != 0)
     {
         lua_xmove(ML, L, 1);
         lua_error(L);
@@ -407,7 +466,7 @@ static char* copy_out(const std::string& text, size_t* outsize)
     return out;
 }
 
-extern "C" opossum_vm* opossum_vm_new(const char* root, size_t limit) noexcept
+extern "C" opossum_vm* opossum_vm_new(const char* root, int codegen, size_t limit) noexcept
 {
     opossum_vm* vm = new (std::nothrow) opossum_vm();
     if (!vm)
@@ -424,6 +483,9 @@ extern "C" opossum_vm* opossum_vm_new(const char* root, size_t limit) noexcept
         }
         lua_State* L = vm->L;
         lua_callbacks(L)->userdata = vm;
+        vm->codegen = codegen && Luau::CodeGen::isSupported();
+        if (vm->codegen)
+            Luau::CodeGen::create(L, shared_codegen());
         // order matters: luaL_sandbox freezes the globals, so the host's globals go in before it
         luaL_openlibs(L);
         lua_pushcfunction(L, vm_print, "print");
@@ -462,7 +524,7 @@ extern "C" int opossum_vm_eval(opossum_vm* vm, const char* chunkname, const char
         lua_settop(T, 0);
         lua_pushcfunction(T, vm_traceback, "traceback");
         std::string name = std::string("@") + chunkname;
-        int status = luau_load(T, name.c_str(), bytecode->bytes.data(), bytecode->bytes.size(), 0);
+        int status = load_chunk(vm, T, name.c_str(), *bytecode);
         if (status == 0)
             status = lua_pcall(T, 0, 1, 1);
         if (status != 0)
@@ -500,6 +562,11 @@ extern "C" int opossum_vm_eval(opossum_vm* vm, const char* chunkname, const char
 extern "C" void opossum_vm_interrupt(opossum_vm* vm) noexcept
 {
     lua_callbacks(vm->L)->interrupt = vm_interrupted;
+}
+
+extern "C" size_t opossum_vm_native_functions(opossum_vm* vm) noexcept
+{
+    return vm->native;
 }
 
 extern "C" char* opossum_vm_take_output(opossum_vm* vm, size_t* outsize) noexcept
