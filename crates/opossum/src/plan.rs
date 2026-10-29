@@ -140,11 +140,16 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
     let error = if ambiguous > 0 {
         ("asset.ambiguous", self::ambiguous(ambiguous))
     } else if rejected > 0 {
-        let error = format!("Roblox refused the content of {rejected} files; change them or forget the refusal");
+        let error = format!(
+            "Roblox refused the content of {}; change the content or forget the refusal",
+            counted(rejected, "file")
+        );
         ("asset.rejected", error)
     } else if blocked > 0 {
-        let error =
-            format!("creates of {blocked} resources may or may not have happened; `opossum adopt` settles each");
+        let error = format!(
+            "creates of {} may or may not have happened; `opossum adopt` settles each",
+            counted(blocked, "resource")
+        );
         ("resource.blocked", error)
     } else {
         return Outcome { exit: 0, json, text };
@@ -179,7 +184,7 @@ pub fn settle(file: &str) -> String {
 
 /// Why a command stops at `n` such files.
 pub fn ambiguous(n: usize) -> String {
-    format!("uploads of {} files may or may not have happened; `opossum adopt asset` settles each", count(n))
+    format!("uploads of {} may or may not have happened; `opossum adopt asset` settles each", counted(n, "file"))
 }
 
 /// What settles a file holding the content of `other`'s upload that may or may not have happened.
@@ -218,6 +223,11 @@ pub fn survey(cfg: &Config, done: &str) -> Result<(Lock, Vec<assets::Asset>, Vec
     }
     let error = format!("{} errors in opossum.lock or the asset roots, so nothing was {done}", errors.len());
     Err(Outcome::refused(&first.code, error))
+}
+
+/// `1 file`, `1,300 files`.
+pub fn counted(n: usize, word: &str) -> String {
+    format!("{} {word}{}", count(n), if n == 1 { "" } else { "s" })
 }
 
 /// `1,300`.

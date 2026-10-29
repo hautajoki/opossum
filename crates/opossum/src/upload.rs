@@ -549,7 +549,7 @@ fn outcome(r: Report, broken: Option<Diag>, auth: bool, stopped: bool) -> Outcom
     } else if auth {
         ("cloud.auth".into(), "Roblox refused the API key, so nothing more was sent".into())
     } else if let Some((_, _, code)) = r.failed.first() {
-        (code.clone(), format!("{} files failed", count(r.failed.len())))
+        (code.clone(), format!("{} failed", plan::counted(r.failed.len(), "file")))
     } else if !r.ambiguous.is_empty() {
         ("asset.ambiguous".into(), plan::ambiguous(r.ambiguous.len()))
     } else if !r.pending.is_empty() {
