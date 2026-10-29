@@ -343,7 +343,7 @@ mod tests {
             bytes: b"x",
         };
         let op = c.create_asset(&png).unwrap();
-        let op = c.wait_operation(&op.path, c.now()).unwrap();
+        let op = c.wait_operation(&op.path, c.now(), &std::sync::atomic::AtomicBool::new(false)).unwrap();
         assert_eq!((op.done, op.asset_id), (true, Some(1_000_001)));
         assert_eq!(c.save_place(12, 34, b"rbxl", false).unwrap(), 1);
         assert_eq!(c.save_place(12, 34, b"rbxl", false).unwrap(), 2);

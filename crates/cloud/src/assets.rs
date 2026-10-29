@@ -1,5 +1,6 @@
 //! Assets: create, the FBX content update, and the operation each returns.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -167,17 +168,17 @@ impl Client {
         self.poll_operation(path, &mut Duration::default())
     }
 
-    /// Polls an operation every 1 s doubling to 5 s until it is done or `deadline` passes, and returns it either way:
-    /// one that is not `done` is still pending and can be resumed later. Time slept on `Retry-After` moves the
-    /// deadline back, so a busy Roblox does not turn waits into give-ups.
-    pub fn wait_operation(&self, path: &str, deadline: Instant) -> Result<Operation, Error> {
+    /// Polls an operation every 1 s doubling to 5 s until it is done, `deadline` passes or `stop` is set, and returns
+    /// it either way: one that is not `done` is still pending and can be resumed later. Time slept on `Retry-After`
+    /// moves the deadline back, so a busy Roblox does not turn waits into give-ups.
+    pub fn wait_operation(&self, path: &str, deadline: Instant, stop: &AtomicBool) -> Result<Operation, Error> {
         let mut deadline = deadline;
         let mut interval = Duration::from_secs(1);
         loop {
             let mut waited = Duration::ZERO;
             let op = self.poll_operation(path, &mut waited)?;
             deadline += waited;
-            if op.done || self.now() + interval > deadline {
+            if op.done || stop.load(Ordering::SeqCst) || self.now() + interval > deadline {
                 return Ok(op);
             }
             self.sleep(interval);
@@ -335,12 +336,16 @@ mod tests {
         mock.on("GET", "assets/v1/operations/a", Reply::json(200, &pending));
         mock.on("GET", "assets/v1/operations/a", Reply::json(200, &pending));
         let (c, fake) = client(&mock.base);
-        let op = c.wait_operation("operations/a", c.now() + Duration::from_secs(20)).unwrap();
+        let op = c.wait_operation("operations/a", c.now() + Duration::from_secs(20), &AtomicBool::new(false)).unwrap();
         assert!(!op.done);
         let secs: Vec<u64> = fake.slept().iter().map(Duration::as_secs).collect();
         // 1+2+4+5+5 = 17 s polling, then 30 s of Retry-After that does not count, then one more 5 s would pass 20 s
         assert_eq!(secs, [1, 2, 4, 5, 5, 30]);
         assert_eq!(mock.requests().len(), 7);
+        // a stop gives it back after one look, with nothing slept: its intent is saved, so it resumes next run
+        mock.on("GET", "assets/v1/operations/a", Reply::json(200, &pending));
+        let op = c.wait_operation("operations/a", c.now() + Duration::from_secs(600), &AtomicBool::new(true)).unwrap();
+        assert!(!op.done && fake.slept().len() == 6 && mock.requests().len() == 8);
     }
 
     #[test]

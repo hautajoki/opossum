@@ -402,7 +402,7 @@ fn work(client: &Client, creator: cloud::Creator, g: &Group, audio: bool, stop: 
             }
         }
     };
-    send(match client.wait_operation(&op, client.now() + OPERATION_DEADLINE) {
+    send(match client.wait_operation(&op, client.now() + OPERATION_DEADLINE, stop) {
         Ok(op) if op.done => finished(op, audio),
         Ok(_) => Event::Waiting(None),
         Err(e) if e.kind == ErrorKind::Status(404) => Event::Expired,
