@@ -354,27 +354,26 @@ impl Reader<'_> {
                         }
                     }
                 }
-                "assets" | "places" | "environments" | "passes" | "products" | "badges" | "experience" => {
-                    groups.push((key, value));
+                "assets" | "places" | "environments" => groups.push((key, value)),
+                // no project declared them, and tessera's lock records of provisioned ones are refused anyway
+                "passes" | "products" | "badges" | "experience" => {
+                    self.refuse(value.at, format!("declare `{key}` in opossum.toml; {BY_HAND}"))
                 }
                 _ => self.unknown(value, key),
             }
         }
         let mut environments = 0;
-        for group in ["assets", "places", "environments", "passes", "products", "badges", "experience"] {
+        for group in ["assets", "places", "environments"] {
             let Some(&(_, value)) = groups.iter().find(|(g, _)| *g == group) else { continue };
             match group {
                 "assets" => self.sets(value, &t.generated.clone(), &mut t.sets, &mut tables),
-                "places" => self.places(value, &mut tables),
                 "environments" => {
                     for (name, env) in self.object(value, group).unwrap_or_default() {
                         self.environment(name, env, &mut tables);
                         environments += 1;
                     }
                 }
-                "badges" => self.badges(value, &mut tables),
-                "experience" => self.experience(value, &mut tables),
-                _ => self.sales(group, value, &mut tables),
+                _ => self.places(value, &mut tables),
             }
         }
         match (default, environments) {
@@ -601,101 +600,6 @@ impl Reader<'_> {
             let message =
                 format!("opossum's preset {} has its own size, not {width}×{height}; {BY_HAND}", image.preset.name());
             self.refuse(value.at, message);
-        }
-    }
-
-    fn sales(&mut self, group: &str, value: &Lit, tables: &mut String) {
-        for (key, sale) in self.object(value, group).unwrap_or_default() {
-            let mut lines = String::new();
-            for (k, v) in self.object(sale, &format!("{group}.{key}")).unwrap_or_default() {
-                let path = format!("{group}.{key}.{k}");
-                match k.as_str() {
-                    "name" | "description" | "icon" => self.field_str(&mut lines, k, v, &path),
-                    "price" => self.field_num(&mut lines, k, v, &path),
-                    "forSale" | "managedPricing" => self.field_bool(&mut lines, k, v, &path),
-                    _ => self.unknown(v, &path),
-                }
-            }
-            let _ = write!(tables, "\n[{group}.{}]\n{lines}", lock::key(key));
-        }
-    }
-
-    fn badges(&mut self, value: &Lit, tables: &mut String) {
-        for (key, badge) in self.object(value, "badges").unwrap_or_default() {
-            let mut lines = String::new();
-            for (k, v) in self.object(badge, &format!("badges.{key}")).unwrap_or_default() {
-                let path = format!("badges.{key}.{k}");
-                match k.as_str() {
-                    "name" | "description" | "icon" => self.field_str(&mut lines, k, v, &path),
-                    "expectedCost" => self.field_num(&mut lines, k, v, &path),
-                    "enabled" => self.field_bool(&mut lines, k, v, &path),
-                    _ => self.unknown(v, &path),
-                }
-            }
-            let _ = write!(tables, "\n[badges.{}]\n{lines}", lock::key(key));
-        }
-    }
-
-    /// `[experience]`, its thumbnails an array in `thumbnailOrder`'s order (else the order they are declared in).
-    fn experience(&mut self, value: &Lit, tables: &mut String) {
-        let mut lines = String::new();
-        let mut thumbnails: Vec<(&str, &Lit)> = Vec::new();
-        let mut order: Option<Vec<String>> = None;
-        for (k, v) in self.object(value, "experience").unwrap_or_default() {
-            let path = format!("experience.{k}");
-            match k.as_str() {
-                "name" | "description" | "icon" => self.field_str(&mut lines, k, v, &path),
-                "thumbnails" => {
-                    thumbnails.extend(self.object(v, &path).unwrap_or_default().iter().map(|(k, v)| (k.as_str(), v)))
-                }
-                "thumbnailOrder" => order = self.strings(v, &path),
-                _ => self.unknown(v, &path),
-            }
-        }
-        let _ = write!(tables, "\n[experience]\n{lines}");
-        if let Some(order) = order {
-            let mut sorted = Vec::new();
-            for key in &order {
-                match thumbnails.iter().find(|(k, _)| k == key) {
-                    Some(t) => sorted.push(*t),
-                    None => {
-                        self.refuse(value.at, format!("`experience.thumbnailOrder` names {key}, which is no thumbnail"))
-                    }
-                }
-            }
-            if sorted.len() != thumbnails.len() {
-                self.refuse(value.at, "`experience.thumbnailOrder` must list every thumbnail once".into());
-            }
-            thumbnails = sorted;
-        }
-        for (key, thumbnail) in thumbnails {
-            let mut lines = format!("key = {}\n", lock::string(key));
-            for (k, v) in self.object(thumbnail, &format!("experience.thumbnails.{key}")).unwrap_or_default() {
-                let path = format!("experience.thumbnails.{key}.{k}");
-                match k.as_str() {
-                    "image" | "altText" => self.field_str(&mut lines, k, v, &path),
-                    _ => self.unknown(v, &path),
-                }
-            }
-            let _ = write!(tables, "\n[[experience.thumbnails]]\n{lines}");
-        }
-    }
-
-    fn field_str(&mut self, out: &mut String, key: &str, value: &Lit, path: &str) {
-        if let Some(s) = self.str(value, path) {
-            let _ = writeln!(out, "{key} = {}", lock::string(&s));
-        }
-    }
-
-    fn field_num(&mut self, out: &mut String, key: &str, value: &Lit, path: &str) {
-        if let Some(n) = self.num(value, path) {
-            let _ = writeln!(out, "{key} = {n}");
-        }
-    }
-
-    fn field_bool(&mut self, out: &mut String, key: &str, value: &Lit, path: &str) {
-        if let Some(b) = self.bool(value, path) {
-            let _ = writeln!(out, "{key} = {b}");
         }
     }
 
@@ -1297,9 +1201,6 @@ export default defineConfig({
 	environments: {
 		development: { universeId: 100, places: { main: 200 } },
 	},
-	passes: {
-		vip: { name: "VIP", icon: "images/vip.png" },
-	},
 	assets: {
 		interface: { root: "images", include: ["**/*.png"], stripExtensions: true },
 	},
@@ -1316,8 +1217,7 @@ export default defineConfig({
         assert_eq!(codes(&plan), Vec::<&str>::new(), "{:?}", plan.diags);
         let expected = "name = \"t\"\ncreator = { user = 42 }\n\n[routes]\nshared = \"ReplicatedStorage/shared\"\n\n\
                         [assets]\ninterface = { root = \"images\", include = [\"**/*.png\"] }\n\n\
-                        [environments.development]\nuniverseId = 100\nplaces = { main = 200 }\n\n\
-                        [passes.vip]\nname = \"VIP\"\nicon = \"images/vip.png\"\n";
+                        [environments.development]\nuniverseId = 100\nplaces = { main = 200 }\n";
         assert_eq!(plan.toml.as_deref(), Some(expected));
         assert_eq!(plan.removals, [root.join(CONFIG)]);
         assert!(
@@ -1325,15 +1225,24 @@ export default defineConfig({
                 && plan.notes.iter().any(|n| n.contains("placeId = 5"))
         );
 
-        // the fixture as tessera has it keys files with their extensions; an evaluated root and a cover fit
+        // the fixture as tessera has it keys files with their extensions; an evaluated value and a cover fit
         let ts = PROJECT_TS
             .replace(", stripExtensions: true", "")
-            .replace("vip: { name", "vip: { name: NAME, title")
+            .replace("universeId: 100", "universeId: ID")
             .replace("include: [\"**/*.png\"]", "include: [\"**/*.png\"], image: { fit: \"cover\" }");
         fs::write(root.join(CONFIG), ts).unwrap();
         let plan = self::plan(&root.join(config::FILE)).unwrap();
         let at: Vec<(&str, u32, u32)> = plan.diags.iter().map(|d| (d.code.as_str(), d.line, d.col)).collect();
-        assert_eq!(at, [("migrate.tesseraConfig", 13, 16)]);
+        assert_eq!(at, [("migrate.tesseraConfig", 10, 30)]);
+        // resources are declared in opossum.toml by hand
+        fs::write(
+            root.join(CONFIG),
+            PROJECT_TS.replace("\tassets: {", "\tpasses: { vip: { price: 5 } },\n\tassets: {"),
+        )
+        .unwrap();
+        let plan = self::plan(&root.join(config::FILE)).unwrap();
+        let at: Vec<(&str, u32, u32)> = plan.diags.iter().map(|d| (d.code.as_str(), d.line, d.col)).collect();
+        assert_eq!(at, [("migrate.tesseraConfig", 12, 10)]);
         fs::write(
             root.join(CONFIG),
             PROJECT_TS
@@ -1343,7 +1252,7 @@ export default defineConfig({
         .unwrap();
         let plan = self::plan(&root.join(config::FILE)).unwrap();
         let at: Vec<(&str, u32, u32)> = plan.diags.iter().map(|d| (d.code.as_str(), d.line, d.col)).collect();
-        assert_eq!(at, [("migrate.tesseraConfig", 16, 69), ("migrate.tesseraConfig", 16, 14)]);
+        assert_eq!(at, [("migrate.tesseraConfig", 13, 69), ("migrate.tesseraConfig", 13, 14)]);
 
         // a module written elsewhere would keep its imports and keep building with frozen ids
         let elsewhere = ["src/generated/interface.luau", "src/shared/ids.luau"].map(|out| {
