@@ -11,6 +11,8 @@ mod event;
 mod exec;
 #[allow(dead_code)] // until the asset commands use it
 mod guard;
+#[allow(dead_code)] // until the asset commands use it
+mod ids;
 mod inputs;
 #[allow(dead_code)] // until the asset commands use it
 mod lock;
