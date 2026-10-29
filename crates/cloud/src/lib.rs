@@ -333,15 +333,9 @@ fn kind(e: &ureq::Error) -> ErrorKind {
         E::HostNotFound | E::ConnectionFailed | E::Timeout(T::Resolve | T::Connect) | E::Tls(_) | E::Rustls(_) => {
             ErrorKind::Connect
         }
-        // ureq's connector reports a refused or unreachable address as the socket's own error
-        E::Io(io)
-            if matches!(
-                io.kind(),
-                Io::ConnectionRefused | Io::HostUnreachable | Io::NetworkUnreachable | Io::AddrNotAvailable
-            ) =>
-        {
-            ErrorKind::Connect
-        }
+        // ureq reports a socket's errors from every phase as `Io`, so only kinds a connect alone can produce say nothing
+        // was sent: an unreachable host or network also ends an established connection whose retransmits run out
+        E::Io(io) if matches!(io.kind(), Io::ConnectionRefused | Io::AddrNotAvailable) => ErrorKind::Connect,
         E::BodyExceedsLimit(_) => ErrorKind::Decode,
         E::Http(_) | E::BadUri(_) | E::RequireHttpsOnly(_) => ErrorKind::Local,
         _ => ErrorKind::Transport,
@@ -601,6 +595,15 @@ mod tests {
         let err = c.send(&create("x")).unwrap_err();
         assert_eq!((err.kind, err.definite()), (ErrorKind::Connect, true));
         assert_eq!(fake.slept(), [Duration::from_millis(250), Duration::from_millis(500), Duration::from_millis(1000)]);
+    }
+
+    /// An unreachable host can end an established connection after a create went out, so it never says "not sent".
+    #[test]
+    fn only_errors_a_connect_alone_produces_mean_nothing_was_sent() {
+        let io = |k: std::io::ErrorKind| kind(&ureq::Error::Io(k.into()));
+        assert_eq!(io(std::io::ErrorKind::ConnectionRefused), ErrorKind::Connect);
+        assert_eq!(io(std::io::ErrorKind::HostUnreachable), ErrorKind::Transport);
+        assert_eq!(io(std::io::ErrorKind::NetworkUnreachable), ErrorKind::Transport);
     }
 
     #[test]
