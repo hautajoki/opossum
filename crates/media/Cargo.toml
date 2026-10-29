@@ -3,6 +3,7 @@ name = "media"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 # Versions are pinned by Cargo.lock; the blake3 goldens in the tests say when an update moves output bytes. resvg

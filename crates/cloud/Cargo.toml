@@ -3,6 +3,7 @@ name = "cloud"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 # Blocking HTTP on rustls with ring and webpki-roots: no async, no OpenSSL, no aws-lc (cmake). ureq's defaults are
