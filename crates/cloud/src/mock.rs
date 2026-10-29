@@ -231,7 +231,9 @@ pub fn serve(port: u16) -> Result<(), String> {
 
 /// A stateful stand-in for the endpoints opossum calls. Asset creates and FBX updates answer with an operation that
 /// is done at its first poll (new ids count up from 1000001); place saves count versions up per place; tasks run at
-/// the version asked for, or the place's last saved one, and complete at their first poll with no results and no logs.
+/// the version asked for, or the place's last saved one, and complete at their first poll with no results and no logs;
+/// pass, product, badge and thumbnail creates answer with ids counting up from 2000001, and every other resource call
+/// succeeds.
 pub fn auto() -> Fallback {
     let state = Mutex::new(Auto::default());
     Box::new(move |r| state.lock().unwrap().reply(r))
@@ -293,8 +295,25 @@ impl Auto {
             ("GET", ["cloud", "v2", "universes", .., "logs"]) => {
                 Reply::json(200, &json!({"luauExecutionSessionTaskLogs": [], "nextPageToken": ""}))
             }
+            ("POST", ["game-passes", "v1", "universes", _, "game-passes"]) => self.created("gamePassId"),
+            ("POST", ["developer-products", "v2", "universes", _, "developer-products"]) => self.created("productId"),
+            ("POST", ["legacy-badges", "v1", "universes", _, "badges"]) => self.created("id"),
+            (
+                "POST",
+                ["legacy-game-internationalization", "v1", "game-thumbnails", "games", _, "language-codes", _, "image"],
+            ) => self.created("mediaAssetId"),
+            ("PATCH", ["game-passes" | "developer-products" | "legacy-badges", ..])
+            | ("PATCH", ["cloud", "v2", "universes", _, "places", _])
+            | ("POST", ["legacy-publish" | "legacy-game-internationalization", ..])
+            | ("DELETE", ["legacy-game-internationalization", ..]) => Reply::json(200, &json!({})),
             _ => not_found(r),
         }
+    }
+
+    /// A resource create's answer: `{"<field>": <new id>}`.
+    fn created(&mut self, field: &str) -> Reply {
+        self.next += 1;
+        Reply::json(200, &json!({ field: 2_000_000 + self.next }))
     }
 
     fn operation(&mut self, asset: u64) -> Reply {
