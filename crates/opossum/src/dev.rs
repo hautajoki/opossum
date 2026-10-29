@@ -2,14 +2,17 @@
 //! quiet) rebuilds what it touched: TypeScript edits reuse the program and re-lower only the files they can affect, a
 //! file a `$file` macro reads re-lowers its readers, added or removed files route `src/` again, a `place/` edit
 //! re-reads that entry (an edit to a properties file, the whole place), `opossum.lock` or a file coming or going under
-//! an asset root renders the id modules again (new ids only set sources, new keys load the program again), a file's
-//! new content there is an `assets` event and nothing else, and an edit to `opossum.toml`, `package.json`, bun's
-//! lockfile or a `.env` file starts the session over.
+//! an asset root renders the id modules again (new ids set sources, new ids or reads a `$asset` resolves to make the
+//! tree again, new keys load the program again), a file's new content there is an `assets` event and nothing else, and
+//! an edit to `opossum.toml`, `package.json`, bun's lockfile or a `.env` file starts the session over.
 //!
 //! The session keeps one [`place::Tree`] for its whole life. An edit that only changed sources sets them on it
 //! (a few µs); anything that changed the shape builds a fresh tree and pairs it in, then rewrites the sourcemap and
 //! the log index. Studio's output comes back over the socket and prints with compiled lines mapped to their
 //! TypeScript. Everything the session says is an [`Event`], text or (`--json`) JSON lines.
+//!
+//! Beside the watcher, a thread of its own ([`crate::packs`]) saves the texture packs Studio bakes for the surfaces of
+//! the session's last tree into opossum.lock.
 //!
 //! `opossum exec` and `opossum test` reach the session through the sync server's `POST /exec` on the port written to
 //! `.opossum/port`. Each request is answered from code at least as new as every file saved before it arrived: it writes

@@ -213,10 +213,11 @@ pub fn deploy(
     Outcome::failed(json, text, code, error)
 }
 
-/// A session built before the upload, built again for the ids and reads it gave: new ids only set the id modules'
-/// sources, and a resource's first id (which changes its type) loads the program again. Refused when a `$asset` names
-/// a part its upload does not have (printed as errors): the upload left nothing unread, or the deploy stopped there.
-/// Refused too, unless `unbaked` (then said as a warning), when a surface has no texture pack.
+/// A session built before the upload, built again for the ids and reads it gave: new ids set the id modules' sources,
+/// new ids or reads a `$asset` resolves to make the tree again, and a resource's first id (which changes its type)
+/// loads the program again. Refused when a `$asset` names a part its upload does not have (printed as errors): the
+/// upload left nothing unread, or the deploy stopped there. Refused too, unless `unbaked` (then said as a warning),
+/// when a surface has no texture pack.
 fn rebuild(session: &mut Session, unbaked: bool) -> Result<(Vec<u8>, place::PackStats), Failure> {
     let fail = |error| Failure { code: "build", error, ran: true };
     if session.render_modules().map_err(fail)? == Changed::Types {
@@ -243,8 +244,8 @@ fn rebuild(session: &mut Session, unbaked: bool) -> Result<(Vec<u8>, place::Pack
     Ok(built)
 }
 
-/// `packs: 168 applied, 3 without a pack yet (SurfaceAppearance 2, MaterialVariant 1)`: the only sign that a map
-/// uploaded again lost its texture packs. `build` prints it too.
+/// `packs: 168 applied, 3 without a pack yet (SurfaceAppearance 2, MaterialVariant 1)`, what deploy and `build` say of
+/// a place's texture packs once it is built (`plan` says which keys are unbaked).
 pub fn packed(packs: &place::PackStats) -> String {
     let mut line = format!("packs: {} applied", count(packs.packed));
     if let Some(missing) = missing(packs) {

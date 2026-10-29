@@ -1,9 +1,9 @@
 //! `opossum.lock`: the ids opossum created on Roblox, committed beside `opossum.toml`. TOML with one record per line,
 //! sorted, each naming its own table (`assets."<file>" = …`, `packs."<key>" = …`, `universes.<id>."<kind>/<key>" = …`)
-//! with no section headers, so every record stands on its own wherever a merge puts it: the first write adds `opossum.lock
-//! merge=union` to `.gitattributes`, and [`parse`] reads what any merge leaves (both sides of a conflict, a key twice,
-//! lines in any order) without a hand edit. Builds only read
-//! it; the commands that change it write it through [`save`], which takes the [`RemoteGuard`].
+//! with no section headers, so every record stands on its own wherever a merge puts it: the first write adds
+//! `opossum.lock merge=union` to `.gitattributes`, and [`parse`] reads what any merge leaves (both sides of a conflict,
+//! a key twice, lines in any order) without a hand edit. Builds only read it; the commands that change it write it
+//! through [`save`], which takes the [`RemoteGuard`].
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

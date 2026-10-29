@@ -243,9 +243,10 @@ pub fn serve(port: u16, results: Vec<Value>) -> Result<(), String> {
 
 /// A stateful stand-in for the endpoints opossum calls. Asset creates answer with an operation that is done at its
 /// first poll (new ids count up from 1000001); a glb's id is also given a delivery `location` on this server, which
-/// serves the import Roblox would make of it ([`import`]), gzipped as the CDN sends it; place saves count versions up per place; tasks run at the version asked
-/// for, or the place's last saved one, and complete at their first poll with no results and no logs; pass, product,
-/// badge and thumbnail creates answer with ids counting up from 2000001, and every other resource call succeeds.
+/// serves the import Roblox would make of it ([`import`]), gzipped as the CDN sends it; place saves count versions up
+/// per place; tasks run at the version asked for, or the place's last saved one, and complete at their first poll with
+/// no results and no logs; pass, product, badge and thumbnail creates answer with ids counting up from 2000001, and
+/// every other resource call succeeds.
 pub fn auto() -> Fallback {
     let state = Mutex::new(Auto::default());
     Box::new(move |r| state.lock().unwrap().reply(r))

@@ -42,7 +42,7 @@ pub struct Surface {
 
 #[derive(Debug, Default)]
 pub struct PackStats {
-    /// Instances that have a pack, their own or one from the file.
+    /// Instances that have a pack, their own or one from opossum.lock.
     pub packed: usize,
     /// PBR instances with no pack yet, by class: new or re-uploaded maps that Studio has not baked.
     pub missing: Vec<(String, usize)>,
