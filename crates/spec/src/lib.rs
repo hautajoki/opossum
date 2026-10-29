@@ -11,7 +11,7 @@ pub mod local;
 mod print;
 pub mod report;
 
-pub use bundle::{CHUNK, Host, Mode, Request, Suite, bundle};
+pub use bundle::{CHUNK, Host, JSON, Mode, Request, Suite, bundle};
 pub use local::{LocalOptions, run_local};
 pub use print::print;
 pub use report::{aggregate, policy};

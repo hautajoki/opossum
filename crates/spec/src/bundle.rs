@@ -3,10 +3,14 @@
 
 use luau::luau_string;
 
+/// The runtime's JSON encoder (`runtime/json.luau`), a module returning `encode(value): string`: valid JSON always,
+/// object keys sorted. `opossum exec --local` encodes a chunk's results with it too.
+pub const JSON: &str = include_str!("../runtime/json.luau");
+
 /// The runtime's modules by name, as their string requires (`./name`) know them.
 const RUNTIME: [(&str, &str); 5] = [
     ("expect", include_str!("../runtime/expect.luau")),
-    ("json", include_str!("../runtime/json.luau")),
+    ("json", JSON),
     ("quote", include_str!("../runtime/quote.luau")),
     ("runner", include_str!("../runtime/runner.luau")),
     ("spec", include_str!("../runtime/spec.luau")),

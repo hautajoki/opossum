@@ -1,6 +1,6 @@
 //! `opossum exec`, `test` and `bench`: Luau run where a [`Target`] says. In Studio it runs in a DataModel through the
-//! running `opossum dev`, one `POST /exec` on the port it wrote to `.opossum/port` (DESIGN.md, Exec); `test --local`
-//! runs the local suites in fresh in-process VMs, with no dev or Studio (DESIGN.md, Tests); `test --cloud` runs the specs on Open Cloud
+//! running `opossum dev`, one `POST /exec` on the port it wrote to `.opossum/port` (DESIGN.md, Exec); `--local` runs
+//! it in fresh in-process VMs, with no dev or Studio (DESIGN.md, Tests); `test --cloud` runs the specs on Open Cloud
 //! through tessera (DESIGN.md, Cloud tests). Every target runs the same spec runtime (`spec`) and prints its report
 //! the same way. The exit status is 0 when it ran clean, 1 for a script error, a failed or empty test run or an
 //! answer that never came, 2 when it never ran (dev or the DataModel cannot be reached, or holds older code than a
@@ -13,6 +13,7 @@ use std::io::{BufRead, IsTerminal, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -43,7 +44,7 @@ pub struct Options {
 pub enum Target {
     /// A DataModel `opossum dev` is connected to: `realm`, or dev's default.
     Studio { realm: Option<String> },
-    /// Fresh Luau VMs in this process, no DataModel (test and bench only); `interpreted` turns native code off.
+    /// Fresh Luau VMs in this process, no DataModel; `interpreted` turns native code off.
     Local { interpreted: bool },
     /// Open Cloud through tessera (test and bench only): its logical place and environment, its defaults when None.
     Cloud { place: Option<String>, environment: Option<String> },
@@ -60,13 +61,23 @@ pub struct Tests {
 
 /// Runs Luau in the DataModel of `realm` (dev's default when None) and prints what it printed and returned.
 pub fn exec(cfg: &Config, options: &Options, realm: &Option<String>, source: Source) -> Result<bool, String> {
-    let (name, code) = read(source)?;
+    let (_, name, code) = read(source)?;
     let answer = post(cfg, options, "/exec", with_realm(json!({ "name": name, "source": code }), realm))?;
     Ok(print_answer(options, &answer))
 }
 
-/// The code to run: the name its errors give it, and its text.
-fn read(source: Source) -> Result<(String, String), String> {
+/// Runs Luau in a fresh VM rooted at the project at `root` and prints what it printed and returned: its string
+/// requires resolve from the file as the `luau` CLI's do, with no DataModel.
+pub fn exec_local(root: &Path, options: &Options, interpreted: bool, source: Source) -> Result<bool, String> {
+    let (file, name, code) = read(source)?;
+    // the chunk stands where the file is, so its string requires resolve from there
+    let chunk = file.map_or(name, |file| shown(root, &file));
+    let answer = run_local(root, options, interpreted, &chunk, &code)?;
+    Ok(print_answer(options, &answer))
+}
+
+/// The code to run: the file's absolute path for a file, the name its errors give it, and its text.
+fn read(source: Source) -> Result<(Option<std::path::PathBuf>, String, String), String> {
     match source {
         Source::File(path) => {
             let code = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
@@ -78,13 +89,13 @@ fn read(source: Source) -> Result<(String, String), String> {
                 _ if file.is_absolute() => file.file_name().map_or(path.clone(), |n| n.to_string_lossy().into_owned()),
                 _ => path.clone(),
             };
-            Ok((name, code))
+            Ok((Some(std::path::absolute(file).map_err(|e| format!("{path}: {e}"))?), name, code))
         }
-        Source::Code(code) => Ok(("exec".to_owned(), code)),
+        Source::Code(code) => Ok((None, "exec".to_owned(), code)),
         Source::Stdin => {
             let mut code = String::new();
             std::io::stdin().read_to_string(&mut code).map_err(|e| format!("stdin: {e}"))?;
-            Ok(("stdin".to_owned(), code))
+            Ok((None, "stdin".to_owned(), code))
         }
     }
 }
@@ -106,6 +117,85 @@ fn print_answer(options: &Options, answer: &Value) -> bool {
     let ok = print_error(answer);
     print_stale(answer);
     ok
+}
+
+/// `exec --local`: `code` as the chunk `chunk` (a path from `root`, or absolute outside it) in a fresh VM rooted at
+/// the project, interrupted after `--timeout` when one is given. The answer has exec's shape, realm `local`.
+fn run_local(root: &Path, options: &Options, interpreted: bool, chunk: &str, code: &str) -> Result<Value, String> {
+    let start = Instant::now();
+    let mut vm = luau::vm::Vm::new(root, !interpreted).map_err(|e| refused(options.json, e))?;
+    let (done, finished) = mpsc::channel::<()>();
+    let watchdog = options.timeout.map(|seconds| {
+        let interrupter = vm.interrupter();
+        std::thread::spawn(move || {
+            if finished.recv_timeout(Duration::from_secs_f64(seconds)) == Err(RecvTimeoutError::Timeout) {
+                interrupter.interrupt();
+            }
+        })
+    });
+    let result = vm.eval(chunk, &returning_json(code));
+    drop(done);
+    watchdog.map(std::thread::JoinHandle::join);
+    let output: Vec<Value> = vm.take_output().lines().map(|text| json!({ "kind": "output", "text": text })).collect();
+    let mut answer = json!({ "ok": result.is_ok(), "realm": "local", "ms": start.elapsed().as_secs_f64() * 1000.0, "output": output, "values": [] });
+    match result {
+        Ok(text) => answer["values"] = serde_json::from_str(&text).unwrap_or_default(),
+        Err(error) => {
+            let (error, trace) = error.split_once("\nstack traceback:\n").unwrap_or((&error, ""));
+            // the splice's own frames, past the code's last line, are not the code's
+            let last = code.lines().count().max(1);
+            let line = |frame: &str| frame.strip_prefix(chunk)?.strip_prefix(':')?.split(' ').next()?.parse().ok();
+            let trace: Vec<&str> = trace.lines().filter(|frame| line(frame).is_none_or(|n: usize| n <= last)).collect();
+            answer["error"] = error.into();
+            answer["trace"] = trace.join("\n").into();
+        }
+    }
+    Ok(answer)
+}
+
+/// `code` made to return its results as one JSON array: its first code, past the comments and directives that must
+/// stay first, opens a function on the same line, so line numbers stay the file's. Each result is JSON, or its
+/// `tostring` when JSON has no word for it (a function, a cycle).
+fn returning_json(code: &str) -> String {
+    let open = "local __results = table.pack((function(...) ";
+    let mut out = match first_code(code) {
+        Some(at) => format!("{}{open}{}\nend)())\n", &code[..at], &code[at..]),
+        None => format!("{code}\n{open}\nend)())\n"),
+    };
+    out.push_str(&format!("local __json = (function()\n{}\nend)()\n", spec::JSON));
+    out.push_str(
+        "local __values = table.create(__results.n)
+for index = 1, __results.n do
+\tlocal value = __results[index]
+\tlocal ok, text = pcall(__json, value)
+\t__values[index] = if ok then text else __json(tostring(value))
+end
+return `[{table.concat(__values, \",\")}]`
+",
+    );
+    out
+}
+
+/// Where the first code of `source` starts, past blank space and comments (directives such as `--!native` are
+/// comments); None when it holds none.
+fn first_code(source: &str) -> Option<usize> {
+    let mut at = 0;
+    loop {
+        let start = at + source[at..].find(|c: char| !c.is_ascii_whitespace())?;
+        let rest = &source[start..];
+        if !rest.starts_with("--") {
+            return Some(start);
+        }
+        // a long comment, `--[==[ ... ]==]`, or a line comment
+        let level = rest[2..].strip_prefix('[').and_then(|r| r.find(|c| c != '=').filter(|&n| r[n..].starts_with('[')));
+        at = match level {
+            Some(n) => {
+                let close = format!("]{}]", "=".repeat(n));
+                start + 4 + n + rest[4 + n..].find(&close)? + close.len()
+            }
+            None => start + rest.find('\n')? + 1,
+        };
+    }
 }
 
 /// Runs the project's local suites (`*.local.spec.luau`, bench: `*.local.bench.luau`) in fresh VMs, one per file,
@@ -685,4 +775,35 @@ fn failed(json: bool, error: String) -> Result<bool, String> {
 
 fn shown(root: &Path, file: &Path) -> String {
     file.strip_prefix(root).unwrap_or(file).display().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_exec_keeps_lines_directives_and_every_result() {
+        let root = std::env::temp_dir().join(format!("opossum-exec-local-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/m.luau"), "return { n = 2 }").unwrap();
+        let options = Options { json: true, timeout: None };
+        let run = |code: &str| run_local(&root, &options, false, "src/x.luau", code).unwrap();
+        // comments and directives stay before the spliced function; a `./` require resolves from the file
+        let code =
+            "--!native\n--[==[ a\n]] still ]==] -- the code\nprint(...)\nreturn require('./m').n, nil, 'a', print";
+        let answer = run(code);
+        let values = json!([2, null, "a", answer["values"][3].as_str().filter(|f| f.starts_with("function"))]);
+        assert_eq!(
+            (&answer["ok"], &answer["values"], &answer["output"]),
+            (&true.into(), &values, &json!([{ "kind": "output", "text": "" }]))
+        );
+        // an error names the file's own line
+        let answer = run("-- one\n\nerror('boom')");
+        assert_eq!(
+            (&answer["error"], &answer["trace"]),
+            (&"src/x.luau:3: boom".into(), &"[C] function error\nsrc/x.luau:3".into())
+        );
+        assert_eq!(run("-- nothing to run")["values"], json!([]));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

@@ -36,13 +36,13 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
   build [--profile <name>] [-o <file.rbxl>] [--emit <dir>]   build the place (.opossum/place.rbxl)
   check [--profile <name>] [--json]                          diagnostics, no output
   dev [--json]                                               watch, rebuild and sync to Studio
-  exec [--realm <r>] [--timeout <s>] [--json] (<file.luau> | -e <code> | -)
-                                                             run Luau in Studio through opossum dev
+  exec [<target>] [--timeout <s>] [--json] (<file.luau> | -e <code> | -)
+                                                             run Luau (Studio or --local)
   test [<target>] [--timeout <s>] [--allow-focused] [--json] [<filter>]
                                                              run the specs (bench: the benchmarks)
     <target>: [--realm <r>]                                  in Studio through opossum dev (the default)
               --local [--interpreted]                        in fresh Luau VMs here, src/**/*.local.spec.luau
-              --cloud [--place <p>] [--environment <e>]      on Open Cloud through tessera (saves a
+              --cloud [--place <p>] [--environment <e>]      not exec: on Open Cloud through tessera (saves a
                                                              place version to Roblox)
   play [--run] [--timeout <s>] [--json]                      start a Studio playtest through opossum dev
   stop [--timeout <s>] [--json]                              end it and sum up what it logged
@@ -123,7 +123,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         (false, false) if !interpreted && place.is_none() && environment.is_none() => {
             Some(exec::Target::Studio { realm: realm.clone() })
         }
-        (true, false) if tests && realm.is_none() && place.is_none() && environment.is_none() => {
+        (true, false) if realm.is_none() && place.is_none() && environment.is_none() => {
             Some(exec::Target::Local { interpreted })
         }
         (false, true) if tests && !interpreted && realm.is_none() => {
@@ -222,8 +222,14 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
     let file = config::find(&start)?;
     // local runs read nothing of the config: the project is the directory holding it
     let root = || std::fs::canonicalize(file.parent().unwrap_or(Path::new("."))).map_err(|e| e.to_string());
-    if let Command::Test(options, exec::Target::Local { interpreted }, tests) = &command {
-        return exec::test_local(&root()?, options, *interpreted, tests);
+    match command {
+        Command::Exec(options, exec::Target::Local { interpreted }, source) => {
+            return exec::exec_local(&root()?, &options, interpreted, source);
+        }
+        Command::Test(options, exec::Target::Local { interpreted }, tests) => {
+            return exec::test_local(&root()?, &options, interpreted, &tests);
+        }
+        _ => {}
     }
     let cfg = config::load(&file)?;
     // dev wrote what the editor reads; these only talk to it
