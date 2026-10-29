@@ -38,6 +38,9 @@ pub(crate) const BODY_LIMIT: u64 = 16 << 20;
 const ERROR_LIMIT: u64 = 64 << 10;
 /// The place save's op name: its 409 means the place is open in Studio.
 const SAVE_PLACE: &str = "save place";
+/// The op name of the fetch of an asset's content from the location asset delivery handed out. It carries no key, so
+/// its 401 or 403 says nothing about the key's scopes.
+pub const ASSET_CONTENT: &str = "get asset content";
 
 /// Roblox's Open Cloud: the only base a client sends to, besides the mock on this machine ([`loopback`]).
 pub const ROBLOX: &str = "https://apis.roblox.com";
@@ -390,7 +393,7 @@ impl Error {
     /// The stable diagnostic code commands report.
     pub fn diag(&self) -> &'static str {
         match self.kind {
-            ErrorKind::Status(401 | 403) => "cloud.auth",
+            ErrorKind::Status(401 | 403) if self.op != ASSET_CONTENT => "cloud.auth",
             ErrorKind::Status(404) => "cloud.notFound",
             ErrorKind::Status(409) if self.op == SAVE_PLACE => "cloud.studioOpen",
             ErrorKind::Status(429) => "cloud.rateLimit",
@@ -403,6 +406,7 @@ impl Error {
         let ErrorKind::Status(status) = self.kind else { return String::new() };
         let text = match status {
             400 => "check the resource ids, request fields and uploaded file format",
+            401 | 403 if self.op == ASSET_CONTENT => "the content URL asset delivery handed out refused it",
             401 => "the API key is invalid or expired",
             403 => "the API key lacks a scope for this request, or permission on this creator or universe",
             404 => "check that the universe, place, version and task ids are correct",

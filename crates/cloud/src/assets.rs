@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use flate2::read::GzDecoder;
 use serde_json::{Value, json};
 
-use crate::{BODY_LIMIT, Call, Client, Error, ErrorKind, Part, absolute, backoff, code, id, multipart};
+use crate::{ASSET_CONTENT, BODY_LIMIT, Call, Client, Error, ErrorKind, Part, absolute, backoff, code, id, multipart};
 
 /// Roblox's limit on an asset file.
 pub const MAX_ASSET: usize = 20_000_000;
@@ -88,7 +88,6 @@ impl AssetKind {
 const CREATE: &str = "create asset";
 const OPERATION: &str = "get asset operation";
 const DELIVERY: &str = "get asset location";
-const CONTENT: &str = "get asset content";
 
 impl Client {
     /// Creates an asset. Not idempotent: the caller saves its intent first, and an ambiguous error keeps it.
@@ -223,7 +222,7 @@ impl Client {
         if !absolute(&location) {
             return Err(self.error(&call, ErrorKind::Decode, format!("the location {location:?} is not a URL")));
         }
-        let call = Call { op: CONTENT, method: "GET", path: location, body: None, create: false, long: false };
+        let call = Call { op: ASSET_CONTENT, method: "GET", path: location, body: None, create: false, long: false };
         let body = self.send(&call)?;
         if !body.starts_with(&[0x1f, 0x8b]) {
             return Ok(body);

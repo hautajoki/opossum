@@ -451,7 +451,8 @@ fn work(
 /// Reads back what Roblox's import made of upload `id` of the glb at `path` (`file` in messages) and matches its parts
 /// to the glb's by name: the same names, each once. `reviewing` is whether moderation was still reviewing the upload
 /// when it finished, None when an earlier run uploaded it. Asset delivery refusing a key it doesn't refuse for review
-/// stops every later read; any other failure leaves only this upload unread, for the next run.
+/// stops every later read; any other failure, the keyless fetch of the location it hands out included, leaves only
+/// this upload unread, for the next run.
 fn read(
     client: &Client,
     id: u64,
@@ -477,6 +478,9 @@ fn read(
         Ok(content) => content,
         Err(e) => {
             return match (e.kind, reviewing) {
+                _ if e.op == cloud::ASSET_CONTENT => {
+                    unread("asset.read", format!("{e}; `opossum upload` reads it again"))
+                }
                 (ErrorKind::Status(401), _) | (ErrorKind::Status(403), Some(false)) => {
                     Event::ReadFailed("cloud.auth", e.to_string(), true)
                 }
@@ -1109,6 +1113,28 @@ pub(crate) mod tests {
             json!([{ "file": in_review, "code": "asset.read",
                      "error": "Roblox does not deliver it while moderation reviews it (in review)" }])
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The fetch of the location asset delivery hands out carries no key, so its refusal says nothing about the key's
+    /// scopes: only that upload stays unread, and the reads go on.
+    #[test]
+    fn a_refused_content_fetch_leaves_only_its_upload_unread() {
+        let root = project("cdn", &[]);
+        std::fs::write(root.join("art/a.glb"), glb(&["A"])).unwrap();
+        std::fs::write(root.join("art/b.glb"), glb(&["B"])).unwrap();
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        mock.on("GET", "_mock/content/", Reply::json(403, &json!({ "message": "AccessDenied" })));
+        let out = run(&root, &mock, &stop_flag());
+        assert_eq!(
+            (out.exit, &out.json["code"], out.json["read"].as_array().map(Vec::len)),
+            (1, &json!("asset.read"), Some(1))
+        );
+        let pending = out.json["pending"].as_array().unwrap();
+        assert_eq!((pending.len(), &pending[0]["code"]), (1, &json!("asset.read")));
+        assert_eq!(sent(&mock, "GET", "asset-delivery-api/"), 2);
+        let said = format!("{}{}", out.text, out.json);
+        assert!(!said.contains("legacy-asset:manage") && !said.contains("lacks a scope"), "{said}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
