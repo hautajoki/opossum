@@ -60,6 +60,25 @@ impl Class {
 /// content the lock holds an id for binds it, files sending the same content go up once, and a file holding the
 /// content of an upload that may or may not have happened is ambiguous with it.
 pub fn classify(root: &Path, lock: &mut Lock, found: &[assets::Asset], hashes: &[String]) -> Vec<Class> {
+    // an upload in flight of a file that is gone (renamed, moved) follows its content to a file holding it now, so it
+    // is resumed or settled there rather than dropped with the old name and sent again
+    let present: HashSet<&str> = found.iter().map(|a| a.file.as_str()).collect();
+    let gone: Vec<String> = lock
+        .assets
+        .iter()
+        .filter(|(file, a)| a.next.is_some() && !present.contains(file.as_str()) && !lock.merged.contains_key(*file))
+        .map(|(file, _)| file.clone())
+        .collect();
+    for file in gone {
+        let next = lock.assets[&file].next.clone();
+        let free = |a: &assets::Asset| lock.assets.get(&a.file).is_none_or(|r| r.next.is_none());
+        let Some(i) = (0..found.len()).find(|&i| Some(&hashes[i]) == next.as_ref() && free(&found[i])) else {
+            continue;
+        };
+        let moved = lock.assets.remove(&file).expect("a gone record");
+        let target = lock.assets.entry(found[i].file.clone()).or_default();
+        (target.next, target.op) = (moved.next, moved.op);
+    }
     // content the lock holds an id for, a merge's every candidate included
     let held: HashMap<String, u64> = lock
         .assets

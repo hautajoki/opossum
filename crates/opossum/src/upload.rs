@@ -736,6 +736,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// Renaming a file whose upload may or may not have happened keeps that upload unsettled under the new name,
+    /// rather than dropping it with the old name and sending the content again.
+    #[test]
+    fn an_ambiguous_upload_follows_its_file_through_a_rename() {
+        let root = project("renamed", &[("a.glb", "x")]);
+        let mock = Mock::bind(0, Some(auto())).unwrap();
+        mock.on("POST", "assets/v1/assets", Reply::Reset);
+        assert_eq!(run(&root, &mock, &stop_flag()).json["ambiguous"], json!(["art/a.glb"]));
+        std::fs::rename(root.join("art/a.glb"), root.join("art/b.glb")).unwrap();
+        for _ in 0..2 {
+            let out = run(&root, &mock, &stop_flag());
+            assert_eq!(
+                (&out.json["ambiguous"], &out.json["dropped"]),
+                (&json!(["art/b.glb"]), &json!(0)),
+                "{}",
+                out.json
+            );
+        }
+        assert_eq!(adopt(&root, "art/b.glb", Some(9)).exit, 0);
+        assert_eq!((record(&root, "art/b.glb").and_then(|r| r.id), sent(&mock, "POST", "")), (Some(9), 1));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_crash_after_the_create_resumes_its_operation_and_identical_files_join_it() {
         let root = project("resume", &[("a.glb", "x"), ("b.glb", "x"), ("c.glb", "x")]);
