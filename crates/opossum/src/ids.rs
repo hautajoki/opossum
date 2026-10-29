@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn a_set_renders_nested_and_sorted_in_both_languages() {
-        // tessera's nested.luau fixture, unsorted on the way in
+        // a nested set, unsorted on the way in
         let (luau, ts) = render_set(
             "assets",
             &values(&[

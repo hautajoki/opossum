@@ -258,7 +258,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_legacy_fingerprint_is_tessera_s_to_the_byte() {
+    fn the_fingerprint_is_tessera_s_to_the_byte() {
         // the options hash tessera wrote into a project's lock for { preset: 'original', bleed: true }
         assert_eq!(options(ImageOptions::DEFAULT), "741311f1dd59e719e3e14fd04b16f27606025c7989d724fdb2c443a57d68b997");
         // the rest hand-computed with python's hashlib over the same formula

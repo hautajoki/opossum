@@ -11,10 +11,10 @@ use std::sync::Once;
 /// The Luau release compiled in, as `0.740`.
 pub const LUAU_VERSION: &str = env!("LUAU_VERSION");
 
-/// Turns on every fast flag named `Luau*` except the analysis flags Luau calls experimental, as the `luau` CLI does
-/// (hexagon's local runs used it). On luau0-src's defaults many are off (`LuauIntegerLibrary`, `LuauFastpcall`,
-/// `LuauCompileIifeInline`, …), which would load a different library surface and compile differently from the CLI
-/// and from Roblox. Flags are process-global; this runs once, and every compile calls it first.
+/// Turns on every fast flag named `Luau*` except the analysis flags Luau calls experimental, as the `luau` CLI does. On
+/// luau0-src's defaults many are off (`LuauIntegerLibrary`, `LuauFastpcall`, `LuauCompileIifeInline`, …), which would
+/// load a different library surface and compile differently from the CLI and from Roblox. Flags are process-global;
+/// this runs once, and every compile calls it first.
 pub fn init() {
     static INIT: Once = Once::new();
     // SAFETY: the shim only writes Luau's flag globals; `Once` runs it before any compile can read them.

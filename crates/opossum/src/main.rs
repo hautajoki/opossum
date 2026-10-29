@@ -13,13 +13,13 @@ mod exec;
 mod guard;
 mod ids;
 mod inputs;
-mod legacy;
 mod lock;
 mod migrate;
 mod packages;
 mod plan;
 mod resources;
 mod signals;
+mod tessera;
 mod upload;
 
 use std::collections::BTreeMap;

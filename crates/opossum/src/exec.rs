@@ -83,9 +83,9 @@ pub fn exec_local(root: &Path, options: &Options, interpreted: bool, source: Sou
     Ok(print_answer(options, &answer))
 }
 
-/// Runs Luau on Open Cloud: on the saved version holding this build, built with `--profile` or the place's profile,
-/// or on the current head with `--head`. Text prints what it returned as tessera did (nothing for no value, a string as
-/// it is, another value as JSON, several as one JSON array) and puts what it logged and its error on stderr.
+/// Runs Luau on Open Cloud: on the saved version holding this build, built with `--profile` or the place's profile, or
+/// on the current head with `--head`. Text prints what it returned (nothing for no value, a string as it is, another
+/// value as JSON, several as one JSON array) and puts what it logged and its error on stderr.
 pub fn exec_cloud(
     cfg: Config,
     client: &Client,
@@ -148,7 +148,7 @@ pub fn exec_cloud(
     Outcome { exit, json: answer, text: results_text(&ran.task.results) }
 }
 
-/// What a cloud exec prints on stdout, tessera's way: nothing for no value, one string as it is, one other value as
+/// What a cloud exec prints on stdout: nothing for no value, one string as it is, one other value as
 /// JSON, several as one compact JSON array; each but nothing ends its line.
 fn results_text(values: &[Value]) -> String {
     match values {
@@ -878,7 +878,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_cloud_exec_prints_its_results_as_tessera_did() {
+    fn a_cloud_exec_prints_one_string_raw_and_anything_else_as_json() {
         // scripts parse this: a project's tooling driver reads one string result raw
         let text = |values: Value| results_text(values.as_array().unwrap());
         assert_eq!(text(json!([])), "");

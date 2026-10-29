@@ -139,7 +139,7 @@ fn walk(root: &Path, set_root: &str, rel: &str, others: &[&str], out: &mut Vec<S
             diags.push(Diag::new("asset.unsupported", Severity::Error, Some(&entry.path()), message));
             continue;
         };
-        // symbolic links are skipped, as tessera did: file_type does not follow them
+        // symbolic links are skipped: file_type does not follow them
         match entry.file_type() {
             _ if name.starts_with('.') => {}
             Ok(t) if t.is_dir() || t.is_file() => entries.push((name, t.is_dir())),

@@ -15,7 +15,7 @@ pub const MAX_SIDE: u32 = 7999;
 /// Every decoder refuses a header above this on either side before allocating (a decompression bomb guard).
 const MAX_DECODE: u32 = 16384;
 
-/// Tessera's seven presets: `Original` keeps the source size, the others resize into a fixed box with `Fit::Contain`.
+/// The seven presets: `Original` keeps the source size, the others resize into a fixed box with `Fit::Contain`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Preset {
     Original,
@@ -122,7 +122,7 @@ fn image(ext: &str, bytes: &[u8], target: Option<(u32, u32, Fit)>, bleed: bool) 
     let src = match ext {
         ".png" => {
             let src = decode_png(bytes)?;
-            // Tessera's no-op rule: nothing to resize and nothing for a bleed to fill keeps the file's own bytes.
+            // nothing to resize and nothing for a bleed to fill keeps the file's own bytes.
             let (holes, seeds) = (src.px.chunks(4).any(|p| p[3] == 0), src.px.chunks(4).any(|p| p[3] > 0));
             if !resizes(src.w, src.h) && !(bleed && holes && seeds) {
                 return Ok(Image::Unchanged { w: src.w, h: src.h });
@@ -297,9 +297,10 @@ fn render_svg(bytes: &[u8], target: Option<(u32, u32, Fit)>) -> Result<Pixels, S
     Ok(Pixels { w, h, px: pixmap.take_demultiplied() })
 }
 
-/// Tessera's alpha bleed, exactly: a multi-source BFS from every pixel with alpha > 0 in row-major order, neighbours
-/// in the order W N E S NW NE SW SE, each reached pixel taking the RGB of the one it was reached from and keeping its
-/// alpha. Ties go to the earliest-queued source. No seeds, or no holes, changes nothing.
+/// The alpha bleed, byte for byte as tessera made it, so an id migrated from tessera holds what this uploads: a
+/// multi-source BFS from every pixel with alpha > 0 in row-major order, neighbours in the order W N E S NW NE SW SE,
+/// each reached pixel taking the RGB of the one it was reached from and keeping its alpha. Ties go to the
+/// earliest-queued source. No seeds, or no holes, changes nothing.
 fn bleed(img: &mut Pixels) {
     const DIRS: [(i64, i64); 8] = [(-1, 0), (0, -1), (1, 0), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)];
     let (w, h) = (i64::from(img.w), i64::from(img.h));

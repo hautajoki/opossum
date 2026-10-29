@@ -21,9 +21,9 @@ use tsrs_core::ScriptKind;
 use crate::config::{self, Config};
 use crate::diag::{self, Diag, Severity};
 use crate::guard::{Cache, RemoteGuard};
-use crate::legacy::{self, Lit, Value};
 use crate::lock::{self, Lock};
 use crate::plan::count;
+use crate::tessera::{self, Lit, Value};
 
 const CONFIG: &str = "tessera.config.ts";
 const LOCK: &str = "tessera.lock";
@@ -319,7 +319,7 @@ impl Reader<'_> {
 
     /// opossum.toml's text `toml` with tessera's declarations in it; None after refusing.
     fn config(&mut self, toml: &str) -> Option<Tessera> {
-        let lit = match legacy::config(self.text) {
+        let lit = match tessera::config(self.text) {
             Ok(lit) => lit,
             Err((at, message)) => {
                 self.refuse(at, message);
@@ -609,7 +609,7 @@ impl Reader<'_> {
                 _ => self.unknown(v, &at),
             }
         }
-        if !legacy::same_box(image.preset, width, height) {
+        if !tessera::same_box(image.preset, width, height) {
             let message =
                 format!("opossum's preset {} has its own size, not {width}×{height}; {BY_HAND}", image.preset.name());
             self.refuse(value.at, message);
@@ -783,7 +783,7 @@ fn join(dir: &str, rel: &str) -> String {
 
 /// One tessera record whose file opossum has: what the lock gets for it.
 struct Import<'r> {
-    record: &'r legacy::Record,
+    record: &'r tessera::Record,
     file: String,
     set: usize,
     ext: String,
@@ -800,7 +800,7 @@ fn import_lock(
     let root = &cfg.root;
     let at = root.join(LOCK);
     let refuse = |code: &str, message: String| Diag::new(code, Severity::Error, Some(&at), message);
-    let records = match legacy::lock(bytes) {
+    let records = match tessera::lock(bytes) {
         Ok(records) => records,
         Err(reasons) => {
             diags.extend(reasons.into_iter().map(|r| refuse("migrate.lock", r)));
@@ -869,7 +869,7 @@ fn import_lock(
         let image = cfg.assets[im.set].image;
         let b = fs::read(root.join(&im.file)).map_err(|e| format!("{}: {e}", im.file))?;
         let kind = crate::assets::kind(&im.ext, &b).map_err(|e| format!("{}: {e}", im.file))?;
-        Ok((crate::assets::hash(&im.ext, image, &b), legacy::fingerprint(&b, &im.ext, image), kind))
+        Ok((crate::assets::hash(&im.ext, image, &b), tessera::fingerprint(&b, &im.ext, image), kind))
     });
 
     let (mut lock, problems) = match lock::read(root) {
@@ -1080,7 +1080,7 @@ fn specifiers(text: &str, path: &Path) -> Vec<(usize, usize, String)> {
         if lit.kind() != Kind::StringLiteral {
             continue;
         }
-        let (start, end) = legacy::span(text, lit);
+        let (start, end) = tessera::span(text, lit);
         let (start, end) = (start + 1, end.saturating_sub(1));
         if start <= end && text.get(start..end) == Some(lit.text()) {
             out.push((start, end, lit.text().to_owned()));
@@ -1235,7 +1235,7 @@ mod tests {
 
     #[test]
     fn a_tessera_lock_keeps_current_ids_marks_changed_ones_and_drops_orphans() {
-        let fp = legacy::fingerprint(b"a", ".png", ImageOptions::DEFAULT);
+        let fp = tessera::fingerprint(b"a", ".png", ImageOptions::DEFAULT);
         let lock =
             tessera_lock(&[asset("art/a", 11, &fp), asset("art/b", 12, "stale"), asset("art/gone", 13, "x")], &[]);
         let root = project(
@@ -1280,7 +1280,7 @@ mod tests {
             crate::assets::hash(".png", ImageOptions::DEFAULT, b"a"),
             crate::assets::hash(".png", ImageOptions::DEFAULT, b"c"),
         );
-        let fp = |b: &[u8]| legacy::fingerprint(b, ".png", ImageOptions::DEFAULT);
+        let fp = |b: &[u8]| tessera::fingerprint(b, ".png", ImageOptions::DEFAULT);
         let records = [asset("art/a", 11, &fp(b"a")), asset("art/b", 12, "stale"), asset("art/c", 13, &fp(b"c"))];
         let ours = format!(
             "version = 1\ncreator = {{ user = 7 }}\nassets.\"art/a.png\" = {{ id = 99, hash = \"{a}\" }}\n\
@@ -1428,7 +1428,7 @@ export default defineConfig({
     /// A tessera.lock a merge brought back after the set was renamed: its records are not orphans, whose ids may go.
     #[test]
     fn a_merged_back_tessera_lock_of_a_set_opossum_does_not_know_refuses() {
-        let fp = legacy::fingerprint(b"c", ".png", ImageOptions::DEFAULT);
+        let fp = tessera::fingerprint(b"c", ".png", ImageOptions::DEFAULT);
         let lock = tessera_lock(&[asset("art/c", 13, &fp)], &[]);
         let toml = TOML.replace("art = \"art\"", "pictures = \"art\"");
         let files: [(&str, &[u8]); 4] = [

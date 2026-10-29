@@ -1,6 +1,6 @@
-//! Audio inspection against Roblox's limits, so a file it would refuse fails before upload with a reason instead of
-//! as a transcoding error after it. Tessera's parsers, ported line for line: headers only, page CRCs unchecked, and no
-//! input of any length or content panics (every read is bounds-checked; the no-panic loop below holds it to that).
+//! Audio inspection against Roblox's limits, so a file it would refuse fails before upload with a reason instead of as
+//! a transcoding error after it. Headers only, page CRCs unchecked, and no input of any length or content panics (every
+//! read is bounds-checked; the no-panic loop below holds it to that).
 
 /// Roblox's limit: 420 s passes, anything longer fails.
 const MAX_SECONDS: f64 = 7.0 * 60.0;
@@ -276,7 +276,7 @@ fn ogg(b: &[u8]) -> Result<Info, String> {
 }
 
 /// The first valid Layer III frame starts the stream; after it, frames run back to back until a tag or zero padding.
-/// Rate and channels are the largest any frame has (a VBR info frame counts as audio, as in tessera).
+/// Rate and channels are the largest any frame has (a VBR info frame counts as audio).
 fn mp3(b: &[u8]) -> Result<Info, String> {
     let start = id3(b).map_err(|e| format!("MP3 {e}"))?;
     let Some(mut at) =
@@ -368,7 +368,7 @@ fn id3(b: &[u8]) -> Result<usize, String> {
 mod tests {
     use super::*;
 
-    // Tessera's builders: the smallest headers each parser accepts, with lengths in seconds or milliseconds.
+    // the smallest headers each parser accepts, with lengths in seconds or milliseconds.
 
     fn wav(rate: u32, channels: u16, ms: u64) -> Vec<u8> {
         let align = channels * 2;
