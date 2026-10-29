@@ -34,6 +34,7 @@ fn lower_one(
         files: vec![main.clone(), format!("{root}/src/globals.d.ts")],
         checkers: 1,
         flags: Vec::new(),
+        overlay: lower::program::declarations(&root),
     };
     std::thread::Builder::new()
         .stack_size(lower::STACK_SIZE)

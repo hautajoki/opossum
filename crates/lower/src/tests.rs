@@ -59,7 +59,8 @@ pub fn lower(files: &[(&str, &str)], mut options: Options) -> FxHashMap<String, 
     let result = std::thread::Builder::new()
         .stack_size(crate::STACK_SIZE)
         .spawn(move || {
-            let load = LoadOptions { root: root_name.clone(), files: paths, checkers: 1, flags: Vec::new() };
+            let overlay = crate::program::declarations(&root_name);
+            let load = LoadOptions { root: root_name.clone(), files: paths, checkers: 1, flags: Vec::new(), overlay };
             let project = crate::load(&load, None).unwrap();
             let mut locator = Locator::default();
             for &file in project.program.source_files() {

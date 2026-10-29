@@ -259,8 +259,10 @@ impl Session {
     /// and gathers the packages to mount.
     fn load(&self) -> Result<Project, String> {
         let checkers = std::thread::available_parallelism().map_or(4, usize::from);
+        let root = slashed(&self.cfg.root);
         let options = LoadOptions {
-            root: slashed(&self.cfg.root),
+            overlay: lower::program::declarations(&root),
+            root,
             files: self.root_files(),
             checkers,
             flags: self.cfg.ts.clone(),

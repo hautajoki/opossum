@@ -7,7 +7,13 @@ use luau::ModulePath;
 fn lower_fixture() -> String {
     let root = format!("{}/tests/fixtures/vector", env!("CARGO_MANIFEST_DIR"));
     let main = format!("{root}/src/main.ts");
-    let options = LoadOptions { root: root.clone(), files: vec![main.clone()], checkers: 1, flags: Vec::new() };
+    let options = LoadOptions {
+        root: root.clone(),
+        files: vec![main.clone()],
+        checkers: 1,
+        flags: Vec::new(),
+        overlay: lower::program::declarations(&root),
+    };
     let project = lower::load(&options, None).expect("the fixture loads");
     let files = project.project_files();
     let diagnostics = project.check(&tsrs_compiler::Context::background(), &files);

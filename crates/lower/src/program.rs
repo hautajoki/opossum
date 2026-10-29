@@ -32,6 +32,9 @@ pub struct LoadOptions {
     pub checkers: usize,
     /// Strictness flags on top of opossum's options, by their tsconfig names (`noUncheckedIndexedAccess`).
     pub flags: Vec<(String, bool)>,
+    /// Files served from memory as root files, by absolute path: [`declarations`] (the macros need them) and the
+    /// `opossum/*` modules' types at [`module_file`].
+    pub overlay: Vec<(String, String)>,
 }
 
 /// A loaded project.
@@ -55,11 +58,17 @@ pub fn macros_file(root: &str) -> String {
     tspath::combine_paths(root, &[".opossum/opossum.d.ts"])
 }
 
+/// The in-memory types of the virtual module `opossum/<name>` (the `opossum/*` path of [`compiler_options`]).
+pub fn module_file(root: &str, name: &str) -> String {
+    tspath::combine_paths(root, &[&format!(".opossum/modules/{name}.d.ts")])
+}
+
 /// opossum's compiler options for a project at `root`, with `flags` applied over them. Fails on a flag name opossum
 /// does not take (module, lib, paths and jsx are opossum's).
 pub fn compiler_options(root: &str, flags: &[(String, bool)]) -> Result<CompilerOptions, String> {
     let mut paths = OrderedMap::default();
     paths.insert("*".to_owned(), Some(vec!["./src/*".to_owned()]));
+    paths.insert("opossum/*".to_owned(), Some(vec!["./.opossum/modules/*".to_owned()]));
     let mut options = CompilerOptions {
         module: ModuleKind::PRESERVE,
         module_resolution: ModuleResolutionKind::BUNDLER,
@@ -112,10 +121,10 @@ pub fn compiler_options(root: &str, flags: &[(String, bool)]) -> Result<Compiler
     Ok(options)
 }
 
-/// The declaration files opossum injects into every program and writes to `.opossum/` for editors, by path: the
-/// compile-time macros with `Callsite`, and the vector library's operator macros.
-pub fn declarations(root: &str) -> [(String, String); 2] {
-    [
+/// The declaration files lowering needs in every program's overlay, by path: the compile-time macros with
+/// `Callsite`, and the vector library's operator macros.
+pub fn declarations(root: &str) -> Vec<(String, String)> {
+    vec![
         (macros_file(root), format!("{MACROS_D_TS}{}", crate::callsite::CALLSITE_D_TS)),
         (crate::vector::declarations_file(root), crate::vector::VECTOR_D_TS.to_owned()),
     ]
@@ -125,14 +134,14 @@ pub fn declarations(root: &str) -> [(String, String); 2] {
 pub fn load(opts: &LoadOptions, cache: Option<&Arc<SourceFileCache>>) -> Result<Project, String> {
     let root = tspath::normalize_path(&opts.root);
     let options = compiler_options(&root, &opts.flags)?;
-    let macros = macros_file(&root);
-    let vector = crate::vector::declarations_file(&root);
-    let files: FxHashMap<String, String> = declarations(&root).into_iter().collect();
-    let fs: Arc<dyn FS> = Arc::new(Overlay { inner: Box::new(bundled::wrap_fs(osvfs::fs())), files });
-
     let mut root_files: Vec<String> = opts.files.iter().map(|f| tspath::normalize_path(f)).collect();
-    root_files.push(macros);
-    root_files.push(vector);
+    let mut files = FxHashMap::default();
+    for (path, text) in &opts.overlay {
+        let path = tspath::normalize_path(path);
+        root_files.push(path.clone());
+        files.insert(path, text.clone());
+    }
+    let fs: Arc<dyn FS> = Arc::new(Overlay { inner: Box::new(bundled::wrap_fs(osvfs::fs())), files });
     let options = CompilerOptions { checkers: Some(opts.checkers.max(1) as i64), ..options };
     let compare = ComparePathsOptions {
         use_case_sensitive_file_names: fs.use_case_sensitive_file_names(),
