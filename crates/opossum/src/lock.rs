@@ -60,7 +60,7 @@ pub struct Resource {
 
 #[derive(Default)]
 pub struct Lock {
-    /// Who the `[assets]` ids belong to, set by the first upload.
+    /// Who the `assets.` records' ids belong to, set by the first upload.
     pub creator: Option<Creator>,
     /// By source file path relative to the project root, with its extension, so renaming a set orphans nothing.
     pub assets: BTreeMap<String, Asset>,
@@ -271,13 +271,13 @@ impl Lock {
     pub fn check_creator(&self, root: &Path, creator: Creator) -> Option<Diag> {
         let file = root.join(FILE);
         if !self.other_creators.is_empty() {
-            let message = "two different `creator` lines after a merge; keep the one the [assets] ids belong to";
+            let message = "two different `creator` lines after a merge; keep the one the `assets.` ids belong to";
             return Some(Diag::new("lock.conflict", Severity::Error, Some(&file), message.into()));
         }
         let ours = self.creator.filter(|&c| c != creator)?;
         let message = format!(
             "opossum.lock's assets were uploaded as {} but opossum.toml says {}. Their ids keep working. To upload \
-             everything again as the new creator, delete `creator` and [assets] from opossum.lock",
+             everything again as the new creator, delete `creator` and every `assets.` line from opossum.lock",
             creator_name(ours),
             creator_name(creator)
         );
