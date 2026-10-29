@@ -13,7 +13,9 @@ mod exec;
 mod guard;
 mod ids;
 mod inputs;
+mod legacy;
 mod lock;
+mod migrate;
 mod packages;
 mod plan;
 mod resources;
@@ -73,7 +75,8 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>
   where <file | Instance.Path[:line]>                        a file's instance, or an instance's file
   sourcemap                                                  .opossum/sourcemap.json for luau-lsp
   plugin install [<path>]                                    the Studio plugin .rbxm
-  migrate                                                    convert Rojo meta files and refs, and [place]";
+  migrate                                                    convert Rojo meta files, refs and [place], and adopt
+                                                             tessera's config, lock and ids and hexagon's imports";
 
 enum Command {
     Build { profile: Option<String>, environment: Option<String>, out: Option<PathBuf>, emit: Option<PathBuf> },
@@ -283,7 +286,7 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
     };
     match command {
         // before loading: the config it fixes does not load
-        Command::Migrate => return migrate(&config::find(&start)?),
+        Command::Migrate => return migrate::run(&config::find(&start)?),
         // loads it itself, so a broken one is an event too
         Command::Dev { environment, json } => return dev::run(&start, json, environment.as_deref()),
         _ => {}
@@ -608,53 +611,6 @@ fn sourcemap(mut session: Session) -> Result<bool, String> {
     let path = editor::dir(root).join("sourcemap.json");
     editor::write_if_changed(&path, &tree.sourcemap_json(Some(root)))?;
     println!("wrote {}", path.display());
-    Ok(true)
-}
-
-/// `opossum migrate`: converts a Rojo-era `place/` in place (`init.meta.json` files into properties files, Rojo
-/// ref attributes into paths) and moves opossum.toml's `[place]` into properties files, printing each file it
-/// changed. The whole conversion is planned first, so a conflict changes nothing and a second run finds nothing.
-fn migrate(file: &Path) -> Result<bool, String> {
-    let root = file.parent().unwrap_or(Path::new("."));
-    let shown = |path: &Path| path.strip_prefix(root).unwrap_or(path).display().to_string();
-    let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    let cut = config::cut_place(&text).map_err(|e| format!("{}: {e}", file.display()))?;
-    let moved = match &cut {
-        Some((_, table)) => {
-            place::entries_from_toml(table, file).map_err(|e| format!("{}: [place] {e}", file.display()))?
-        }
-        None => Vec::new(),
-    };
-    let writes = match place::plan_migration(&root.join("place"), moved) {
-        Ok(writes) => writes,
-        Err(diags) => {
-            report(&diags.iter().map(diag::from_place).collect::<Vec<_>>(), root);
-            println!("nothing changed");
-            return Ok(false);
-        }
-    };
-    let io = |path: &Path, e: std::io::Error| format!("{}: {e}", path.display());
-    for write in &writes {
-        match &write.text {
-            Some(text) => {
-                if let Some(dir) = write.path.parent() {
-                    std::fs::create_dir_all(dir).map_err(|e| io(dir, e))?;
-                }
-                std::fs::write(&write.path, text).map_err(|e| io(&write.path, e))?;
-                println!("wrote {}", shown(&write.path));
-            }
-            None => {
-                std::fs::remove_file(&write.path).map_err(|e| io(&write.path, e))?;
-                println!("removed {}", shown(&write.path));
-            }
-        }
-    }
-    if let Some((rest, _)) = cut {
-        std::fs::write(file, rest).map_err(|e| io(file, e))?;
-        println!("wrote {}", shown(file));
-    } else if writes.is_empty() {
-        println!("nothing to migrate");
-    }
     Ok(true)
 }
 

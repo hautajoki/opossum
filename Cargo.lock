@@ -877,6 +877,8 @@ dependencies = [
  "tsrs_compiler",
  "tsrs_core",
  "tsrs_diagnostics",
+ "tsrs_parser",
+ "tsrs_scanner",
 ]
 
 [[package]]

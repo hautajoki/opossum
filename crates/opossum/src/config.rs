@@ -172,7 +172,8 @@ pub fn load(file: &Path) -> Result<Config, String> {
     parse(&text, root).map_err(|e| format!("{}: {e}", file.display()))
 }
 
-fn parse(text: &str, root: PathBuf) -> Result<Config, String> {
+/// The config in `text`, for the project at `root`.
+pub(crate) fn parse(text: &str, root: PathBuf) -> Result<Config, String> {
     let doc: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
     let mut config = Config {
         root,
@@ -428,7 +429,7 @@ fn asset_set(project: &Path, name: &str, value: &toml::Value) -> Result<AssetSet
 }
 
 /// `path` with `.`, empty segments and `..` resolved; None when it leaves the project.
-fn normalize(path: &str) -> Option<String> {
+pub(crate) fn normalize(path: &str) -> Option<String> {
     if path.starts_with('/') {
         return None;
     }

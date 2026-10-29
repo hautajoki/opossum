@@ -459,10 +459,14 @@ pub fn intent(desired: &Resource) -> String {
     h.finalize().as_bytes()[..16].iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn record(out: &mut String, key: &str, fields: &[(&str, String)]) {
-    let bare = !key.is_empty() && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
-    let key = if bare { key.to_owned() } else { string(key) };
-    let _ = writeln!(out, "{key} = {}", inline(fields));
+fn record(out: &mut String, k: &str, fields: &[(&str, String)]) {
+    let _ = writeln!(out, "{} = {}", key(k), inline(fields));
+}
+
+/// A TOML key: bare when it is only `[A-Za-z0-9_-]`, else a basic string.
+pub(crate) fn key(k: &str) -> String {
+    let bare = !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    if bare { k.to_owned() } else { string(k) }
 }
 
 /// `{ a = 1, b = "x" }`, or `{}`.
@@ -475,7 +479,7 @@ fn inline(fields: &[(&str, String)]) -> String {
 }
 
 /// A TOML basic string: `"`, `\`, `\n` and `\t` escaped, every other C0 control and U+007F as `\uXXXX`.
-fn string(s: &str) -> String {
+pub(crate) fn string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
