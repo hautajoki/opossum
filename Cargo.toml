@@ -34,6 +34,10 @@ place = { path = "crates/place" }
 sync = { path = "crates/sync" }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 
+# luau0-src with the include directories, defines and build stamp crates/luau needs (vendor/luau0-src/VENDOR.md).
+[patch.crates-io]
+luau0-src = { path = "vendor/luau0-src" }
+
 # A debug checker is unusably slow, so even dev builds are optimised (as in tsrs).
 [profile.dev]
 opt-level = 3

@@ -3,14 +3,12 @@
 // Rust, which is undefined behaviour. Here every exception becomes an error buffer too, in Luau's format: a zero
 // byte, then `:<line>: <message>`. The buffer is malloc'ed; free it with opossum_luau_free (the same C runtime).
 
+#include "luacode.h"
+
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
-
-struct lua_CompileOptions;
-
-extern "C" char* luau_compile(const char* source, size_t size, lua_CompileOptions* options, size_t* outsize);
 
 static char* error_buffer(const char* what, size_t* outsize)
 {
