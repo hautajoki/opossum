@@ -9,6 +9,7 @@ use std::path::Path;
 
 use serde_json::json;
 
+use crate::assets::Compiled;
 use crate::config::Config;
 use crate::diag::{Diag, Severity};
 use crate::lock::{self, Asset, Lock};
@@ -32,10 +33,13 @@ pub enum Class {
     /// Roblox refused this content when it was sent: it is not sent again until the file changes, or `opossum adopt
     /// asset --none` forgets the refusal.
     Rejected,
+    /// The file it would send fails its checks ([`check`]): the code and why.
+    Invalid(String, String),
 }
 
 /// Each [`Class`]'s name in `plan`, in [`Class::index`] order.
-const NAMES: [&str; 8] = ["current", "changed", "new", "reused", "joined", "pending", "ambiguous", "rejected"];
+const NAMES: [&str; 9] =
+    ["current", "changed", "new", "reused", "joined", "pending", "ambiguous", "rejected", "invalid"];
 
 impl Class {
     pub fn name(&self) -> &'static str {
@@ -52,6 +56,7 @@ impl Class {
             Class::Pending => 5,
             Class::Ambiguous(_) => 6,
             Class::Rejected => 7,
+            Class::Invalid(..) => 8,
         }
     }
 }
@@ -147,7 +152,8 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
         Ok(survey) => survey,
         Err(refusal) => return refusal,
     };
-    let classes = classify(root, &mut lock, &found, &hashes);
+    let mut classes = classify(root, &mut lock, &found, &hashes);
+    check(cfg, &found, &hashes, &mut classes);
     let mut text = String::new();
     let mut sets = Vec::new();
     for (i, set) in cfg.assets.iter().enumerate() {
@@ -172,6 +178,10 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
                 }
                 Class::Ambiguous(how) => writeln!(lines, "{name:<9} {} ({how})", a.file),
                 Class::Rejected => writeln!(lines, "{name:<9} {} ({})", a.file, refused(&a.file)),
+                Class::Invalid(code, message) => {
+                    (file["code"], file["error"]) = (code.as_str().into(), message.as_str().into());
+                    writeln!(lines, "{name:<9} {} ({message})", a.file)
+                }
                 _ => writeln!(lines, "{name:<9} {}", a.file),
             };
             files.push(file);
@@ -195,6 +205,10 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
     }
     let ambiguous = classes.iter().filter(|c| matches!(c, Class::Ambiguous(_))).count();
     let rejected = classes.iter().filter(|c| **c == Class::Rejected).count();
+    let invalid = classes.iter().find_map(|c| match c {
+        Class::Invalid(code, _) => Some(code.as_str()),
+        _ => None,
+    });
     if cfg.assets.is_empty() && environment.is_none() {
         text.push_str("nothing to plan: opossum.toml declares no [assets] and no [environments]\n");
     }
@@ -221,6 +235,15 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
             counted(rejected, "file")
         );
         ("asset.rejected", error)
+    } else if let Some(code) = invalid {
+        let n = classes.iter().filter(|c| matches!(c, Class::Invalid(..))).count();
+        (
+            code,
+            format!(
+                "{} failed the checks before upload: upload skips it and deploy sends nothing",
+                counted(n, "asset file")
+            ),
+        )
     } else if blocked > 0 {
         let error = format!(
             "creates of {} may or may not have happened; `opossum adopt` settles each",
@@ -231,6 +254,46 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
         return Outcome { exit: 0, json, text };
     };
     Outcome::failed(json, text, error.0, error.1)
+}
+
+/// Compiles, in parallel, the one file each upload would send (one sent, not joining another's upload), before
+/// anything is sent: what fails its checks (size, image, audio, a model that decodes) is [`Class::Invalid`], with the
+/// files joining it. The compiled bytes by file index, for `upload` to send.
+pub fn check(
+    cfg: &Config,
+    found: &[assets::Asset],
+    hashes: &[String],
+    classes: &mut [Class],
+) -> HashMap<usize, Compiled> {
+    let sends: Vec<usize> = (0..found.len()).filter(|&i| matches!(classes[i], Class::Send { .. })).collect();
+    let results = lower::parallel::map(&sends, |&i| compile(cfg, &found[i], &hashes[i]));
+    let mut compiled = HashMap::new();
+    for (i, result) in sends.into_iter().zip(results) {
+        match result {
+            Ok(c) => drop(compiled.insert(i, c)),
+            Err(d) => classes[i] = Class::Invalid(d.code, d.message),
+        }
+    }
+    for i in 0..classes.len() {
+        if let Class::Joins(leader) = classes[i]
+            && let Class::Invalid(code, message) = &classes[leader]
+        {
+            classes[i] = Class::Invalid(code.clone(), message.clone());
+        }
+    }
+    compiled
+}
+
+/// The bytes a file's upload sends, read again and checked against the hash it was classified by.
+fn compile(cfg: &Config, a: &assets::Asset, hash: &str) -> Result<Compiled, Diag> {
+    let path = cfg.root.join(&a.file);
+    let image = cfg.assets[a.set].image;
+    let fail = |message: String| Diag::new("asset.root", Severity::Error, Some(&path), message);
+    let bytes = std::fs::read(&path).map_err(|e| fail(e.to_string()))?;
+    if assets::hash(&a.ext, image, &bytes) != hash {
+        return Err(fail("the file changed while opossum read it; run again".into()));
+    }
+    assets::compile(&path, &a.ext, image, bytes)
 }
 
 /// Whether a file binds an id another file holds for its content, or joins another file's upload of it. An FBX model
@@ -332,22 +395,23 @@ mod tests {
         std::fs::create_dir_all(root.join("art")).unwrap();
         std::fs::write(root.join("opossum.toml"), "name = \"plan\"\ncreator = { user = 1 }\n[routes]\nshared = \"ReplicatedStorage/shared\"\n[assets]\nart = \"art\"\n")
             .unwrap();
-        for file in ["current.png", "changed.png", "new.png", "pending.ogg", "ambiguous.ogg"] {
+        for file in ["current.glb", "changed.glb", "new.glb", "pending.ogg", "ambiguous.ogg"] {
             std::fs::write(root.join("art").join(file), file).unwrap();
         }
-        // what upload binds or sends once, which a plan says rather than calling them new
-        std::fs::write(root.join("art/reused.png"), "current.png").unwrap();
-        std::fs::write(root.join("art/twin.png"), "new.png").unwrap();
+        // what upload binds, sends once or refuses before sending, which a plan says rather than calling them new
+        std::fs::write(root.join("art/reused.glb"), "current.glb").unwrap();
+        std::fs::write(root.join("art/twin.glb"), "new.glb").unwrap();
+        std::fs::write(root.join("art/broken.png"), "not a png").unwrap();
         let cfg = crate::config::load(&root.join("opossum.toml")).unwrap();
         let hash = |file: &str, ext: &str| assets::hash(ext, cfg.assets[0].image, file.as_bytes());
         let (old, next) = ("0".repeat(32), "1".repeat(32));
         let lock = format!(
             "version = 1\n\
-             assets.\"art/current.png\" = {{ id = 1, hash = \"{}\" }}\n\
-             assets.\"art/changed.png\" = {{ id = 2, hash = \"{old}\" }}\n\
+             assets.\"art/current.glb\" = {{ id = 1, hash = \"{}\" }}\n\
+             assets.\"art/changed.glb\" = {{ id = 2, hash = \"{old}\" }}\n\
              assets.\"art/pending.ogg\" = {{ id = 3, hash = \"{}\", next = \"{next}\", op = \"operations/x\" }}\n\
              assets.\"art/ambiguous.ogg\" = {{ next = \"{next}\" }}\n",
-            hash("current.png", ".png"),
+            hash("current.glb", ".glb"),
             hash("pending.ogg", ".ogg"),
         );
         std::fs::write(root.join("opossum.lock"), lock).unwrap();
@@ -359,6 +423,7 @@ mod tests {
             states,
             [
                 ("ambiguous", "ambiguous"),
+                ("broken", "invalid"),
                 ("changed", "changed"),
                 ("current", "current"),
                 ("new", "new"),

@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use cloud::{Client, ErrorKind, OPERATION_DEADLINE, Operation, Upload};
 use serde_json::json;
 
-use crate::assets::{self, Asset as File, Compiled};
+use crate::assets::{Asset as File, Compiled};
 use crate::config::Config;
 use crate::diag::Diag;
 use crate::guard::RemoteGuard;
@@ -119,7 +119,8 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
     }
     let mut report = Report::default();
 
-    let classes = plan::classify(root, &mut lock, &found, &hashes);
+    let mut classes = plan::classify(root, &mut lock, &found, &hashes);
+    let mut compiled = plan::check(cfg, &found, &hashes, &mut classes);
     let mut groups: Vec<(String, Vec<usize>, Option<String>)> = Vec::new();
     let mut group_of = HashMap::new();
     for (i, (a, class)) in found.iter().zip(&classes).enumerate() {
@@ -131,6 +132,7 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
                 lock.assets.entry(a.file.clone()).or_default().rejected = Some(hashes[i].clone());
                 report.failed.push((a.file.clone(), plan::refused(&a.file), "asset.rejected".into()));
             }
+            Class::Invalid(code, message) => report.failed.push((a.file.clone(), message.clone(), code.clone())),
             Class::Reuses(id) => {
                 let record = lock.assets.entry(a.file.clone()).or_default();
                 (record.id, record.hash, record.rejected) = (Some(*id), Some(hashes[i].clone()), None);
@@ -155,28 +157,21 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
         }
     }
 
-    // compile one file per group, before anything is sent
-    let mut ready = Vec::new();
-    for (hash, members, op) in groups {
-        let job = match op {
-            Some(op) => Job::Resume(op),
-            None => match compile(cfg, &found[members[0]], &hash) {
-                Ok(compiled) => {
-                    let a = &found[members[0]];
+    let ready: Vec<Group> = groups
+        .into_iter()
+        .map(|(hash, members, op)| {
+            let job = match op {
+                Some(op) => Job::Resume(op),
+                None => {
+                    let (a, compiled) = (&found[members[0]], compiled.remove(&members[0]).expect("checked"));
                     let name = a.key.rsplit('/').next().unwrap_or(&a.key).to_owned();
                     let update = in_place(&lock, a, &compiled, members.len());
                     Job::Send { compiled, name, update }
                 }
-                Err(d) => {
-                    for &m in &members {
-                        report.failed.push((found[m].file.clone(), d.message.clone(), d.code.clone()));
-                    }
-                    continue;
-                }
-            },
-        };
-        ready.push(Group { hash, members, job });
-    }
+            };
+            Group { hash, members, job }
+        })
+        .collect();
     if lock.creator.is_none() && (report.reused > 0 || !ready.is_empty()) {
         lock.creator = Some(creator);
     }
@@ -283,18 +278,6 @@ pub fn send(cfg: &Config, client: &Client, guard: &RemoteGuard, prepared: Prepar
     report.dropped = before - lock.assets.len();
     save(&mut lock, root, guard, &mut broken);
     outcome(report, broken, halt, stopped)
-}
-
-/// The bytes a file's upload sends, read again and checked against the hash its group was formed by.
-fn compile(cfg: &Config, a: &File, hash: &str) -> Result<Compiled, Diag> {
-    let path = cfg.root.join(&a.file);
-    let image = cfg.assets[a.set].image;
-    let fail = |message: String| Diag::new("asset.root", crate::diag::Severity::Error, Some(&path), message);
-    let bytes = std::fs::read(&path).map_err(|e| fail(e.to_string()))?;
-    if assets::hash(&a.ext, image, &bytes) != hash {
-        return Err(fail("the file changed while opossum read it; upload again".into()));
-    }
-    assets::compile(&path, &a.ext, image, bytes)
 }
 
 /// The id a changed FBX model replaces in place: Roblox lets only FBX content change. Only when no other file in this
@@ -621,6 +604,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::assets;
     use crate::guard::Cache;
 
     /// A project with one asset set `art` and these files under it.
