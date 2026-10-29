@@ -59,7 +59,7 @@ incremental = true
 [profile.dev.package.luau0-src]
 debug-assertions = false
 
-# Measurements: release optimisation without LTO, like tsrs's `ci` profile (the tsrs.exe we compare against).
+# Measurements (`--profile measure`): release optimisation without LTO, like tsrs's `ci` profile.
 [profile.measure]
 inherits = "release"
 lto = "off"
