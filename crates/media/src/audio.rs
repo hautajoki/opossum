@@ -2,38 +2,22 @@
 //! as a transcoding error after it. Tessera's parsers, ported line for line: headers only, page CRCs unchecked, and no
 //! input of any length or content panics (every read is bounds-checked; the no-panic loop below holds it to that).
 
+/// Roblox's limit: 420 s passes, anything longer fails.
+const MAX_SECONDS: f64 = 7.0 * 60.0;
+
 /// What a file's headers say. `seconds` is 0 when the format leaves the length unknown (a FLAC without a sample count).
-#[derive(PartialEq, Debug)]
-pub struct Audio {
-    pub seconds: f64,
-    pub rate: u32,
-    pub channels: u32,
-}
-
-const SECOND: u64 = 1_000_000_000;
-
-/// Roblox's limit; durations are whole nanoseconds, as in tessera, so 420 s passes and anything longer fails.
-const MAX_DURATION: u64 = 7 * 60 * SECOND;
-
-/// Parsed headers before the limits: duration in nanoseconds.
 struct Info {
-    nanos: u64,
+    seconds: f64,
     rate: u64,
     channels: u64,
 }
 
 /// Inspects audio by extension (`.ogg`, `.mp3`, `.wav`, `.flac`) and checks it against Roblox's limits: at most 7
 /// minutes, a sample rate of at most 48 kHz, and mono, stereo, 3.0 or 5.1.
-pub fn inspect_audio(ext: &str, bytes: &[u8]) -> Result<Audio, String> {
-    let a = match ext {
-        ".ogg" => ogg(bytes),
-        ".mp3" => mp3(bytes),
-        ".wav" => wav(bytes),
-        ".flac" => flac(bytes),
-        _ => Err(format!("{ext} is not audio opossum inspects")),
-    }?;
-    if a.nanos > MAX_DURATION {
-        return Err(format!("duration {} exceeds Roblox's 7-minute limit", duration(a.nanos)));
+pub fn inspect_audio(ext: &str, bytes: &[u8]) -> Result<(), String> {
+    let a = info(ext, bytes)?;
+    if a.seconds > MAX_SECONDS {
+        return Err(format!("{:.1} s long; Roblox takes audio up to 7 minutes", a.seconds));
     }
     if a.rate == 0 {
         return Err("sample rate could not be determined".into());
@@ -47,15 +31,17 @@ pub fn inspect_audio(ext: &str, bytes: &[u8]) -> Result<Audio, String> {
             a.channels
         ));
     }
-    Ok(Audio { seconds: a.nanos as f64 / SECOND as f64, rate: a.rate as u32, channels: a.channels as u32 })
+    Ok(())
 }
 
-/// Go's duration text rounded to the millisecond ("7m1s", "7m0.5s", "1h2m3s"), as tessera's message printed it.
-fn duration(nanos: u64) -> String {
-    let ms = nanos.saturating_add(500_000) / 1_000_000;
-    let (h, m, s, frac) = (ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000);
-    let s = if frac == 0 { s.to_string() } else { format!("{s}.{frac:03}").trim_end_matches('0').to_string() };
-    if h > 0 { format!("{h}h{m}m{s}s") } else { format!("{m}m{s}s") }
+fn info(ext: &str, bytes: &[u8]) -> Result<Info, String> {
+    match ext {
+        ".ogg" => ogg(bytes),
+        ".mp3" => mp3(bytes),
+        ".wav" => wav(bytes),
+        ".flac" => flac(bytes),
+        _ => Err(format!("{ext} is not audio opossum inspects")),
+    }
 }
 
 /// `n` bytes at `at`, little-endian; 0 when they run past the end (callers check lengths first, this only makes a
@@ -66,15 +52,6 @@ fn le(b: &[u8], at: usize, n: usize) -> u64 {
 
 fn be(b: &[u8], at: usize, n: usize) -> u64 {
     b.get(at..at.saturating_add(n)).map_or(0, |s| s.iter().fold(0, |v, &x| v << 8 | u64::from(x)))
-}
-
-/// `samples` at `rate` as nanoseconds, saturating like Go's int64 durations.
-fn samples_nanos(samples: u64, rate: u64) -> u64 {
-    let secs = samples / rate;
-    if secs > i64::MAX as u64 / SECOND {
-        return i64::MAX as u64;
-    }
-    secs * SECOND + (samples % rate) * SECOND / rate
 }
 
 fn wav(b: &[u8]) -> Result<Info, String> {
@@ -140,8 +117,7 @@ fn wav(b: &[u8]) -> Result<Info, String> {
     if matches!(format, 1 | 3 | 0xFFFE) && byte_rate != rate * align {
         return Err("WAV PCM byte rate is inconsistent with its sample rate and block alignment".into());
     }
-    let nanos = (u128::from(data) * u128::from(SECOND) / u128::from(byte_rate)).min(i64::MAX as u128) as u64;
-    Ok(Info { nanos, rate, channels })
+    Ok(Info { seconds: data as f64 / byte_rate as f64, rate, channels })
 }
 
 fn flac(b: &[u8]) -> Result<Info, String> {
@@ -149,7 +125,7 @@ fn flac(b: &[u8]) -> Result<Info, String> {
     if b.len() < 8 || &b[..4] != b"fLaC" {
         return Err("FLAC header must start with fLaC".into());
     }
-    let mut info = Info { nanos: 0, rate: 0, channels: 0 };
+    let mut info = Info { seconds: 0.0, rate: 0, channels: 0 };
     let mut at = 4;
     loop {
         if at + 4 > b.len() {
@@ -182,8 +158,7 @@ fn flac(b: &[u8]) -> Result<Info, String> {
             if bits < 4 {
                 return Err("FLAC STREAMINFO has an invalid bit depth".into());
             }
-            let nanos = if samples > 0 { samples_nanos(samples, rate) } else { 0 };
-            info = Info { nanos, rate, channels: (packed >> 41 & 7) + 1 };
+            info = Info { seconds: samples as f64 / rate as f64, rate, channels: (packed >> 41 & 7) + 1 };
         } else if kind == 0 {
             return Err("FLAC contains multiple STREAMINFO blocks".into());
         } else if kind == 127 {
@@ -256,8 +231,7 @@ fn ogg(b: &[u8]) -> Result<Info, String> {
         if small < 6 || large > 13 || small > large || p[29] & 1 == 0 {
             return Err("OGG Vorbis identification header has invalid block sizes or framing".into());
         }
-        let nanos = if granule > 0 { samples_nanos(granule, rate) } else { 0 };
-        return Ok(Info { nanos, rate, channels: u64::from(p[11]) });
+        return Ok(Info { seconds: granule as f64 / rate as f64, rate, channels: u64::from(p[11]) });
     }
     if p.starts_with(b"OpusHead") {
         if p.len() < 19 {
@@ -295,8 +269,8 @@ fn ogg(b: &[u8]) -> Result<Info, String> {
         if granule > 0 && granule < pre_skip {
             return Err("OGG Opus final granule precedes its pre-skip".into());
         }
-        let nanos = if granule > pre_skip { samples_nanos(granule - pre_skip, 48_000) } else { 0 };
-        return Ok(Info { nanos, rate: 48_000, channels: channels as u64 });
+        let seconds = granule.saturating_sub(pre_skip) as f64 / 48_000.0;
+        return Ok(Info { seconds, rate: 48_000, channels: channels as u64 });
     }
     Err("OGG codec is not Vorbis or Opus".into())
 }
@@ -310,7 +284,7 @@ fn mp3(b: &[u8]) -> Result<Info, String> {
     else {
         return Err("MP3 contains no MPEG Layer III frames".into());
     };
-    let (mut nanos, mut rate, mut channels) = (0u64, 0, 0);
+    let (mut seconds, mut rate, mut channels) = (0.0, 0, 0);
     while at + 4 <= b.len() && !tail(&b[at..]) {
         let Some(f) = mp3_frame(&b[at..]) else {
             return Err(format!("MP3 frame at byte {at} has an invalid header"));
@@ -320,16 +294,16 @@ fn mp3(b: &[u8]) -> Result<Info, String> {
         }
         rate = rate.max(f.rate);
         channels = channels.max(f.channels);
-        nanos = nanos.saturating_add(samples_nanos(f.samples, f.rate));
+        seconds += f.samples as f64 / f.rate as f64;
         at += f.len;
     }
     if at < b.len() && !tail(&b[at..]) {
         return Err(format!("MP3 has invalid trailing data at byte {at}"));
     }
-    if nanos == 0 {
+    if seconds == 0.0 {
         return Err("MP3 contains no complete audio frames".into());
     }
-    Ok(Info { nanos, rate, channels })
+    Ok(Info { seconds, rate, channels })
 }
 
 struct Mp3Frame {
@@ -479,7 +453,7 @@ mod tests {
     #[test]
     fn each_format_reports_rate_channels_and_length() {
         let a = |ext, b: &[u8]| {
-            let a = inspect_audio(ext, b).unwrap();
+            let a = info(ext, b).unwrap();
             (a.rate, a.channels, (a.seconds * 1000.0).round() as u64)
         };
         assert_eq!(a(".mp3", &mp3_frame(9)), (44_100, 2, 26));
@@ -500,7 +474,7 @@ mod tests {
     #[test]
     fn roblox_limits_are_checked() {
         assert!(inspect_audio(".flac", &flac(48_000, 2, 420)).is_ok());
-        assert_eq!(err(".flac", &flac(48_000, 2, 421)), "duration 7m1s exceeds Roblox's 7-minute limit");
+        assert_eq!(err(".flac", &flac(48_000, 2, 421)), "421.0 s long; Roblox takes audio up to 7 minutes");
         assert!(err(".flac", &flac(96_000, 2, 1)).contains("48 kHz limit"));
         assert!(err(".flac", &flac(48_000, 4, 1)).contains("channel count 4"));
         assert!(err(".mp3", b"not an mp3").contains("contains no MPEG Layer III frames"));
@@ -535,7 +509,7 @@ mod tests {
         riff[4..8].copy_from_slice(&len.to_le_bytes());
         assert!(err(".wav", &riff).contains("RIFF payload is truncated"));
         let trailing = [wav(24_000, 1, 1000), b"data\x04\x00\x00\x00junk".to_vec()].concat();
-        assert_eq!(inspect_audio(".wav", &trailing).unwrap().seconds, 1.0);
+        assert_eq!(info(".wav", &trailing).unwrap().seconds, 1.0);
     }
 
     #[test]
