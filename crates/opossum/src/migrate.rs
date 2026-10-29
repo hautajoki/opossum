@@ -377,7 +377,7 @@ impl Reader<'_> {
         for group in ["assets", "places", "environments", "passes", "products", "badges", "experience"] {
             let Some(&(_, value)) = groups.iter().find(|(g, _)| *g == group) else { continue };
             match group {
-                "assets" => self.sets(value, &mut t.sets, &mut tables),
+                "assets" => self.sets(value, &t.generated.clone(), &mut t.sets, &mut tables),
                 "places" => self.places(value, &mut tables),
                 "environments" => {
                     for (name, env) in self.object(value, group).unwrap_or_default() {
@@ -448,7 +448,7 @@ impl Reader<'_> {
 
     /// `[assets]`: a set opossum's discovery keys the same way, with the image options its pipeline has. Excluding
     /// another set's root is what opossum's nested roots do already, so that exclude goes.
-    fn sets(&mut self, value: &Lit, sets: &mut Vec<Set>, tables: &mut String) {
+    fn sets(&mut self, value: &Lit, generated: &str, sets: &mut Vec<Set>, tables: &mut String) {
         let declared = self.object(value, "assets").unwrap_or_default();
         // every set's root first, for the excludes that name another's
         let roots: Vec<Option<String>> = declared
@@ -495,7 +495,20 @@ impl Reader<'_> {
                             ),
                         ),
                     },
-                    "output" | "typescript" => {}
+                    // imports are rewritten where tessera writes a set's module by default, and nowhere else
+                    "output" => {
+                        let out = self.str(v, &path).as_deref().and_then(config::normalize);
+                        let module = format!("{generated}/{name}");
+                        let default = [format!("{module}.luau"), format!("{module}.d.ts"), module.clone()];
+                        if !out.is_some_and(|out| out == generated || default.contains(&out)) {
+                            let message = format!(
+                                "opossum rewrites imports of the set's module at {module}, and `{path}` puts it \
+                                 elsewhere; drop the output with tessera first"
+                            );
+                            self.refuse(v.at, message);
+                        }
+                    }
+                    "typescript" => {}
                     "stripExtensions" => strip = self.bool(v, &path).unwrap_or(true),
                     "style" if matches!(&v.value, Value::Str(s) if s == "nested") => {}
                     "content" if matches!(v.value, Value::Bool(false)) => {}
@@ -1387,6 +1400,15 @@ export default defineConfig({
         let plan = self::plan(&root.join(config::FILE)).unwrap();
         let at: Vec<(&str, u32, u32)> = plan.diags.iter().map(|d| (d.code.as_str(), d.line, d.col)).collect();
         assert_eq!(at, [("migrate.tesseraConfig", 16, 69), ("migrate.tesseraConfig", 16, 14)]);
+
+        // a module written elsewhere would keep its imports and keep building with frozen ids
+        let elsewhere = ["src/generated/interface.luau", "src/shared/ids.luau"].map(|out| {
+            PROJECT_TS.replace("include: [\"**/*.png\"]", &format!("include: [\"**/*.png\"], output: \"{out}\""))
+        });
+        fs::write(root.join(CONFIG), &elsewhere[0]).unwrap();
+        assert_eq!(codes(&self::plan(&root.join(config::FILE)).unwrap()), Vec::<&str>::new());
+        fs::write(root.join(CONFIG), &elsewhere[1]).unwrap();
+        assert_eq!(codes(&self::plan(&root.join(config::FILE)).unwrap()), ["migrate.tesseraConfig"]);
         let _ = fs::remove_dir_all(root);
     }
 
