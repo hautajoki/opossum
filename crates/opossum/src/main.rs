@@ -256,12 +256,8 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // loading, checking and lowering recurse deeply
     let result = parse(&args).and_then(|(dir, command)| {
-        if let Command::Help = command {
-            println!("{USAGE}");
-            return Ok(true);
-        }
-        // loading, checking and lowering recurse deeply
         std::thread::Builder::new()
             .stack_size(lower::STACK_SIZE)
             .spawn(move || run(dir, command))
@@ -280,113 +276,104 @@ fn main() -> ExitCode {
 }
 
 fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
-    if let Command::Plugin(path) = command {
-        let path = match path {
-            Some(path) => path,
-            None => PathBuf::from(std::env::var("HOME").map_err(|_| "HOME is not set")?)
-                .join("Documents/Roblox/Plugins/opossum.rbxm"),
-        };
-        sync::install_plugin(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        println!("wrote {}", path.display());
-        return Ok(true);
-    }
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
     let start = match dir {
         Some(dir) => std::path::absolute(&dir).map_err(|e| format!("{}: {e}", dir.display()))?,
         None => cwd.clone(),
     };
-    match command {
-        // before loading: the config it fixes does not load
-        Command::Migrate => return migrate::run(&config::find(&start)?),
-        // loads it itself, so a broken one is an event too
-        Command::Dev { environment, json } => return dev::run(&start, json, environment.as_deref()),
-        _ => {}
-    }
-    let file = config::find(&start)?;
+    let file = || config::find(&start);
+    let load = || config::load(&file()?);
     // local runs read nothing of the config: the project is the directory holding it
-    let root = || std::fs::canonicalize(file.parent().unwrap_or(Path::new("."))).map_err(|e| e.to_string());
+    let root = || {
+        let file = file()?;
+        std::fs::canonicalize(file.parent().unwrap_or(Path::new("."))).map_err(|e| e.to_string())
+    };
     match command {
+        Command::Help => {
+            println!("{USAGE}");
+            Ok(true)
+        }
+        Command::Plugin(path) => plugin(path),
+        // finds the config without loading it: the config it fixes does not load
+        Command::Migrate => migrate::run(&file()?),
+        // loads it itself, so a broken one is an event too
+        Command::Dev { environment, json } => dev::run(&start, json, environment.as_deref()),
+        Command::Build { profile, environment, out, emit } => {
+            build(load()?, profile.as_deref(), environment.as_deref(), out, emit)
+        }
+        Command::Check { profile, environment, json } => {
+            check(load()?, profile.as_deref(), environment.as_deref(), json)
+        }
+        Command::Where(target) => where_(session(load()?, None, None)?, &cwd, &target),
+        Command::Sourcemap => sourcemap(session(load()?, None, None)?),
         Command::Exec(options, exec::Target::Local { interpreted }, source) => {
-            return exec::exec_local(&root()?, &options, interpreted, source);
+            exec::exec_local(&root()?, &options, interpreted, source)
         }
         Command::Test(options, exec::Target::Local { interpreted }, tests) => {
-            return exec::test_local(&root()?, &options, interpreted, &tests);
+            exec::test_local(&root()?, &options, interpreted, &tests)
         }
-        // one outcome, as below, matched here because it takes its source
+        // dev wrote what the editor reads; these only talk to it
+        Command::Exec(options, exec::Target::Studio { realm }, source) => {
+            exec::exec(&load()?, &options, &realm, source)
+        }
+        Command::Test(options, exec::Target::Studio { realm }, tests) => {
+            exec::test_studio(&load()?, &options, &realm, &tests)
+        }
+        Command::Play(options, run) => exec::play(&load()?, &options, run),
+        Command::Stop(options) => exec::stop(&load()?, &options),
+        Command::Pull(options, path, file) => exec::pull(&load()?, &options, &path, file.as_deref()),
+        Command::Status(options) => exec::status(&load()?, &options),
+        Command::Attach(options, force) => exec::attach(&load()?, &options, force),
+        // the commands with one outcome: refusals are outcomes too
         Command::Exec(options, exec::Target::Cloud(run), source) => {
-            let outcome = match remote(&file) {
+            let outcome = match remote(&file()?) {
                 Ok((cfg, client, cache)) => exec::exec_cloud(cfg, &client, &cache, &options, &run, source),
                 Err(refusal) => refusal,
             };
-            return finish(outcome, options.json);
+            finish(outcome, options.json)
         }
-        _ => {}
-    }
-    // the commands with one outcome: refusals are outcomes too
-    match &command {
+        Command::Test(options, exec::Target::Cloud(run), tests) => match remote(&file()?) {
+            Ok((cfg, client, cache)) => exec::test_cloud(cfg, &client, &cache, &options, &run, &tests),
+            Err(refusal) => finish(refusal, options.json),
+        },
         Command::Plan { environment, json } => {
-            let outcome = match config::load(&file) {
+            let outcome = match config::load(&file()?) {
                 Ok(cfg) => plan::plan(&cfg, environment.as_deref()),
                 Err(error) => Outcome::refused("config", error),
             };
-            return finish(outcome, *json);
+            finish(outcome, json)
         }
-        Command::Upload { json } => return finish(upload(&file), *json),
-        Command::Test(options, exec::Target::Cloud(run), tests) => {
-            return match remote(&file) {
-                Ok((cfg, client, cache)) => exec::test_cloud(cfg, &client, &cache, options, run, tests),
-                Err(refusal) => finish(refusal, options.json),
-            };
+        Command::Upload { json } => {
+            let outcome = outward(&file()?, |cfg, client, guard, _| upload::upload(cfg, client, guard, &signals::STOP));
+            finish(outcome, json)
         }
         Command::Provision { environment, allow_spend, json } => {
-            return finish(provision(&file, environment.as_deref(), *allow_spend), *json);
+            let outcome = outward(&file()?, |cfg, client, guard, _| {
+                resources::provision(cfg, client, guard, environment.as_deref(), allow_spend, &signals::STOP)
+            });
+            finish(outcome, json)
         }
         Command::Deploy { environment, places, saved, allow_spend, json } => {
-            return finish(deploy(&file, environment.as_deref(), places, *saved, *allow_spend), *json);
+            let outcome = outward(&file()?, |cfg, client, guard, cache| {
+                let (environment, stop) = (environment.as_deref(), &signals::STOP);
+                deploy::deploy(cfg, client, guard, cache, environment, &places, saved, allow_spend, stop)
+            });
+            finish(outcome, json)
         }
-        Command::Adopt { json, what, id } => return finish(adopt(&file, &cwd, what, *id), *json),
-        _ => {}
+        Command::Adopt { json, what, id } => finish(adopt(&file()?, &cwd, &what, id), json),
     }
-    let cfg = config::load(&file)?;
-    // dev wrote what the editor reads; these only talk to it
-    match command {
-        Command::Exec(options, exec::Target::Studio { realm }, source) => {
-            return exec::exec(&cfg, &options, &realm, source);
-        }
-        Command::Test(options, exec::Target::Studio { realm }, tests) => {
-            return exec::test_studio(&cfg, &options, &realm, &tests);
-        }
-        Command::Play(options, run) => return exec::play(&cfg, &options, run),
-        Command::Stop(options) => return exec::stop(&cfg, &options),
-        Command::Pull(options, path, file) => return exec::pull(&cfg, &options, &path, file.as_deref()),
-        Command::Status(options) => return exec::status(&cfg, &options),
-        Command::Attach(options, force) => return exec::attach(&cfg, &options, force),
-        _ => {}
-    }
-    match command {
-        Command::Build { profile, environment, out, emit } => {
-            build(cfg, profile.as_deref(), environment.as_deref(), out, emit)
-        }
-        Command::Check { profile, environment, json } => check(cfg, profile.as_deref(), environment.as_deref(), json),
-        Command::Where(target) => where_(session(cfg, None, None)?, &cwd, &target),
-        Command::Sourcemap => sourcemap(session(cfg, None, None)?),
-        Command::Plugin(_)
-        | Command::Help
-        | Command::Migrate
-        | Command::Dev { .. }
-        | Command::Plan { .. }
-        | Command::Upload { .. }
-        | Command::Provision { .. }
-        | Command::Deploy { .. }
-        | Command::Adopt { .. }
-        | Command::Exec(..)
-        | Command::Test(..)
-        | Command::Play(..)
-        | Command::Stop(..)
-        | Command::Pull(..)
-        | Command::Status(..)
-        | Command::Attach(..) => unreachable!("handled above"),
-    }
+}
+
+/// `opossum plugin install [path]`.
+fn plugin(path: Option<PathBuf>) -> Result<bool, String> {
+    let path = match path {
+        Some(path) => path,
+        None => PathBuf::from(std::env::var("HOME").map_err(|_| "HOME is not set")?)
+            .join("Documents/Roblox/Plugins/opossum.rbxm"),
+    };
+    sync::install_plugin(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    println!("wrote {}", path.display());
+    Ok(true)
 }
 
 /// What a command that may change Roblox state or `opossum.lock` did, for [`finish`] to print: its exit status (0
@@ -420,25 +407,7 @@ fn finish(outcome: Outcome, json: bool) -> Result<bool, String> {
     }
 }
 
-/// `opossum upload`, with the guard held and Ctrl-C asking it to stop.
-fn upload(file: &Path) -> Outcome {
-    let cfg = match config::load(file) {
-        Ok(cfg) => cfg,
-        Err(error) => return Outcome::refused("config", error),
-    };
-    let client = match open_cloud(&cfg.root) {
-        Ok(client) => client,
-        Err(refusal) => return refusal,
-    };
-    let guard = match Cache::default_dir().and_then(|cache| RemoteGuard::acquire(&cache)) {
-        Ok(guard) => guard,
-        Err(error) => return Outcome::refused("guard", error),
-    };
-    signals::install();
-    upload::upload(&cfg, &client, &guard, &signals::STOP)
-}
-
-/// What `--cloud` runs need: the config, the client with the project's key, and the cache of saved versions.
+/// The config, the client with the project's key, and the cache, for every command that talks to Open Cloud.
 fn remote(file: &Path) -> Result<(Config, Client, Cache), Outcome> {
     let cfg = config::load(file).map_err(|error| Outcome::refused("config", error))?;
     let client = open_cloud(&cfg.root)?;
@@ -446,44 +415,18 @@ fn remote(file: &Path) -> Result<(Config, Client, Cache), Outcome> {
     Ok((cfg, client, cache))
 }
 
-/// `opossum provision`, with the guard held and Ctrl-C asking it to stop.
-fn provision(file: &Path, environment: Option<&str>, allow_spend: bool) -> Outcome {
-    let cfg = match config::load(file) {
-        Ok(cfg) => cfg,
-        Err(error) => return Outcome::refused("config", error),
-    };
-    let client = match open_cloud(&cfg.root) {
-        Ok(client) => client,
+/// [`remote`] with the guard held and Ctrl-C asking the run to stop: upload, provision and deploy.
+fn outward(file: &Path, run: impl FnOnce(&Config, &Client, &RemoteGuard, &Cache) -> Outcome) -> Outcome {
+    let (cfg, client, cache) = match remote(file) {
+        Ok(remote) => remote,
         Err(refusal) => return refusal,
-    };
-    let guard = match Cache::default_dir().and_then(|cache| RemoteGuard::acquire(&cache)) {
-        Ok(guard) => guard,
-        Err(error) => return Outcome::refused("guard", error),
-    };
-    signals::install();
-    resources::provision(&cfg, &client, &guard, environment, allow_spend, &signals::STOP)
-}
-
-/// `opossum deploy`, with the guard held and Ctrl-C asking it to stop.
-fn deploy(file: &Path, environment: Option<&str>, places: &[String], saved: bool, allow_spend: bool) -> Outcome {
-    let cfg = match config::load(file) {
-        Ok(cfg) => cfg,
-        Err(error) => return Outcome::refused("config", error),
-    };
-    let client = match open_cloud(&cfg.root) {
-        Ok(client) => client,
-        Err(refusal) => return refusal,
-    };
-    let cache = match Cache::default_dir() {
-        Ok(cache) => cache,
-        Err(error) => return Outcome::refused("cache", error),
     };
     let guard = match RemoteGuard::acquire(&cache) {
         Ok(guard) => guard,
         Err(error) => return Outcome::refused("guard", error),
     };
     signals::install();
-    deploy::deploy(&cfg, &client, &guard, &cache, environment, places, saved, allow_spend, &signals::STOP)
+    run(&cfg, &client, &guard, &cache)
 }
 
 /// `opossum adopt`: offline, but it writes the lock, so it holds the guard.
