@@ -1,9 +1,11 @@
 //! `opossum plan`: what going outward would do, worked out offline with no credentials. Every asset file is hashed and
-//! compared with its record in `opossum.lock`, so the plan is also the dump of every id, and with an environment the
-//! resources it declares are compared with the records of its universe.
+//! classified against `opossum.lock` exactly as `opossum upload` classifies it ([`classify`]), so the plan is what an
+//! upload does and also the dump of every id; with an environment the resources it declares are compared with the
+//! records of its universe.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
+use std::path::Path;
 
 use serde_json::json;
 
@@ -12,48 +14,102 @@ use crate::diag::{Diag, Severity};
 use crate::lock::{self, Asset, Lock};
 use crate::{Outcome, assets, resources};
 
-/// Where a file stands against its record in the lock.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum State {
+/// What `opossum upload` does with one found file.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Class {
     /// Its id holds what the file holds.
     Current,
-    /// Its id holds an older version of the file.
-    Changed,
-    /// It has no id and no upload in flight.
-    New,
+    /// Sent: `changed` when its id holds an older version, else new.
+    Send { changed: bool },
+    /// Binds the id the lock holds for the same content under another file, with no request.
+    Reuses(u64),
+    /// Goes up with `found[i]`'s upload (or resumed operation) of the same content.
+    Joins(usize),
     /// An upload is in flight and its operation can be asked how it went.
     Pending,
-    /// An upload may or may not have happened, and nothing says which: `opossum adopt asset` decides.
-    Ambiguous,
+    /// An upload may or may not have happened, and nothing says which: what settles it.
+    Ambiguous(String),
     /// Roblox refused this content when it was sent: it is not sent again until the file changes, or `opossum adopt
     /// asset --none` forgets the refusal.
     Rejected,
 }
 
-impl State {
-    pub fn name(self) -> &'static str {
+/// Each [`Class`]'s name in `plan`, in [`Class::index`] order.
+const NAMES: [&str; 8] = ["current", "changed", "new", "reused", "joined", "pending", "ambiguous", "rejected"];
+
+impl Class {
+    pub fn name(&self) -> &'static str {
+        NAMES[self.index()]
+    }
+
+    fn index(&self) -> usize {
         match self {
-            State::Current => "current",
-            State::Changed => "changed",
-            State::New => "new",
-            State::Pending => "pending",
-            State::Ambiguous => "ambiguous",
-            State::Rejected => "rejected",
+            Class::Current => 0,
+            Class::Send { changed: true } => 1,
+            Class::Send { changed: false } => 2,
+            Class::Reuses(_) => 3,
+            Class::Joins(_) => 4,
+            Class::Pending => 5,
+            Class::Ambiguous(_) => 6,
+            Class::Rejected => 7,
         }
     }
 }
 
-/// The state of a file whose input hash is `hash`, with `record` its record in the lock. A create in flight decides
-/// over the id it would replace.
-pub fn state(record: Option<&Asset>, hash: &str) -> State {
-    match record {
-        Some(Asset { next: Some(_), op: None, .. }) => State::Ambiguous,
-        Some(Asset { next: Some(_), .. }) => State::Pending,
-        Some(Asset { rejected: Some(r), .. }) if r == hash => State::Rejected,
-        Some(Asset { id: Some(_), hash: Some(h), .. }) if h == hash => State::Current,
-        Some(Asset { id: Some(_), .. }) => State::Changed,
-        _ => State::New,
+/// Every found file's [`Class`] against the lock, settling what a merge left for it (each pick printed): a file whose
+/// content the lock holds an id for binds it, files sending the same content go up once, and a file holding the
+/// content of an upload that may or may not have happened is ambiguous with it.
+pub fn classify(root: &Path, lock: &mut Lock, found: &[assets::Asset], hashes: &[String]) -> Vec<Class> {
+    // content the lock holds an id for, a merge's every candidate included
+    let held: HashMap<String, u64> = lock
+        .assets
+        .values()
+        .chain(lock.merged.values().flatten())
+        .filter_map(|a| match a {
+            Asset { id: Some(id), hash: Some(hash), next: None, .. } => Some((hash.clone(), *id)),
+            _ => None,
+        })
+        .collect();
+    let unsettled = unsettled(lock);
+    let mut classes = Vec::with_capacity(found.len());
+    for (a, hash) in found.iter().zip(hashes) {
+        if let Some(warning) = lock.settle(root, &a.file, hash) {
+            eprintln!("{}", warning.human(root));
+        }
+        // a create in flight decides over the id it would replace
+        let class = match lock.assets.get(&a.file) {
+            Some(Asset { next: Some(_), op: None, .. }) => Class::Ambiguous(settle(&a.file)),
+            Some(Asset { next: Some(_), .. }) => Class::Pending,
+            Some(Asset { rejected: Some(r), .. }) if r == hash => Class::Rejected,
+            Some(Asset { id: Some(_), hash: Some(h), .. }) if h == hash => Class::Current,
+            record => {
+                let changed = record.is_some_and(|r| r.id.is_some());
+                match (unsettled.get(hash), held.get(hash)) {
+                    _ if !shares(a) => Class::Send { changed },
+                    (Some(other), _) => Class::Ambiguous(copy_of(other)),
+                    (None, Some(&id)) => Class::Reuses(id),
+                    (None, None) => Class::Send { changed },
+                }
+            }
+        };
+        classes.push(class);
     }
+    // an upload in flight leads its content (it is resumed), else the first file sending it
+    let mut leaders: HashMap<&str, usize> = HashMap::new();
+    for pending in [true, false] {
+        for (i, a) in found.iter().enumerate().filter(|(_, a)| shares(a)) {
+            let content = match &classes[i] {
+                Class::Pending if pending => lock.assets[&a.file].next.as_deref().unwrap_or_default(),
+                Class::Send { .. } if !pending => hashes[i].as_str(),
+                _ => continue,
+            };
+            match leaders.get(content) {
+                Some(&leader) => classes[i] = Class::Joins(leader),
+                None => drop(leaders.insert(content, i)),
+            }
+        }
+    }
+    classes
 }
 
 /// `opossum plan [--environment e]`. Exit 1 when an upload is ambiguous or a resource is blocked (the user must act),
@@ -68,61 +124,58 @@ pub fn plan(cfg: &Config, environment: Option<&str>) -> Outcome {
         Ok(survey) => survey,
         Err(refusal) => return refusal,
     };
-    let unsettled = unsettled(&lock);
+    let classes = classify(root, &mut lock, &found, &hashes);
     let mut text = String::new();
     let mut sets = Vec::new();
-    let (mut ambiguous, mut rejected) = (0, 0);
     for (i, set) in cfg.assets.iter().enumerate() {
-        let (mut files, mut lines, mut counts) = (Vec::new(), String::new(), [0; 6]);
-        for (a, hash) in found.iter().zip(&hashes).filter(|(a, _)| a.set == i) {
-            // a merge's records for the file: the one whose id holds it, if any
-            if let Some(warning) = lock.settle(root, &a.file, hash) {
-                eprintln!("{}", warning.human(root));
-            }
-            let record = lock.assets.get(&a.file);
-            let mut state = state(record, hash);
-            let copy = unsettled.get(hash).filter(|_| shares(a) && matches!(state, State::New | State::Changed));
-            if copy.is_some() {
-                state = State::Ambiguous;
-            }
-            counts[state as usize] += 1;
-            let mut file = json!({ "file": a.file, "key": a.key, "state": state.name() });
-            if let Some(id) = record.and_then(|r| r.id) {
+        let (mut files, mut lines, mut counts) = (Vec::new(), String::new(), [0; NAMES.len()]);
+        for (a, class) in found.iter().zip(&classes).filter(|(a, _)| a.set == i) {
+            counts[class.index()] += 1;
+            let name = class.name();
+            let mut file = json!({ "file": a.file, "key": a.key, "state": name });
+            let id = match class {
+                Class::Reuses(id) => Some(*id),
+                _ => lock.assets.get(&a.file).and_then(|r| r.id),
+            };
+            if let Some(id) = id {
                 file["id"] = id.into();
             }
-            files.push(file);
-            let _ = match state {
-                State::Current => Ok(()),
-                State::Ambiguous if let Some(other) = copy => {
-                    writeln!(lines, "ambiguous {} ({})", a.file, copy_of(other))
+            let _ = match class {
+                Class::Current => Ok(()),
+                Class::Reuses(id) => writeln!(lines, "{name:<9} {} (id {id}, which the lock holds for it)", a.file),
+                Class::Joins(j) => {
+                    file["with"] = found[*j].file.as_str().into();
+                    writeln!(lines, "{name:<9} {} (one upload with {})", a.file, found[*j].file)
                 }
-                State::Ambiguous => writeln!(lines, "ambiguous {} ({})", a.file, settle(&a.file)),
-                State::Rejected => writeln!(lines, "rejected  {} ({})", a.file, refused(&a.file)),
-                _ => writeln!(lines, "{:<9} {}", state.name(), a.file),
+                Class::Ambiguous(how) => writeln!(lines, "{name:<9} {} ({how})", a.file),
+                Class::Rejected => writeln!(lines, "{name:<9} {} ({})", a.file, refused(&a.file)),
+                _ => writeln!(lines, "{name:<9} {}", a.file),
             };
+            files.push(file);
         }
-        ambiguous += counts[State::Ambiguous as usize];
-        rejected += counts[State::Rejected as usize];
-        let n = |state: State| count(counts[state as usize]);
-        let _ = writeln!(
-            text,
-            "{}: {} files, {} current, {} changed, {} new, {} pending, {} ambiguous, {} rejected",
-            set.name,
-            count(files.len()),
-            n(State::Current),
-            n(State::Changed),
-            n(State::New),
-            n(State::Pending),
-            n(State::Ambiguous),
-            n(State::Rejected)
-        );
+        // current, then every state a file is in
+        let mut line = format!("{}: {}", set.name, counted(files.len(), "file"));
+        for (n, name) in NAMES.iter().enumerate() {
+            if n == 0 || counts[n] > 0 {
+                let _ = write!(line, ", {} {name}", count(counts[n]));
+            }
+        }
+        let _ = writeln!(text, "{line}");
         text.push_str(&lines);
         sets.push(json!({ "set": set.name, "module": format!("opossum/{}", set.name), "files": files }));
     }
+    // discovery was clean (survey refuses otherwise), so a record with no file is a file that is gone
+    let present: HashSet<&str> = found.iter().map(|a| a.file.as_str()).collect();
+    let dropped: Vec<&str> = lock.assets.keys().map(String::as_str).filter(|f| !present.contains(f)).collect();
+    for file in &dropped {
+        let _ = writeln!(text, "dropped   {file} (no longer found)");
+    }
+    let ambiguous = classes.iter().filter(|c| matches!(c, Class::Ambiguous(_))).count();
+    let rejected = classes.iter().filter(|c| **c == Class::Rejected).count();
     if cfg.assets.is_empty() && environment.is_none() {
         text.push_str("nothing to plan: opossum.toml declares no [assets] and no [environments]\n");
     }
-    let mut json = json!({ "ok": true, "assets": sets });
+    let mut json = json!({ "ok": true, "assets": sets, "dropped": dropped });
     let mut blocked = 0;
     if let Some(env) = environment {
         let (_, ops) = match resources::survey(cfg, env, &lock) {
@@ -248,7 +301,7 @@ mod tests {
     use super::*;
 
     /// A create in flight decides a file's state over the id it would replace, and one with no operation to ask fails
-    /// the plan: the user has to say whether it happened.
+    /// the plan: the user has to say whether it happened. Content the lock or another file's upload has is not new.
     #[test]
     fn every_file_gets_its_state_and_an_ambiguous_upload_fails_the_plan() {
         let root = std::env::temp_dir().join(format!("opossum-plan-{}", std::process::id()));
@@ -259,6 +312,9 @@ mod tests {
         for file in ["current.png", "changed.png", "new.png", "pending.ogg", "ambiguous.ogg"] {
             std::fs::write(root.join("art").join(file), file).unwrap();
         }
+        // what upload binds or sends once, which a plan says rather than calling them new
+        std::fs::write(root.join("art/reused.png"), "current.png").unwrap();
+        std::fs::write(root.join("art/twin.png"), "new.png").unwrap();
         let cfg = crate::config::load(&root.join("opossum.toml")).unwrap();
         let hash = |file: &str, ext: &str| assets::hash(ext, cfg.assets[0].image, file.as_bytes());
         let (old, next) = ("0".repeat(32), "1".repeat(32));
@@ -283,7 +339,9 @@ mod tests {
                 ("changed", "changed"),
                 ("current", "current"),
                 ("new", "new"),
-                ("pending", "pending")
+                ("pending", "pending"),
+                ("reused", "reused"),
+                ("twin", "joined")
             ]
         );
         assert_eq!((outcome.exit, &outcome.json["code"]), (1, &"asset.ambiguous".into()));

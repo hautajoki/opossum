@@ -18,7 +18,7 @@ use crate::config::Config;
 use crate::diag::Diag;
 use crate::guard::RemoteGuard;
 use crate::lock::{self, Asset, Lock};
-use crate::plan::{self, State, count};
+use crate::plan::{self, Class, count};
 use crate::{Outcome, canonical_prefix};
 
 /// Groups in flight at once.
@@ -111,67 +111,35 @@ pub fn prepare(cfg: &Config) -> Result<Option<Prepared>, Outcome> {
     }
     let mut report = Report::default();
 
-    // classify against the lock as it was, binding content it already has an id for (renames, moves, copies), a
-    // merge's every candidate included
-    let held: HashMap<String, u64> = lock
-        .assets
-        .values()
-        .chain(lock.merged.values().flatten())
-        .filter_map(|a| match a {
-            Asset { id: Some(id), hash: Some(hash), next: None, .. } => Some((hash.clone(), *id)),
-            _ => None,
-        })
-        .collect();
-    let unsettled = plan::unsettled(&lock);
+    let classes = plan::classify(root, &mut lock, &found, &hashes);
     let mut groups: Vec<(String, Vec<usize>, Option<String>)> = Vec::new();
-    let mut by_hash: HashMap<String, usize> = HashMap::new();
-    for (i, (a, hash)) in found.iter().zip(&hashes).enumerate() {
-        if let Some(warning) = lock.settle(root, &a.file, hash) {
-            eprintln!("{}", warning.human(root));
-        }
-        let record = lock.assets.get(&a.file).cloned().unwrap_or_default();
-        let shares = plan::shares(a);
-        let (hash, op) = match plan::state(Some(&record), hash) {
-            State::Current => {
-                report.unchanged += 1;
-                continue;
-            }
-            State::Ambiguous => {
-                report.ambiguous.push((a.file.clone(), plan::settle(&a.file)));
-                continue;
-            }
-            State::Rejected => {
-                report.failed.push((a.file.clone(), plan::refused(&a.file), "asset.rejected".into()));
-                continue;
+    let mut group_of = HashMap::new();
+    for (i, (a, class)) in found.iter().zip(&classes).enumerate() {
+        match class {
+            Class::Current => report.unchanged += 1,
+            Class::Ambiguous(how) => report.ambiguous.push((a.file.clone(), how.clone())),
+            Class::Rejected => report.failed.push((a.file.clone(), plan::refused(&a.file), "asset.rejected".into())),
+            Class::Reuses(id) => {
+                let record = lock.assets.entry(a.file.clone()).or_default();
+                (record.id, record.hash, record.rejected) = (Some(*id), Some(hashes[i].clone()), None);
+                report.reused += 1;
             }
             // a later change waits for the next run: this one finishes what was started
-            State::Pending => (record.next.clone().unwrap_or_default(), record.op.clone()),
-            State::New | State::Changed if shares && unsettled.contains_key(hash) => {
-                report.ambiguous.push((a.file.clone(), plan::copy_of(&unsettled[hash])));
-                continue;
+            Class::Pending => {
+                let record = &lock.assets[&a.file];
+                group_of.insert(i, groups.len());
+                groups.push((record.next.clone().unwrap_or_default(), vec![i], record.op.clone()));
             }
-            State::New | State::Changed => match held.get(hash).filter(|_| shares) {
-                Some(&id) => {
-                    let bound = Asset { id: Some(id), hash: Some(hash.clone()), rejected: None, ..record };
-                    lock.assets.insert(a.file.clone(), bound);
-                    report.reused += 1;
-                    continue;
-                }
-                None => (hash.clone(), None),
-            },
-        };
-        // files waiting on an upload of this content join it instead of sending it again
-        let joined = by_hash.get(&hash).copied().filter(|_| shares);
-        let g = joined.unwrap_or_else(|| {
-            groups.push((hash.clone(), Vec::new(), None));
-            if shares {
-                by_hash.insert(hash, groups.len() - 1);
+            Class::Send { .. } => {
+                group_of.insert(i, groups.len());
+                groups.push((hashes[i].clone(), vec![i], None));
             }
-            groups.len() - 1
-        });
-        groups[g].1.push(i);
-        if groups[g].2.is_none() {
-            groups[g].2 = op;
+            Class::Joins(_) => {}
+        }
+    }
+    for (i, class) in classes.iter().enumerate() {
+        if let Class::Joins(leader) = class {
+            groups[group_of[leader]].1.push(i);
         }
     }
 
