@@ -1,8 +1,8 @@
 # Third-party code
 
-opossum is MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE). These parts come from elsewhere and keep their own terms:
+opossum is MIT (LICENSE). These parts come from elsewhere and keep their own terms:
 
-- `vendor/tsrs/`: [tsrs](https://github.com/oxc-project/tsrs), the TypeScript checker in Rust. Apache-2.0, see its
+- `vendor/tsrs/`: tsrs, the TypeScript checker in Rust. Apache-2.0, see its
   `LICENSE` and `NOTICE` (a derivative of TypeScript, Copyright (c) Microsoft Corporation). `opossum.patch` is our
   delta.
 - `vendor/luau0-src/`: the luau0-src crate and the Luau sources it carries. MIT, see its `LICENSE`. `opossum.patch` is
