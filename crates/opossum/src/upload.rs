@@ -43,8 +43,8 @@ enum Event {
     Created(String),
     /// The request failed. A `definite` error was certainly not applied; any other leaves the upload ambiguous.
     Failed(cloud::Error),
-    /// The asset id and its moderation state.
-    Done(u64, Option<String>),
+    /// The asset id, and whether moderation is still reviewing it.
+    Done(u64, bool),
     /// The operation ended without an id the lock may hold: its code and why.
     Terminal(&'static str, String),
     /// The operation is gone, and with it the only way to tell whether the asset exists.
@@ -407,16 +407,17 @@ fn work(client: &Client, creator: cloud::Creator, g: &Group, audio: bool, stop: 
 /// A done operation: an id to bind, unless Roblox failed it or its moderation rejected it (a rejected id must never
 /// spread through the lock).
 fn finished(op: Operation, audio: bool) -> Event {
-    match (op.error, op.asset_id, op.moderation.as_deref()) {
-        (Some((code, message)), ..) => {
+    let (rejected, reviewing) = (op.rejected(), op.reviewing());
+    match (op.error, op.asset_id) {
+        (Some((code, message)), _) => {
             let why =
                 if audio { "Roblox rejected the audio during transcoding or moderation" } else { "Roblox failed it" };
             Event::Terminal("cloud.operation", format!("{why} ({code}: {message})"))
         }
-        (None, _, Some("Rejected")) => {
+        _ if rejected => {
             Event::Terminal("asset.moderated", "Roblox's moderation rejected it, so its id is not used".into())
         }
-        (None, Some(id), moderation) if id > 0 => Event::Done(id, moderation.map(String::from)),
+        (None, Some(id)) if id > 0 => Event::Done(id, reviewing),
         _ => Event::Terminal("cloud.operation", "the upload completed without an asset id".into()),
     }
 }
@@ -443,13 +444,13 @@ fn apply(lock: &mut Lock, g: &Group, found: &[File], event: Event, report: &mut 
                 report.ambiguous.push((file.into(), format!("{e}; {}", settle(file))));
             }
         }
-        Event::Done(id, moderation) => {
+        Event::Done(id, reviewing) => {
             for file in files() {
                 lock.assets
                     .insert(file.into(), Asset { id: Some(id), hash: Some(g.hash.clone()), next: None, op: None });
             }
             report.uploaded += g.members.len();
-            if moderation.as_deref() == Some("Reviewing") {
+            if reviewing {
                 eprintln!("{} is {id}, still in Roblox's moderation review", found[g.members[0]].file);
             }
         }

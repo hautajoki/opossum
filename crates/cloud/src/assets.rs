@@ -49,6 +49,22 @@ pub struct Operation {
     pub moderation: Option<String>,
 }
 
+impl Operation {
+    /// Moderation rejected the asset, however Roblox spells the state (`Rejected`, `MODERATION_STATE_REJECTED`).
+    pub fn rejected(&self) -> bool {
+        self.moderated("REJECTED")
+    }
+
+    /// Moderation is still reviewing the asset.
+    pub fn reviewing(&self) -> bool {
+        self.moderated("REVIEWING")
+    }
+
+    fn moderated(&self, state: &str) -> bool {
+        self.moderation.as_deref().is_some_and(|m| m.to_ascii_uppercase().ends_with(state))
+    }
+}
+
 impl AssetKind {
     pub fn name(self) -> &'static str {
         match self {
@@ -299,7 +315,11 @@ mod tests {
         let op = c.operation("operations/a").unwrap();
         assert_eq!((op.asset_id, op.moderation.as_deref()), (Some(2_205_400_862), Some("Approved")));
         let op = c.operation("operations/a").unwrap();
-        assert_eq!((op.asset_id, op.moderation.as_deref()), (Some(27), Some("Rejected")));
+        assert_eq!((op.asset_id, op.rejected(), op.reviewing()), (Some(27), true, false));
+        let op = |state: &str| Operation { moderation: Some(state.into()), ..op.clone() };
+        assert!(
+            op("MODERATION_STATE_REJECTED").rejected() && op("reviewing").reviewing() && !op("Approved").rejected()
+        );
         assert_eq!(c.operation("operations/a").unwrap_err().kind, ErrorKind::Decode);
         assert_eq!(c.operation("operations/a").unwrap_err().diag(), "cloud.notFound");
     }
