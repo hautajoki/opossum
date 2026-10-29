@@ -1,152 +1,99 @@
 # opossum
 
-opossum compiles a Roblox game written in TypeScript (the roblox-ts dialect) and Luau, builds the place and syncs it
-live to Studio. The same binary uploads assets, provisions passes, products and badges, deploys through Open Cloud, and
-runs tests locally, in Studio or on Open Cloud.
+opossum is a Roblox build tool written in Rust. It compiles TypeScript and Luau into a place, syncs it live to Studio,
+uploads assets, deploys through Open Cloud and runs tests, all from one binary.
 
-It replaces roblox-ts (or typescript-go-roblox), Rojo, rogen, tessera and hexagon. There is no Node at build time: npm
-packages are read straight from `node_modules/`.
-
-## Example
+Current release: **0.1.0**
 
 ```ts
-// src/shared/bag.ts
-interface Item {
-	name: string;
-	weight: number;
-}
+export class Inventory {
+	private items = new Map<string, number>();
 
-export class Bag {
-	private items = new Array<Item>();
-
-	constructor(readonly capacity: number) {}
-
-	add(item: Item) {
-		if (this.weight() + item.weight > this.capacity) return false;
-		this.items.push(item);
-		return true;
-	}
-
-	weight() {
-		let total = 0;
-		for (const { weight } of this.items) total += weight;
-		return total;
+	add(name: string, count = 1) {
+		this.items.set(name, (this.items.get(name) ?? 0) + count);
 	}
 
 	describe() {
-		return `${this.items.size()} items, ${this.weight()}/${this.capacity} kg`;
+		const parts = new Array<string>();
+		for (const [name, count] of this.items) parts.push(`${count}x ${name}`);
+		return parts.join(", ");
 	}
 }
-
-// src/server/main.server.ts
-import { Players } from "@rbxts/services";
-import { Bag } from "../shared/bag";
-
-Players.PlayerAdded.Connect((player) => {
-	const bag = new Bag(20);
-	bag.add({ name: "lantern", weight: 3 });
-	print(`${player.Name}: ${bag.describe()}`);
-	player.Character?.PivotTo(new CFrame(0, 10, 0));
-});
 ```
 
-`opossum build --emit out` writes this, unedited:
-
 ```luau
--- out/ReplicatedStorage/shared/bag.luau
 --!strict
 --!optimize 2
-type Item = { name: string, weight: number }
-export type Bag = { items: {Item}, read capacity: number, add: (self: Bag, item: Item) -> boolean, weight: (self: Bag) -> number, describe: (self: Bag) -> string }
-local Bag
+export type Inventory = { items: { [string]: number }, add: (self: Inventory, name: string, count: number?) -> (), describe: (self: Inventory) -> string }
+local Inventory
 do
-	Bag = setmetatable({}, {
+	Inventory = setmetatable({}, {
 		__tostring = function()
-			return "Bag"
+			return "Inventory"
 		end,
 	})
-	Bag.__index = Bag
-	function Bag.new(...): Bag
-		const self: any = setmetatable({}, Bag)
+	Inventory.__index = Inventory
+	function Inventory.new(...): Inventory
+		const self: any = setmetatable({}, Inventory)
 		return self:constructor(...) or self
 	end
-	function Bag:constructor(capacity: number)
-		self.capacity = capacity
+	function Inventory:constructor()
 		self.items = {}
 	end
-	function Bag:add(item: Item): boolean
-		if self:weight() + item.weight > self.capacity then
-			return false
+	function Inventory:add(name: string, count: number?)
+		if count == nil then
+			count = 1
 		end
-		table.insert(self.items, item)
-		return true
-	end
-	function Bag:weight(): number
-		local total = 0
-		for _, _binding in self.items do
-			const weight = _binding.weight
-			total += weight
+		const _exp = self.items
+		local _condition = self.items[name]
+		if _condition == nil then
+			_condition = 0
 		end
-		return total
+		_exp[name] = _condition + count
 	end
-	function Bag:describe(): string
-		return `{#self.items} items, {self:weight()}/{self.capacity} kg`
+	function Inventory:describe(): string
+		const parts = {}
+		for name, count in self.items do
+			table.insert(parts, `{count}x {name}`)
+		end
+		return table.concat(parts, ", ")
 	end
 end
 return {
-	Bag = Bag,
+	Inventory = Inventory,
 }
-
--- out/ServerScriptService/server/main.luau
---!strict
---!optimize 2
-const Players = game:GetService("Players")
-const Bag = require("@game/ReplicatedStorage/shared/bag").Bag
-Players.PlayerAdded:Connect(function(player: Player)
-	const bag = Bag.new(20)
-	bag:add({
-		name = "lantern",
-		weight = 3,
-	})
-	print(`{player.Name}: {bag:describe()}`)
-	const _result = player.Character
-	if _result ~= nil then
-		_result:PivotTo(CFrame.new(0, 10, 0))
-	end
-end)
-return nil
 ```
 
-TypeScript types become Luau types, services become `GetService` locals, and each require is spelled from where both
-modules land in the place. Every module passes Luau's own compiler at `-O2` before it ships. The semantics are
-TypeScript's, but the Luau does not try to look like roblox-ts output: `const` locals, numeric `for` where it is
-provably safe, `@native` per function instead of per file. jecs `for (const ... of world.query(...))` loops lower to
-archetype iteration, and Flamework's metadata macros run at compile time. Nothing else of Flamework is supported.
+The compiler accepts roblox-ts projects and `@rbxts/*` packages, read straight from `node_modules/` with no Node at
+build time. The semantics are TypeScript's; the output is not a copy of roblox-ts's.
 
-## Install
+## Highlights
 
-```bash
+- Type checking through tsrs, a Rust port of the TypeScript checker.
+- Typed Luau output: TypeScript types become Luau types, `const` locals, `@native` per function.
+- Every module passes Luau's own compiler at `-O2` before it ships.
+- jecs queries lowered to archetype iteration; Flamework's metadata macros run at compile time.
+- Live sync to Studio through a plugin, with no Rojo server. A one-file save reaches Studio in well under a second.
+- Place files: services, models (`.rbxm`, `.model.json`) and properties as TOML.
+- Assets: images, sounds, meshes and textured `.glb` models uploaded and tracked in `opossum.lock`.
+- Passes, products and badges provisioned, places published, all through Open Cloud.
+- Specs and benchmarks run locally in fresh Luau VMs, in Studio, or on Open Cloud.
+
+## Build from source
+
+Rust is pinned in `rust-toolchain.toml`. Luau is compiled from source, so a C++17 compiler is needed too. macOS and
+Linux.
+
+```sh
 cargo install --locked --path crates/opossum
-opossum plugin install    # the Studio plugin, ~/Documents/Roblox/Plugins/opossum.rbxm
+opossum plugin install
 ```
 
-`rust-toolchain.toml` pins Rust 1.99.1, which rustup fetches on the first build. Luau is compiled from source, so a
-C++17 compiler is needed too. macOS and Linux only.
-
-## A project
-
-```
-opossum.toml
-tsconfig.json         { "extends": "./.opossum/tsconfig.json" }
-src/server/           -> ServerScriptService/server
-src/client/           -> ReplicatedStorage/client
-src/shared/           -> ReplicatedStorage/shared
-place/                services, models (.rbxm, .model.json) and properties (place/*.toml)
-node_modules/@rbxts/  types and compiler-types, from your package manager
-```
+## Compile a project
 
 ```toml
-name = "Demo"
+# opossum.toml
+name = "my-game"
 
 [routes]
 server = "ServerScriptService/server"
@@ -154,44 +101,38 @@ client = "ReplicatedStorage/client"
 shared = "ReplicatedStorage/shared"
 ```
 
-A folder or an `@key` suffix (`save@server.ts`) routes a file. `.server.ts` and `.client.ts` become scripts with that
-RunContext. With no `placeId` or `[environments]` in the config, `opossum dev` syncs to any unpublished place open in
-Studio.
+Each route maps a folder of `src/` into the place. `.server.ts` and `.client.ts` files become scripts with that
+RunContext.
 
-```bash
-opossum dev              # watch, rebuild and sync to Studio
-opossum build            # .opossum/place.rbxl; -o for another path, --emit <dir> for the Luau
-opossum check            # type errors, routing errors and the O2 gate, no place written
-opossum test             # specs in Studio through dev; --local: *.local.spec.luau here; --cloud: Open Cloud
-opossum exec -e 'print(workspace.Gravity)'    # Luau in Studio, after dev has synced every saved file
-opossum plan             # what upload and provision would do, offline
-opossum upload           # new and changed assets up, ids into opossum.lock
-opossum deploy           # upload, provision, then build and publish every place
-opossum migrate          # convert a Rojo, tessera or hexagon project once
+```sh
+opossum check
+opossum build
+opossum dev
 ```
 
-`opossum --help` lists every command and flag.
+`build` writes `.opossum/place.rbxl`; `--emit <dir>` also writes the Luau. `dev` watches, rebuilds and syncs to the
+place open in Studio.
 
-## Speed
+## Other commands
 
-The whole project is one in-memory graph, and Studio patches, the `.rbxl`, the luau-lsp sourcemap and `where` are views
-of it. On a 1,107-module project, a full build, 1,107 modules type-checked, compiled and written into an
-`.rbxl`, takes 0.27 s. A one-file save is republished in 0.11 to 0.16 ms and reaches Studio in 50 to 250 ms,
-almost all of that the macOS file watcher. An `exec` sent right after a save runs the saved code, about 65 ms end to
-end. `test --local` runs 1,107 local cases in 5.5 s, where hexagon took 9.9 s. `plan` over 1,223 asset files
-takes 0.07 s, and a deploy with nothing to upload, against the Open Cloud mock below, 1.2 s.
+```text
+test        run specs locally, in Studio or on Open Cloud
+exec        run Luau in Studio or on Open Cloud
+plan        show what upload and provision would change, offline
+upload      upload new and changed assets
+provision   create and update passes, products and badges
+deploy      upload, provision, build and publish
+play        start a Studio playtest
+pull        write an instance from Studio into the project
+where       map a file to its instance, or back
+sourcemap   write a sourcemap for luau-lsp
+migrate     convert a Rojo, tessera or hexagon project
+```
 
-## Status
-
-opossum is 0.1.0. The Open Cloud paths (upload,
-provision, deploy, `--cloud` runs) are tested against a mock of the API that ships with it
-(`cargo run -p cloud --example mock`), and a full deploy of 1,300 assets has run against that mock. Changes
-are hard cutovers with no compatibility layers, so expect configs and commands to break between versions.
-
-DESIGN.md covers the rest: configuration, routing, the `place/` format, assets and the lock file, deploys, tests, exit
-codes and the JSON output. `crates/sync/SYNC.md` is the Studio sync protocol.
+`opossum --help` lists every command and flag. [DESIGN.md](DESIGN.md) covers configuration, routing, the place format,
+assets, deploys and tests.
 
 ## License
 
-MIT OR Apache-2.0, at your option. Vendored and ported code (`vendor/`, the runtime, parts of the lowering and the VM)
-keeps its own license; see THIRD-PARTY.md.
+[MIT](LICENSE). Vendored and ported sources retain their upstream licenses and notices, see
+[THIRD-PARTY.md](THIRD-PARTY.md).
