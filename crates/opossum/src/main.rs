@@ -53,8 +53,10 @@ const USAGE: &str = "usage: opossum [-C <dir>] <command>                        
                                                              on Open Cloud, on the place version holding this
                                                              build (saved to Roblox unless one already is);
                                                              exec --head: on the current head, no build
-  plan [--environment <e>] [--json]                          every asset's state and every resource change; offline
-  upload [--json]                                            upload new and changed assets, ids into opossum.lock
+  plan [--environment <e>] [--json]                          every asset's state, resource change and texture
+                                                             pack; offline
+  upload [--json]                                            upload new and changed assets and read glbs back,
+                                                             ids and parts into opossum.lock
   provision [--environment <e>] [--allow-spend] [--json]     create and update passes, products, badges and the
                                                              experience; --allow-spend lets badge creates pay
   deploy [--environment <e>] [--saved] [--allow-spend] [--unbaked] [--json] [<place>...]

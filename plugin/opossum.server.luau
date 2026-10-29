@@ -181,7 +181,7 @@ local function connect(port: number, session: string?): "live" | "next" | "busy"
 				if value.t ~= "exec" then return end
 				local request = value :: exec.Request
 				if request.now then
-					-- it needs no build (stop's EndTest): it runs at once beside the worker, whatever that is doing
+					-- no build needed (EndTest, the packs capture): it runs at once beside the worker, whatever it does
 					local mine = epoch
 					task.spawn(function()
 						local ok, result = pcall(exec.run, request, item.at)

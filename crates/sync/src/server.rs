@@ -380,7 +380,7 @@ fn write_loop(out: &mut TcpStream, shared: &Shared, conn: u64) {
                         shared.hold(conn, held);
                     }
                 }
-                // one that needs no build (`now`: stop's EndTest) goes at once, whatever the DataModel holds
+                // one that needs no build (`now`: EndTest, the packs capture) goes at once, whatever it holds
                 Event::Exec(id, message) if message["now"] == true => {
                     let has = shared.lock().inboxes.get(&conn).map_or(0, |i| i.held);
                     if !hand(out, shared, id, message, has, generation) {

@@ -415,8 +415,8 @@ build before it, however late its plugin says hello. The answer is `fresh` when 
 asks for fresh code (`opossum test`) is refused instead of sent to a DataModel that is not. The plugin queues the exec
 behind the frames that arrived before it, and the frames after it wait for it: one worker, so no frame applies while
 the code runs. Its `result` goes back up the same socket. An exec with `now`, only dev's own snippets that need no build
-(stop's EndTest), skips both waits: the writer sends it at once, saying the build the DataModel last acked, and the
-plugin runs it in a thread of its own beside the worker.
+(stop's EndTest, the packs capture below), skips both waits: the writer sends it at once, saying the build the
+DataModel last acked, and the plugin runs it in a thread of its own beside the worker.
 
 **Giving up.** An exec may wait 30 s to start, in the writer and then in the plugin's queue; `start` tells the plugin
 how many seconds of that are left when it is sent. Until the writer hands it over, a waiter that gives up takes it
@@ -463,6 +463,20 @@ y`) names no place, so its stack's first frame is put in front (`ReplicatedStora
 later require of a module that failed rethrows its error, as Studio's does. A syntax error makes the copy's `require`
 say only "Requested module experienced an error while loading" (measured): compiling the source again with
 `loadstring` says what (plugins have it; `debug.loadmodule` is not enabled).
+
+**Packs.** dev's texture pack capture (DESIGN.md, Texture packs) is an exec it writes, `packs`, sent to edit with `now`
+and pull's `limit`, never fenced (a fence file every 10 s would wake the watcher each time). Its source starts with two
+tables spliced in, `WANTED` (the pack keys the lock lacks) and `NUDGE` (those of them missing for 60 s), then walks
+`game:GetDescendants()` for SurfaceAppearances and MaterialVariants, spells each one's key from its four `…MapContent`
+uris as `place::pack_key` does, picks the first instance of each wanted key, and returns `EncodingService:Base64Encode`
+of `SerializationService:SerializeInstancesAsync(picks)` ("" for none), which never waits on a bake: dev reads each
+pick's key and `TexturePackContent` from the bytes, so a key the Luau spells differently can only be missed, never
+saved wrong. The picks of `NUDGE` have their maps set to `Content.none` and back, which makes Studio retry its bake,
+in a thread the exec spawns: inside the exec's own "opossum: exec" recording that write is an undo step, and a
+recording begun while it is open is refused (measured 2026-10-30), so the thread tries `TryBeginRecording("opossum:
+packs")` each frame, for up to 300, until the exec's has finished, nudges, and finishes it with `Cancel`, leaving no
+waypoint. The nudged instances are synced ones, so watch.luau marks their roots dirty and the next verify finds
+nothing to change.
 
 Measured on a test project in the blank place (2026-10-28): 20 of 20 "write a module's return value, immediately exec a
 require of it" runs saw the new value, for a `.luau` module and for a TypeScript one, about 65 ms per run end to end
