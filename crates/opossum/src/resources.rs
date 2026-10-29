@@ -945,7 +945,8 @@ mod tests {
     use super::*;
     use crate::guard::Cache;
 
-    /// A project in universe 7 (root place 8) declaring `toml`, with these files and this `[universes.7]` in its lock.
+    /// A project in universe 7 (root place 8) declaring `toml`, with these files and these records of universe 7 in its
+    /// lock.
     fn project(name: &str, toml: &str, files: &[(&str, &str)], records: &str) -> PathBuf {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
@@ -958,8 +959,13 @@ mod tests {
         for (file, text) in files {
             std::fs::write(root.join(file), text).unwrap();
         }
-        std::fs::write(root.join(lock::FILE), format!("version = 1\n[universes.7]\n{records}")).unwrap();
+        std::fs::write(root.join(lock::FILE), universe7(records)).unwrap();
         std::fs::canonicalize(root).unwrap()
+    }
+
+    /// A lock holding `records` (`"<kind>/<key>" = { … }` lines) in universe 7.
+    fn universe7(records: &str) -> String {
+        records.lines().map(|l| format!("universes.7.{l}\n")).fold("version = 1\n".to_owned(), |text, l| text + &l)
     }
 
     /// A square of one colour: enough for the image pipeline.
@@ -1040,7 +1046,7 @@ mod tests {
 
         // a merge that left a resource twice is the user's to settle before anything plans it
         let twice = format!("{lines}\"pass/vip\" = {{ id = 9, name = \"VIP\" }}\n");
-        std::fs::write(root.join(lock::FILE), format!("version = 1\n[universes.7]\n{twice}")).unwrap();
+        std::fs::write(root.join(lock::FILE), universe7(&twice)).unwrap();
         let (lock, _) = lock::read(&root).unwrap();
         let refused = survey(&cfg, &cfg.environments[0], &lock).err().unwrap();
         assert_eq!(refused.json["code"], "lock.conflict");

@@ -303,9 +303,9 @@ mod tests {
     #[test]
     fn every_refusal_comes_before_the_first_request() {
         let next = "1".repeat(32);
-        let blocked = format!("version = 1\n[universes.7]\n\"pass/vip\" = {{ next = \"{next}\" }}\n");
+        let blocked = format!("version = 1\nuniverses.7.\"pass/vip\" = {{ next = \"{next}\" }}\n");
         let ambiguous =
-            format!("version = 1\ncreator = {{ user = 1 }}\n[assets]\n\"art/a.glb\" = {{ next = \"{next}\" }}\n");
+            format!("version = 1\ncreator = {{ user = 1 }}\nassets.\"art/a.glb\" = {{ next = \"{next}\" }}\n");
         let badge = "[badges.welcome]\nname = \"W\"\ndescription = \"Hi\"\nicon = \"art/a.glb\"\nexpectedCost = 5\n";
         // each case writes one file over the project; the spend case's is harmless
         let cases = [

@@ -1,6 +1,8 @@
 //! `opossum.lock`: the ids opossum created on Roblox, committed beside `opossum.toml`. TOML with one record per line,
-//! sorted, so every record stands on its own: the first write adds `opossum.lock merge=union` to `.gitattributes`, and
-//! [`parse`] reads what any merge leaves (both sides of a conflict, a key twice) without a hand edit. Builds only read
+//! sorted, each naming its own table (`assets."<file>" = …`, `universes.<id>."<kind>/<key>" = …`) with no section
+//! headers, so every record stands on its own wherever a merge puts it: the first write adds `opossum.lock
+//! merge=union` to `.gitattributes`, and [`parse`] reads what any merge leaves (both sides of a conflict, a key twice,
+//! lines in any order) without a hand edit. Builds only read
 //! it; the commands that change it write it through [`save`], which takes the [`RemoteGuard`].
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -93,19 +95,12 @@ pub fn read(root: &Path) -> Result<(Lock, Vec<Diag>), String> {
     Ok((lock, diags))
 }
 
-enum Section {
-    Top,
-    Assets,
-    Universe(u64),
-}
-
 /// Reads the lock's text line by line, each record on its own, so one bad line costs only that record. Git conflict
 /// markers are skipped, keeping both sides' records; a key twice with different records is kept for [`Lock::settle`]
 /// (assets) or marked in `conflicts` (resources).
 pub fn parse(text: &str, file: &Path) -> (Lock, Vec<Diag>) {
     let mut lock = Lock::default();
     let mut diags = Vec::new();
-    let mut section = Section::Top;
     let mut version = false;
     let mut content = false;
     for (n, line) in text.lines().enumerate() {
@@ -122,16 +117,7 @@ pub fn parse(text: &str, file: &Path) -> (Lock, Vec<Diag>) {
             continue;
         }
         if line.starts_with('[') {
-            section = match line {
-                "[assets]" => Section::Assets,
-                _ => match line.strip_prefix("[universes.").and_then(|l| l.strip_suffix(']')).map(str::parse) {
-                    Some(Ok(id)) if id > 0 => Section::Universe(id),
-                    _ => {
-                        fail("lock.syntax", format!("`{line}` is not [assets] or [universes.<id>]"));
-                        continue;
-                    }
-                },
-            };
+            fail("lock.syntax", format!("`{line}`: the lock has no sections; each record names its table"));
             continue;
         }
         let entry = line.parse::<toml::Table>().map_err(|e| e.message().to_owned());
@@ -144,56 +130,62 @@ pub fn parse(text: &str, file: &Path) -> (Lock, Vec<Diag>) {
             }
         };
         content = true;
-        let read = match section {
-            Section::Top => match key.as_str() {
-                "version" => match value.as_integer() {
-                    Some(VERSION) => {
-                        version = true;
-                        Ok(())
-                    }
-                    Some(v) => {
-                        let message = format!("opossum.lock is version {v}; this opossum reads {VERSION}");
-                        let mut d = Diag::new("lock.version", Severity::Error, Some(file), message);
-                        d.line = n as u32 + 1;
-                        return (Lock::default(), vec![d]);
-                    }
-                    None => Err("`version` must be an integer".to_owned()),
-                },
-                "creator" => creator(&value).map(|c| match lock.creator {
-                    Some(old) if old != c => lock.creator_conflict = true,
-                    _ => lock.creator = Some(c),
-                }),
-                _ => {
-                    Err(format!("`{key}` is not `version` or `creator`; records go under [assets] or [universes.<id>]"))
+        let read = match key.as_str() {
+            "version" => match value.as_integer() {
+                Some(VERSION) => {
+                    version = true;
+                    Ok(())
                 }
+                Some(v) => {
+                    let message = format!("opossum.lock is version {v}; this opossum reads {VERSION}");
+                    let mut d = Diag::new("lock.version", Severity::Error, Some(file), message);
+                    d.line = n as u32 + 1;
+                    return (Lock::default(), vec![d]);
+                }
+                None => Err("`version` must be an integer".to_owned()),
             },
-            Section::Assets => asset(&value).map(|a| match lock.assets.get(&key) {
-                None => {
-                    lock.assets.insert(key, a);
-                }
-                Some(old) if *old == a => {}
-                Some(old) => {
-                    let all = lock.merged.entry(key).or_insert_with(|| vec![old.clone()]);
-                    if !all.contains(&a) {
-                        all.push(a);
+            "creator" => creator(&value).map(|c| match lock.creator {
+                Some(old) if old != c => lock.creator_conflict = true,
+                _ => lock.creator = Some(c),
+            }),
+            "assets" => one(&value, "assets.\"<file>\"").and_then(|(key, value)| {
+                let a = asset(value)?;
+                match lock.assets.get(key) {
+                    None => {
+                        lock.assets.insert(key.clone(), a);
+                    }
+                    Some(old) if *old == a => {}
+                    Some(old) => {
+                        let all = lock.merged.entry(key.clone()).or_insert_with(|| vec![old.clone()]);
+                        if !all.contains(&a) {
+                            all.push(a);
+                        }
                     }
                 }
+                Ok(())
             }),
-            Section::Universe(_) if !resource_key(&key) => Err(format!(
-                "`{key}` is not pass/, product/, badge/ or thumbnail/<key>, or experience/metadata, icon or order"
-            )),
-            Section::Universe(u) => resource(&value).map(|r| {
+            "universes" => one(&value, "universes.<id>").and_then(|(u, value)| {
+                let u = u.parse().ok().filter(|&u: &u64| u > 0).ok_or(format!("`{u}` is not a universe id"))?;
+                let (key, value) = one(value, &format!("universes.{u}.\"<kind>/<key>\""))?;
+                if !resource_key(key) {
+                    return Err(format!(
+                        "`{key}` is not pass/, product/, badge/ or thumbnail/<key>, or experience/metadata, icon or order"
+                    ));
+                }
+                let r = resource(value)?;
                 let records = lock.universes.entry(u).or_default();
-                match records.get(&key) {
+                match records.get(key) {
                     None => {
-                        records.insert(key, r);
+                        records.insert(key.clone(), r);
                     }
                     Some(old) if *old == r => {}
                     Some(_) => {
-                        lock.conflicts.insert((u, key));
+                        lock.conflicts.insert((u, key.clone()));
                     }
                 }
+                Ok(())
             }),
+            _ => Err(format!("`{key}` is not version, creator, assets.\"<file>\" or universes.<id>.\"<kind>/<key>\"")),
         };
         if let Err(e) = read {
             fail("lock.syntax", e);
@@ -297,6 +289,12 @@ fn creator(v: &toml::Value) -> Result<Creator, String> {
     }
 }
 
+/// The one entry of a dotted key's table: a line holds one record, `what` spelling where it goes.
+fn one<'a>(v: &'a toml::Value, what: &str) -> Result<(&'a String, &'a toml::Value), String> {
+    let table = v.as_table().filter(|t| t.len() == 1).ok_or(format!("expected one record per line, as {what} = …"))?;
+    Ok(table.iter().next().expect("one entry"))
+}
+
 fn asset(v: &toml::Value) -> Result<Asset, String> {
     let mut a = Asset::default();
     for (k, v) in v.as_table().ok_or("a record must be an inline table")? {
@@ -378,8 +376,8 @@ fn hash(v: &toml::Value, k: &str) -> Result<String, String> {
         .ok_or(format!("`{k}` must be 32 lowercase hex characters"))
 }
 
-/// The lock's only form: the header, `version` and `creator`, then `[assets]` and each `[universes.<id>]` (by number)
-/// with their records sorted bytewise by key, each record's fields in a fixed order. Empty sections are left out.
+/// The lock's only form: the header, `version` and `creator`, then the asset records and each universe's (by number),
+/// a blank line before each group, records sorted bytewise by key, each record's fields in a fixed order.
 pub fn render(lock: &Lock) -> String {
     let mut out = format!("{HEADER}\nversion = {VERSION}\n");
     if let Some(c) = lock.creator {
@@ -390,7 +388,7 @@ pub fn render(lock: &Lock) -> String {
         let _ = writeln!(out, "creator = {{ {kind} = {id} }}");
     }
     if !lock.assets.is_empty() {
-        out.push_str("\n[assets]\n");
+        out.push('\n');
         for (key, a) in &lock.assets {
             let mut fields = Vec::new();
             if let Some(id) = a.id {
@@ -401,13 +399,13 @@ pub fn render(lock: &Lock) -> String {
                     fields.push((name, string(s)));
                 }
             }
-            record(&mut out, key, &fields);
+            record(&mut out, &format!("assets.{}", self::key(key)), &fields);
         }
     }
     for (u, records) in lock.universes.iter().filter(|(_, r)| !r.is_empty()) {
-        let _ = write!(out, "\n[universes.{u}]\n");
+        out.push('\n');
         for (key, r) in records {
-            record(&mut out, key, &resource_fields(r));
+            record(&mut out, &format!("universes.{u}.{}", self::key(key)), &resource_fields(r));
         }
     }
     out
@@ -459,8 +457,9 @@ pub fn intent(desired: &Resource) -> String {
     h.finalize().as_bytes()[..16].iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn record(out: &mut String, k: &str, fields: &[(&str, String)]) {
-    let _ = writeln!(out, "{} = {}", key(k), inline(fields));
+/// `<dotted key> = { … }`.
+fn record(out: &mut String, key: &str, fields: &[(&str, String)]) {
+    let _ = writeln!(out, "{key} = {}", inline(fields));
 }
 
 /// A TOML key: bare when it is only `[A-Za-z0-9_-]`, else a basic string.
@@ -564,19 +563,16 @@ mod tests {
 version = 1
 creator = { user = 988525232 }
 
-[assets]
-"place/assets/animations/idle.rbxmx" = { id = 154467536451246, hash = "6d76e3e3a1c94f0b2e8d7c51a0b3f9e2" }
-"place/assets/sfx/new.ogg" = { next = "9b1f0c2d4e5a6b7c8d9e0f1a2b3c4d5e", op = "operations/9f2c41" }
-"place/assets/sfx/odd.ogg" = { id = 140112233445566, hash = "00000000000000000000000000000001", next = "00000000000000000000000000000002" }
+assets."place/assets/animations/idle.rbxmx" = { id = 154467536451246, hash = "6d76e3e3a1c94f0b2e8d7c51a0b3f9e2" }
+assets."place/assets/sfx/new.ogg" = { next = "9b1f0c2d4e5a6b7c8d9e0f1a2b3c4d5e", op = "operations/9f2c41" }
+assets."place/assets/sfx/odd.ogg" = { id = 140112233445566, hash = "00000000000000000000000000000001", next = "00000000000000000000000000000002" }
 
-[universes.42]
-"pass/vip" = { id = 9 }
+universes.42."pass/vip" = { id = 9 }
 
-[universes.15302144394]
-"badge/welcome" = { id = 2124, name = "Welcome", description = "Joined\tthe \"game\"\n\u0001\u007F", enabled = true, icon = "0123456789abcdef0123456789abcdef" }
-"experience/order" = { ids = [55, 56] }
-"pass/vip" = { id = 123, name = "VIP", price = 100, forSale = true, managedPricing = false, icon = "0123456789abcdef0123456789abcdef" }
-"thumbnail/main" = { id = 55, altText = "Lobby", image = "0123456789abcdef0123456789abcdef", stale = [41], next = "00000000000000000000000000000000" }
+universes.15302144394."badge/welcome" = { id = 2124, name = "Welcome", description = "Joined\tthe \"game\"\n\u0001\u007F", enabled = true, icon = "0123456789abcdef0123456789abcdef" }
+universes.15302144394."experience/order" = { ids = [55, 56] }
+universes.15302144394."pass/vip" = { id = 123, name = "VIP", price = 100, forSale = true, managedPricing = false, icon = "0123456789abcdef0123456789abcdef" }
+universes.15302144394."thumbnail/main" = { id = 55, altText = "Lobby", image = "0123456789abcdef0123456789abcdef", stale = [41], next = "00000000000000000000000000000000" }
 "#;
 
     fn temp(name: &str) -> PathBuf {
@@ -597,20 +593,10 @@ creator = { user = 988525232 }
     #[test]
     fn rendering_is_the_one_form_whatever_order_the_lines_came_in() {
         assert_eq!(render(&parsed(CANONICAL)), CANONICAL);
-        // as a hand edit or a merge leaves it: sections split and repeated, records unsorted, comments anywhere
-        let records: Vec<&str> = CANONICAL.lines().filter(|l| l.starts_with('"')).collect();
-        let shuffled = format!(
-            "creator = {{ user = 988525232 }}\n# hi\nversion = 1\n\n[universes.15302144394]\n{}\n{}\n{}\n[assets]\n{}\n\
-             [universes.42]\n{}\n[universes.15302144394]\n{}\n[assets]\n{}\n",
-            records[7],
-            records[4],
-            records[5],
-            records[2],
-            records[3],
-            records[6],
-            records[1..2].iter().chain(&records[..1]).copied().collect::<Vec<_>>().join("\n"),
-        );
-        assert_ne!(shuffled, CANONICAL);
+        // as a hand edit or a merge leaves it: lines in any order, comments and blank lines anywhere
+        let mut lines: Vec<&str> = CANONICAL.lines().skip(1).filter(|l| !l.is_empty()).collect();
+        lines.reverse();
+        let shuffled = lines.join("\n# hi\n\n");
         assert_eq!(render(&parsed(&shuffled)), CANONICAL);
     }
 
@@ -619,10 +605,11 @@ creator = { user = 988525232 }
         let a = |id: u64, hash: char| format!("{{ id = {id}, hash = \"{}\" }}", hash.to_string().repeat(32));
         let text = format!(
             "version = 1\n<<<<<<< ours\ncreator = {{ user = 1 }}\n=======\ncreator = {{ user = 2 }}\n>>>>>>> theirs\n\
-             [assets]\n<<<<<<< ours\n\"x.png\" = {}\n\"same.png\" = {}\n\"y.png\" = {}\n=======\n\"x.png\" = {}\n\
-             \"same.png\" = {}\n\"y.png\" = {{ next = \"{}\" }}\n>>>>>>> theirs\n\"x.png\" = {}\n\
-             [universes.7]\n\"pass/vip\" = {{ id = 1 }}\n\"pass/vip\" = {{ id = 2 }}\n\"pass/vip\" = {{ id = 1 }}\n\
-             \"badge/b\" = {{ id = 3 }}\n\"badge/b\" = {{ id = 3 }}\n",
+             <<<<<<< ours\nassets.\"x.png\" = {}\nassets.\"same.png\" = {}\nassets.\"y.png\" = {}\n=======\n\
+             assets.\"x.png\" = {}\nassets.\"same.png\" = {}\nassets.\"y.png\" = {{ next = \"{}\" }}\n>>>>>>> theirs\n\
+             assets.\"x.png\" = {}\nuniverses.7.\"pass/vip\" = {{ id = 1 }}\nuniverses.7.\"pass/vip\" = {{ id = 2 }}\n\
+             universes.7.\"pass/vip\" = {{ id = 1 }}\nuniverses.7.\"badge/b\" = {{ id = 3 }}\n\
+             universes.7.\"badge/b\" = {{ id = 3 }}\n",
             a(5, 'a'),
             a(1, 'f'),
             a(8, 'b'),
@@ -643,7 +630,7 @@ creator = { user = 988525232 }
         assert!(warning.message.contains("using id 5"), "{}", warning.message);
         assert!(lock.settle(Path::new("/p"), "x.png", &"a".repeat(32)).is_none());
         assert_eq!(lock.assets["x.png"].id, Some(5));
-        assert!(render(&lock).contains(&format!("\"x.png\" = {}\n", a(5, 'a'))));
+        assert!(render(&lock).contains(&format!("assets.\"x.png\" = {}\n", a(5, 'a'))));
         assert!(lock.check_creator(Path::new("/p"), Creator::User(1)).is_some_and(|d| d.code == "lock.conflict"));
         assert_eq!(lock.conflicts.iter().collect::<Vec<_>>(), [&(7, "pass/vip".to_owned())]);
         assert_eq!(lock.universes[&7]["pass/vip"].id, Some(1));
@@ -653,18 +640,20 @@ creator = { user = 988525232 }
     fn every_line_is_checked_on_its_own() {
         let hash = "0".repeat(32);
         let cases = [
-            ("[assets]\n\"a\" = { id = 1, hash = \"x\" }", "`hash` must be 32 lowercase hex characters"),
-            ("[assets]\n\"a\" = { id = 1 }", "`id` and `hash` come together"),
-            ("[assets]\n\"a\" = { id = 0, hash = \"H\" }", "`id` must be a positive integer"),
-            ("[assets]\n\"a\" = { next = \"H\", op = \"operations/a/b\" }", "`op` must be operations/<id>"),
-            ("[assets]\n\"a\" = { op = \"operations/a\" }", "a record needs `id` or `next`"),
-            ("[assets]\n\"a\" = { id = 1, hash = \"H\", url = \"x\" }", "unknown field `url`"),
-            ("[universes.1]\n\"pass/vip\" = { price = \"1\" }", "`price` must be a positive integer"),
-            ("[universes.1]\n\"pass/vip\" = { stale = [1, -2] }", "`stale` must be a positive integer"),
-            ("[universes.1]\n\"gamepass/vip\" = { id = 1 }", "is not pass/"),
-            ("[universes.x]", "is not [assets] or [universes.<id>]"),
-            ("\"a\" = { id = 1, hash = \"H\" }", "records go under"),
-            ("[assets]\n\"a\" = { id = 1,", ""),
+            ("assets.\"a\" = { id = 1, hash = \"x\" }", "`hash` must be 32 lowercase hex characters"),
+            ("assets.\"a\" = { id = 1 }", "`id` and `hash` come together"),
+            ("assets.\"a\" = { id = 0, hash = \"H\" }", "`id` must be a positive integer"),
+            ("assets.\"a\" = { next = \"H\", op = \"operations/a/b\" }", "`op` must be operations/<id>"),
+            ("assets.\"a\" = { op = \"operations/a\" }", "a record needs `id` or `next`"),
+            ("assets.\"a\" = { id = 1, hash = \"H\", url = \"x\" }", "unknown field `url`"),
+            ("assets = { a = { next = \"H\" }, b = { next = \"H\" } }", "one record per line"),
+            ("universes.1.\"pass/vip\" = { price = \"1\" }", "`price` must be a positive integer"),
+            ("universes.1.\"pass/vip\" = { stale = [1, -2] }", "`stale` must be a positive integer"),
+            ("universes.1.\"gamepass/vip\" = { id = 1 }", "is not pass/"),
+            ("universes.x.\"pass/vip\" = { id = 1 }", "`x` is not a universe id"),
+            ("[assets]", "the lock has no sections"),
+            ("\"a\" = { id = 1, hash = \"H\" }", "is not version, creator"),
+            ("assets.\"a\" = { id = 1,", ""),
             ("creator = { user = 1, group = 2 }", "`creator` must be"),
         ];
         for (body, message) in cases {
@@ -675,7 +664,7 @@ creator = { user = 988525232 }
             assert!(diags[0].message.contains(message), "{body}: {}", diags[0].message);
             assert!(lock.assets.is_empty() && lock.universes.is_empty());
         }
-        let (lock, diags) = parse("version = 2\n[assets]\n\"a\" = { next = \"0000\" }\n", Path::new(FILE));
+        let (lock, diags) = parse("version = 2\nassets.\"a\" = { next = \"0000\" }\n", Path::new(FILE));
         assert_eq!((diags.len(), diags[0].code.as_str()), (1, "lock.version"));
         assert!(diags[0].message.contains("version 2; this opossum reads 1") && lock.is_empty());
     }

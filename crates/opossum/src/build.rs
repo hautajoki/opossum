@@ -749,7 +749,7 @@ mod tests {
         );
         write("art/sfx/boom.ogg", "ogg");
         let lock = |id: u64| {
-            format!("version = 1\n[assets]\n\"art/sfx/boom.ogg\" = {{ id = {id}, hash = \"{}\" }}\n", "0".repeat(32))
+            format!("version = 1\nassets.\"art/sfx/boom.ogg\" = {{ id = {id}, hash = \"{}\" }}\n", "0".repeat(32))
         };
         write("opossum.lock", &lock(5));
         write("src/shared/a.ts", "import sfx from \"opossum/sfx\";\nexport const boom: string = sfx.boom;\n");

@@ -198,11 +198,11 @@ mod tests {
         let hash = |file: &str, ext: &str| assets::hash(ext, cfg.assets[0].image, file.as_bytes());
         let (old, next) = ("0".repeat(32), "1".repeat(32));
         let lock = format!(
-            "version = 1\n[assets]\n\
-             \"art/current.png\" = {{ id = 1, hash = \"{}\" }}\n\
-             \"art/changed.png\" = {{ id = 2, hash = \"{old}\" }}\n\
-             \"art/pending.ogg\" = {{ id = 3, hash = \"{}\", next = \"{next}\", op = \"operations/x\" }}\n\
-             \"art/ambiguous.ogg\" = {{ next = \"{next}\" }}\n",
+            "version = 1\n\
+             assets.\"art/current.png\" = {{ id = 1, hash = \"{}\" }}\n\
+             assets.\"art/changed.png\" = {{ id = 2, hash = \"{old}\" }}\n\
+             assets.\"art/pending.ogg\" = {{ id = 3, hash = \"{}\", next = \"{next}\", op = \"operations/x\" }}\n\
+             assets.\"art/ambiguous.ogg\" = {{ next = \"{next}\" }}\n",
             hash("current.png", ".png"),
             hash("pending.ogg", ".ogg"),
         );

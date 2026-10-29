@@ -707,8 +707,8 @@ mod tests {
         let root = project("resume", &[("a.glb", "x"), ("b.glb", "x"), ("c.glb", "x")]);
         let h = hash("x");
         let lock = format!(
-            "version = 1\ncreator = {{ user = 1 }}\n[assets]\n\"art/a.glb\" = {{ next = \"{h}\", op = \"operations/7\" }}\n\
-             \"art/b.glb\" = {{ next = \"{h}\", op = \"operations/7\" }}\n"
+            "version = 1\ncreator = {{ user = 1 }}\nassets.\"art/a.glb\" = {{ next = \"{h}\", op = \"operations/7\" }}\n\
+             assets.\"art/b.glb\" = {{ next = \"{h}\", op = \"operations/7\" }}\n"
         );
         std::fs::write(root.join(lock::FILE), lock).unwrap();
         let out = adopt(&root, "art/a.glb", Some(5));
@@ -816,8 +816,8 @@ mod tests {
         let root = project("fbx", &[("model.fbx", "new"), ("alias.fbx", "old")]);
         let old = assets::hash(".fbx", ImageOptions::DEFAULT, b"old");
         let lock = format!(
-            "version = 1\ncreator = {{ user = 1 }}\n[assets]\n\"art/alias.fbx\" = {{ id = 9001, hash = \"{old}\" }}\n\
-             \"art/model.fbx\" = {{ id = 9001, hash = \"{old}\" }}\n"
+            "version = 1\ncreator = {{ user = 1 }}\nassets.\"art/alias.fbx\" = {{ id = 9001, hash = \"{old}\" }}\n\
+             assets.\"art/model.fbx\" = {{ id = 9001, hash = \"{old}\" }}\n"
         );
         std::fs::write(root.join(lock::FILE), lock).unwrap();
         let mock = Mock::bind(0, Some(auto())).unwrap();

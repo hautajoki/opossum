@@ -1242,8 +1242,8 @@ mod tests {
         let a = crate::assets::hash(".png", ImageOptions::DEFAULT, b"a");
         let expected = format!(
             "# opossum.lock: ids opossum created on Roblox. Commit it. opossum keeps it; a merge needs no hand edits.\n\
-             version = 1\ncreator = {{ user = 7 }}\n\n[assets]\n\"art/a.png\" = {{ id = 11, hash = \"{a}\" }}\n\
-             \"art/b.ogg\" = {{ id = 12, hash = \"{}\" }}\n",
+             version = 1\ncreator = {{ user = 7 }}\n\nassets.\"art/a.png\" = {{ id = 11, hash = \"{a}\" }}\n\
+             assets.\"art/b.ogg\" = {{ id = 12, hash = \"{}\" }}\n",
             "0".repeat(32)
         );
         assert_eq!(lock::render(lock), expected);
@@ -1277,8 +1277,8 @@ mod tests {
         let fp = |b: &[u8]| legacy::fingerprint(b, ".png", ImageOptions::DEFAULT);
         let records = [asset("art/a", 11, &fp(b"a")), asset("art/b", 12, "stale"), asset("art/c", 13, &fp(b"c"))];
         let ours = format!(
-            "version = 1\ncreator = {{ user = 7 }}\n[assets]\n\"art/a.png\" = {{ id = 99, hash = \"{a}\" }}\n\
-             \"art/b.ogg\" = {{ id = 98, hash = \"{}\" }}\n",
+            "version = 1\ncreator = {{ user = 7 }}\nassets.\"art/a.png\" = {{ id = 99, hash = \"{a}\" }}\n\
+             assets.\"art/b.ogg\" = {{ id = 98, hash = \"{}\" }}\n",
             "1".repeat(32)
         );
         let lock = tessera_lock(&records, &[]);
