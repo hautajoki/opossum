@@ -6,66 +6,45 @@ uploads assets, deploys through Open Cloud and runs tests, all from one binary.
 Current release: **0.1.0**
 
 ```ts
-export class Inventory {
-	private items = new Map<string, number>();
+export type Shape =
+	| { kind: "circle"; radius: number }
+	| { kind: "rect"; width: number; height: number };
 
-	add(name: string, count = 1) {
-		this.items.set(name, (this.items.get(name) ?? 0) + count);
-	}
+export const area = (shape: Shape) =>
+	shape.kind === "circle" ? math.pi * shape.radius ** 2 : shape.width * shape.height;
 
-	describe() {
-		const parts = new Array<string>();
-		for (const [name, count] of this.items) parts.push(`${count}x ${name}`);
-		return parts.join(", ");
-	}
-}
+export const largest = <T extends Shape>(shapes: ReadonlyArray<T>) => {
+	let best: T | undefined;
+	for (const shape of shapes) if (!best || area(shape) > area(best)) best = shape;
+	return best;
+};
 ```
 
 ```luau
 --!strict
 --!optimize 2
-export type Inventory = { items: { [string]: number }, add: (self: Inventory, name: string, count: number?) -> (), describe: (self: Inventory) -> string }
-local Inventory
-do
-	Inventory = setmetatable({}, {
-		__tostring = function()
-			return "Inventory"
-		end,
-	})
-	Inventory.__index = Inventory
-	function Inventory.new(...): Inventory
-		const self: any = setmetatable({}, Inventory)
-		return self:constructor(...) or self
-	end
-	function Inventory:constructor()
-		self.items = {}
-	end
-	function Inventory:add(name: string, count: number?)
-		if count == nil then
-			count = 1
+export type Shape = { kind: "circle", radius: number } | { kind: "rect", width: number, height: number }
+const area = function(shape: Shape): number
+	return if shape.kind == "circle" then math.pi * shape.radius ^ 2 else shape.width * shape.height
+end
+const largest = function<T>(shapes: {T})
+	local best: T?
+	for _, shape in shapes do
+		if not best or area(shape) > area(best) then
+			best = shape
 		end
-		const _exp = self.items
-		local _condition = self.items[name]
-		if _condition == nil then
-			_condition = 0
-		end
-		_exp[name] = _condition + count
 	end
-	function Inventory:describe(): string
-		const parts = {}
-		for name, count in self.items do
-			table.insert(parts, `{count}x {name}`)
-		end
-		return table.concat(parts, ", ")
-	end
+	return best
 end
 return {
-	Inventory = Inventory,
+	area = area,
+	largest = largest,
 }
 ```
 
-The compiler accepts roblox-ts projects and `@rbxts/*` packages, read straight from `node_modules/` with no Node at
-build time. The semantics are TypeScript's; the output is not a copy of roblox-ts's.
+Unions, literal types, generics and inferred return types carry over into Luau's type system. The compiler accepts
+roblox-ts projects and `@rbxts/*` packages, read straight from `node_modules/` with no Node at build time. The
+semantics are TypeScript's; the output is not a copy of roblox-ts's.
 
 ## Highlights
 
@@ -85,6 +64,8 @@ Rust is pinned in `rust-toolchain.toml`. Luau is compiled from source, so a C++1
 Linux.
 
 ```sh
+git clone https://github.com/hautajoki/opossum
+cd opossum
 cargo install --locked --path crates/opossum
 opossum plugin install
 ```
@@ -134,5 +115,4 @@ assets, deploys and tests.
 
 ## License
 
-[MIT](LICENSE). Vendored and ported sources retain their upstream licenses and notices, see
-[THIRD-PARTY.md](THIRD-PARTY.md).
+[MIT](LICENSE). Vendored and ported sources retain their upstream licenses and notices.
