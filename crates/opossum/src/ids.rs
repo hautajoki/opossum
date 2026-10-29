@@ -45,7 +45,7 @@ pub fn modules(
             let mut out = Vec::new();
             for key in keys {
                 let resource = format!("{kind}/{key}");
-                let conflict = lock.conflicts.contains(&(env.universe, resource.clone()));
+                let conflict = lock.conflicts.contains_key(&(env.universe, resource.clone()));
                 let id = records.and_then(|r| r.get(&resource)).and_then(|r| r.id).filter(|_| !conflict);
                 if id.is_none() && !conflict {
                     let message = format!(

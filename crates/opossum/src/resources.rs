@@ -742,7 +742,7 @@ fn delete_all(t: &Target, ids: &[u64]) -> Result<(), Fail> {
 /// that universe twice or an image cannot be read.
 pub fn survey(cfg: &Config, env: &Environment, lock: &Lock) -> Result<(Vec<Want>, Vec<Op>), Outcome> {
     let conflicts: Vec<String> =
-        lock.conflicts.iter().filter(|(u, _)| *u == env.universe).map(|(_, key)| key.clone()).collect();
+        lock.conflicts.keys().filter(|(u, _)| *u == env.universe).map(|(_, key)| key.clone()).collect();
     if !conflicts.is_empty() {
         let error = format!(
             "two records for {} in universe {} after a merge; keep the line whose id is live and delete the other",
@@ -868,7 +868,7 @@ pub fn adopt(
     };
     let key = format!("{kind}/{name}");
     let refuse = |error: String| Outcome::refused("resource.adopt", error);
-    if lock.conflicts.contains(&(env.universe, key.clone())) {
+    if lock.conflicts.contains_key(&(env.universe, key.clone())) {
         let error = format!("two records for {key} after a merge; keep the line whose id is live and delete the other");
         return Outcome::refused("lock.conflict", error);
     }

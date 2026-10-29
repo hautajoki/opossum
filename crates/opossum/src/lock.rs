@@ -5,7 +5,7 @@
 //! lines in any order) without a hand edit. Builds only read
 //! it; the commands that change it write it through [`save`], which takes the [`RemoteGuard`].
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{Read as _, Write as _};
@@ -66,10 +66,11 @@ pub struct Lock {
     pub merged: BTreeMap<String, Vec<Asset>>,
     /// By universe id, then `<kind>/<key>` (`pass/vip`, `experience/icon`).
     pub universes: BTreeMap<u64, BTreeMap<String, Resource>>,
-    /// Resources a merge left with two different records; `universes` holds the first.
-    pub conflicts: BTreeSet<(u64, String)>,
-    /// A merge left two different `creator` lines; `creator` is the first.
-    pub creator_conflict: bool,
+    /// Every different record a merge left for one resource; `universes` holds the first. Each is written back until
+    /// the user keeps one: no command decides which is live.
+    pub conflicts: BTreeMap<(u64, String), Vec<Resource>>,
+    /// The other `creator` lines a merge left, written back like `conflicts`; `creator` is the first.
+    pub other_creators: Vec<Creator>,
     /// The file as this process last read or wrote it; `None` while there is none.
     disk: Option<Disk>,
 }
@@ -147,7 +148,8 @@ pub fn parse(text: &str, file: &Path) -> (Lock, Vec<Diag>) {
                 None => Err("`version` must be an integer".to_owned()),
             },
             "creator" => creator(&value).map(|c| match lock.creator {
-                Some(old) if old != c => lock.creator_conflict = true,
+                Some(old) if old != c && !lock.other_creators.contains(&c) => lock.other_creators.push(c),
+                Some(_) => {}
                 _ => lock.creator = Some(c),
             }),
             "assets" => one(&value, "assets.\"<file>\"").and_then(|(key, value)| {
@@ -181,8 +183,11 @@ pub fn parse(text: &str, file: &Path) -> (Lock, Vec<Diag>) {
                         records.insert(key.clone(), r);
                     }
                     Some(old) if *old == r => {}
-                    Some(_) => {
-                        lock.conflicts.insert((u, key.clone()));
+                    Some(old) => {
+                        let all = lock.conflicts.entry((u, key.clone())).or_insert_with(|| vec![old.clone()]);
+                        if !all.contains(&r) {
+                            all.push(r);
+                        }
                     }
                 }
                 Ok(())
@@ -245,7 +250,7 @@ impl Lock {
         let file = root.join(FILE);
         let message = |u, key| format!("two records for {key} in universe {u} after a merge; keep the live one");
         self.conflicts
-            .iter()
+            .keys()
             .map(|(u, key)| Diag::new("lock.conflict", severity, Some(&file), message(u, key)))
             .collect()
     }
@@ -253,7 +258,7 @@ impl Lock {
     /// Before an upload as `creator`: the lock's assets must belong to it, and a merge must not have left two.
     pub fn check_creator(&self, root: &Path, creator: Creator) -> Option<Diag> {
         let file = root.join(FILE);
-        if self.creator_conflict {
+        if !self.other_creators.is_empty() {
             let message = "two different `creator` lines after a merge; keep the one the [assets] ids belong to";
             return Some(Diag::new("lock.conflict", Severity::Error, Some(&file), message.into()));
         }
@@ -382,7 +387,7 @@ fn hash(v: &toml::Value, k: &str) -> Result<String, String> {
 /// a blank line before each group, records sorted bytewise by key, each record's fields in a fixed order.
 pub fn render(lock: &Lock) -> String {
     let mut out = format!("{HEADER}\nversion = {VERSION}\n");
-    if let Some(c) = lock.creator {
+    for c in lock.creator.iter().chain(&lock.other_creators) {
         let (kind, id) = match c {
             Creator::User(id) => ("user", id),
             Creator::Group(id) => ("group", id),
@@ -407,7 +412,10 @@ pub fn render(lock: &Lock) -> String {
     for (u, records) in lock.universes.iter().filter(|(_, r)| !r.is_empty()) {
         out.push('\n');
         for (key, r) in records {
-            record(&mut out, &format!("universes.{u}.{}", self::key(key)), &resource_fields(r));
+            let all = lock.conflicts.get(&(*u, key.clone())).map_or(std::slice::from_ref(r), Vec::as_slice);
+            for r in all {
+                record(&mut out, &format!("universes.{u}.{}", self::key(key)), &resource_fields(r));
+            }
         }
     }
     out
@@ -637,7 +645,7 @@ universes.15302144394."thumbnail/main" = { id = 55, altText = "Lobby", image = "
             a(7, 'e'),
         );
         let mut lock = parsed(&text);
-        assert_eq!((lock.creator, lock.creator_conflict), (Some(Creator::User(1)), true));
+        assert_eq!((lock.creator, &lock.other_creators[..]), (Some(Creator::User(1)), &[Creator::User(2)][..]));
         // a build takes the highest id with nothing in flight; identical duplicates are one record
         assert_eq!(lock.assets["x.png"].id, Some(9));
         assert_eq!(lock.assets["y.png"].id, Some(8));
@@ -650,8 +658,20 @@ universes.15302144394."thumbnail/main" = { id = 55, altText = "Lobby", image = "
         assert_eq!(lock.assets["x.png"].id, Some(5));
         assert!(render(&lock).contains(&format!("assets.\"x.png\" = {}\n", a(5, 'a'))));
         assert!(lock.check_creator(Path::new("/p"), Creator::User(1)).is_some_and(|d| d.code == "lock.conflict"));
-        assert_eq!(lock.conflicts.iter().collect::<Vec<_>>(), [&(7, "pass/vip".to_owned())]);
+        assert_eq!(lock.conflicts.keys().collect::<Vec<_>>(), [&(7, "pass/vip".to_owned())]);
         assert_eq!(lock.universes[&7]["pass/vip"].id, Some(1));
+        // a write that settles nothing keeps every side of a conflict: only the user decides which is live
+        let text = render(&lock);
+        for line in [
+            "creator = { user = 1 }",
+            "creator = { user = 2 }",
+            "\"pass/vip\" = { id = 1 }",
+            "\"pass/vip\" = { id = 2 }",
+        ] {
+            assert!(text.contains(line), "{line}: {text}");
+        }
+        let again = parsed(&text);
+        assert_eq!((again.conflicts.len(), again.other_creators.len()), (1, 1));
     }
 
     #[test]
