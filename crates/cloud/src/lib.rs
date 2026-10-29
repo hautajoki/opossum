@@ -171,6 +171,11 @@ impl Client {
         self.clock.now()
     }
 
+    /// Where this client sends: [`ROBLOX`] or a loopback mock.
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+
     pub fn sleep(&self, d: Duration) {
         self.clock.sleep(d)
     }

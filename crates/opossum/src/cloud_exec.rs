@@ -113,7 +113,7 @@ pub fn run(
     script: &str,
     timeout: Duration,
 ) -> Result<Ran, Failure> {
-    let file = versions(cache, at);
+    let file = versions(cache, client, at);
     let hash = rbxl.map(|bytes| blake3::hash(bytes).to_hex().to_string());
     let (mut version, mut saved) = (None, false);
     if let (Some(bytes), Some(hash)) = (rbxl, &hash) {
@@ -179,9 +179,11 @@ fn saved_version(
     Ok((version, saved))
 }
 
-/// The cache file of `at`'s saved versions, shared by every worktree on the machine.
-pub fn versions(cache: &Cache, at: &Placed) -> PathBuf {
-    cache.dir.join("versions").join(format!("{}-{}", at.universe, at.id))
+/// The cache file of `at`'s saved versions on the Open Cloud `client` talks to, shared by every worktree on the
+/// machine: a mock's versions never stand for Roblox's.
+pub fn versions(cache: &Cache, client: &Client, at: &Placed) -> PathBuf {
+    let host = client.base().split_once("://").map_or(client.base(), |(_, host)| host).replace(':', "-");
+    cache.dir.join("versions").join(host).join(format!("{}-{}", at.universe, at.id))
 }
 
 /// Makes `version` the cache's most recent line for the build hashed `hash`: a save (`deploy`'s too) that a cloud run
@@ -277,7 +279,8 @@ mod tests {
             ]
         );
         let hash = |b: &[u8]| blake3::hash(b).to_hex().to_string();
-        let file = cache.dir.join("versions/1-2");
+        let file = versions(&cache, &client, &at());
+        assert!(file.ends_with(format!("127.0.0.1-{}/1-2", mock.base.rsplit(':').next().unwrap())));
         assert_eq!(read(&file), [(hash(b"a"), 3), (hash(b"b"), 2)]);
         let _ = std::fs::remove_dir_all(&cache.dir);
     }

@@ -165,7 +165,7 @@ pub fn deploy(
                     match client.save_place(at.universe, at.id, rbxl, !saved) {
                         Ok(version) => {
                             if let Some(hash) = hash {
-                                cloud_exec::remember(&cloud_exec::versions(cache, at), hash, version);
+                                cloud_exec::remember(&cloud_exec::versions(cache, client, at), hash, version);
                             }
                             Ok(version)
                         }
@@ -378,7 +378,8 @@ mod tests {
         assert_ne!(before, after);
 
         let hash = blake3::hash(&after).to_hex().to_string();
-        let cache = |id: u64| std::fs::read_to_string(root.join(format!(".cache/versions/7-{id}"))).ok();
+        let host = mock.base.trim_start_matches("http://").replace(':', "-");
+        let cache = |id: u64| std::fs::read_to_string(root.join(format!(".cache/versions/{host}/7-{id}"))).ok();
         assert_eq!(cache(10), Some(format!("{hash} 40\n")));
         assert_eq!(cache(14), None);
         std::fs::remove_dir_all(&root).unwrap();
