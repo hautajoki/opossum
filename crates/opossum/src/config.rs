@@ -136,6 +136,11 @@ impl Config {
         let found = self.environments.iter().find(|e| e.name == name);
         found.ok_or_else(|| format!("environment `{name}` is not declared; choose one of: {names}"))
     }
+
+    /// Every asset set's root, which the place reader leaves out of `place/`.
+    pub fn asset_roots(&self) -> Vec<PathBuf> {
+        self.assets.iter().map(|s| self.root.join(&s.root)).collect()
+    }
 }
 
 /// The `opossum.toml` in `dir` or the nearest directory above it.

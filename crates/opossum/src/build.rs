@@ -535,7 +535,7 @@ impl Session {
     pub fn place_changed(&mut self, path: &Path) -> Option<bool> {
         let dir = self.cfg.root.join("place");
         let place = self.place.as_mut()?;
-        let Some((scopes, diags)) = place.replace_entry(&dir, path) else {
+        let Some((scopes, diags)) = place.replace_entry(&dir, &self.cfg.asset_roots(), path) else {
             // a top-level directory that named no service and went away takes its error along
             let top = dir.join(path.strip_prefix(&dir).ok()?.components().next()?);
             let before = self.place_diags.len();
@@ -557,7 +557,7 @@ impl Session {
     pub fn tree(&mut self, shapes: bool) -> place::Tree {
         let dir = self.cfg.root.join("place");
         if self.place.is_none() {
-            let (place, mut place_diags) = place::read_place(&dir);
+            let (place, mut place_diags) = place::read_place(&dir, &self.cfg.asset_roots());
             if !dir.exists() {
                 // no place/ is an empty place, not an error
                 place_diags.retain(|d| d.code != "place.io" || d.path != dir);

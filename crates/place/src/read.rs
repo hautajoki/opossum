@@ -1,9 +1,9 @@
 //! The `place/` folder reader. Each top-level directory is a service named in kebab case (`replicated-storage`
 //! is ReplicatedStorage; `starter-player-scripts` is StarterPlayer's StarterPlayerScripts). Inside, directories
 //! are Folders, `.model.json` files are instance trees, `.rbxm`/`.rbxmx` files are Roblox models and `.txt`
-//! files are StringValues. Loose top-level `*.toml` files are properties files ([`crate::properties`]); `place/assets`
-//! (tessera's upload root) and other loose top-level files are not content. Rojo's formats, `*.meta.json` files and
-//! `Rojo_Id` / `Rojo_Target_<Property>` attributes, are errors that `opossum migrate` converts.
+//! files are StringValues. Loose top-level `*.toml` files are properties files ([`crate::properties`]); asset roots
+//! (`[assets]`, uploaded rather than built) and other loose top-level files are not content. Rojo's formats,
+//! `*.meta.json` files and `Rojo_Id` / `Rojo_Target_<Property>` attributes, are errors that `opossum migrate` converts.
 //!
 //! `dev` keeps the [`Place`] it read and re-reads only the entry a file event touched ([`Place::replace_entry`]).
 //! Entry order is not kept in the dom: a re-read entry lands last among its siblings, so [`Place::entry_name`] gives
@@ -177,6 +177,8 @@ pub(crate) fn kebab(name: &str) -> String {
 
 struct Reader<'a> {
     place: &'a mut Place,
+    /// Asset roots: directories that are not content wherever they sit.
+    skip: &'a [PathBuf],
     diags: Vec<Diag>,
     /// Refs read since the last [`Reader::resolve_refs`].
     refs: Vec<RefSpec>,
@@ -185,16 +187,17 @@ struct Reader<'a> {
 const ROJO_META: &str = "a Rojo meta file; properties live in place/*.toml, and `opossum migrate` moves them there";
 
 /// Reads `dir` (a project's `place/`) into a fresh DataModel, applies its properties files and resolves every Ref.
-/// Problems come back as diagnostics; whatever could be read is in the place.
-pub fn read_place(dir: &Path) -> (Place, Vec<Diag>) {
+/// Problems come back as diagnostics; whatever could be read is in the place. `skip` holds the asset roots, which are
+/// left out wherever they are.
+pub fn read_place(dir: &Path, skip: &[PathBuf]) -> (Place, Vec<Diag>) {
     let mut place = Place::new();
-    let mut r = Reader { place: &mut place, diags: Vec::new(), refs: Vec::new() };
+    let mut r = Reader { place: &mut place, skip, diags: Vec::new(), refs: Vec::new() };
     let props = read_properties(dir, &mut r.diags);
     for (name, path, is_dir) in entries(dir, &mut r.diags) {
         if !is_dir && name.ends_with(".meta.json") {
             r.diags.push(Diag::error("place.rojoMeta", &path, ROJO_META));
         }
-        if !is_dir || name.starts_with('.') || name == "assets" {
+        if !is_dir || name.starts_with('.') || skip.contains(&path) {
             continue;
         }
         let Some(service_path) = service_for_dir(&name) else {
@@ -224,17 +227,18 @@ impl Place {
     /// again.
     ///
     /// Returns the files and directories re-read, whose diagnostics the returned ones replace (the properties files
-    /// among them), together with every `place.badRef`; None when `path` is no content.
-    pub fn replace_entry(&mut self, dir: &Path, path: &Path) -> Option<(Vec<PathBuf>, Vec<Diag>)> {
+    /// among them), together with every `place.badRef`; None when `path` is no content. `skip` is as for
+    /// [`read_place`].
+    pub fn replace_entry(&mut self, dir: &Path, skip: &[PathBuf], path: &Path) -> Option<(Vec<PathBuf>, Vec<Diag>)> {
         let rel = path.strip_prefix(dir).ok()?;
         let parts: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
         let full = parts.len() == 1 && (is_properties_file(&parts[0]) || parts[0].ends_with(".meta.json"));
         let Some(top) = parts.first().filter(|_| !full) else {
-            let (place, diags) = read_place(dir);
+            let (place, diags) = read_place(dir, skip);
             *self = place;
             return Some((vec![dir.to_path_buf()], diags));
         };
-        if top.starts_with('.') || top == "assets" {
+        if top.starts_with('.') || skip.iter().any(|s| path.starts_with(s)) {
             return None;
         }
         let Some(service_path) = service_for_dir(top) else {
@@ -247,17 +251,17 @@ impl Place {
         };
         if !dir.join(top).is_dir() && parts.len() > 1 {
             // a service directory that went away with what was in it
-            let (place, diags) = read_place(dir);
+            let (place, diags) = read_place(dir, skip);
             *self = place;
             return Some((vec![dir.to_path_buf()], diags));
         }
         if parts.len() == 1 {
             // a service directory came or went: rare, and only a full read orders services and nested containers
-            let (place, diags) = read_place(dir);
+            let (place, diags) = read_place(dir, skip);
             *self = place;
             return Some((vec![dir.to_path_buf()], diags));
         }
-        let mut r = Reader { place: self, diags: Vec::new(), refs: Vec::new() };
+        let mut r = Reader { place: self, skip, diags: Vec::new(), refs: Vec::new() };
         let mut parent = match r.instance_at(&service_path, None) {
             Ok(service) => service,
             Err(e) => {
@@ -282,7 +286,7 @@ impl Place {
         if NESTED.contains(&(parent_class.as_str(), name.as_str())) {
             // a nested container's own directory came, went or holds the event: its children may also come from
             // a top-level directory (`place/terrain`) and a properties file may make it, which only a full read orders
-            let (place, diags) = read_place(dir);
+            let (place, diags) = read_place(dir, skip);
             *self = place;
             return Some((vec![dir.to_path_buf()], diags));
         }
@@ -303,7 +307,7 @@ impl Place {
         let mut scopes = vec![at.clone()];
         let mut sink = Vec::new();
         for (entry, entry_path, is_dir) in entries(&folder, &mut sink) {
-            if !entry.starts_with('.') && instance_name(&entry, is_dir) == name {
+            if !entry.starts_with('.') && !skip.contains(&entry_path) && instance_name(&entry, is_dir) == name {
                 r.entry(&entry_path, parent);
                 if entry_path != at {
                     scopes.push(entry_path);
@@ -422,7 +426,7 @@ pub(crate) fn entries(dir: &Path, diags: &mut Vec<Diag>) -> Vec<(String, PathBuf
 impl Reader<'_> {
     fn dir(&mut self, dir: &Path, parent: Ref) {
         for (name, path, _) in entries(dir, &mut self.diags) {
-            if !name.starts_with('.') {
+            if !name.starts_with('.') && !self.skip.contains(&path) {
                 self.entry(&path, parent);
             }
         }
@@ -734,7 +738,7 @@ mod tests {
             ]
         }"#;
         fs::write(models.join("boat.model.json"), boat).unwrap();
-        let (place, diags) = read_place(&dir);
+        let (place, diags) = read_place(&dir, &[]);
         fs::remove_dir_all(&dir).unwrap();
 
         let get = |path: &str| place.find(path).unwrap();
@@ -777,16 +781,16 @@ mod tests {
             { "name": "weld", "className": "Weld", "properties": { "Part1": "../../frame" } }
         ] }"#;
         fs::write(models.join("door.model.json"), door).unwrap();
-        let (mut place, diags) = read_place(&dir);
+        let (mut place, diags) = read_place(&dir, &[]);
         assert_eq!(diags.iter().map(|d| d.code).collect::<Vec<_>>(), ["place.badRef"]);
 
         // the ref's target appears in an entry of its own, and an earlier sibling is edited
         fs::write(models.join("frame.model.json"), r#"{ "className": "Part" }"#).unwrap();
         fs::write(models.join("a.txt"), "a2").unwrap();
-        let (_, diags) = place.replace_entry(&dir, &models.join("frame.model.json")).unwrap();
+        let (_, diags) = place.replace_entry(&dir, &[], &models.join("frame.model.json")).unwrap();
         assert!(diags.is_empty(), "{diags:?}");
-        place.replace_entry(&dir, &models.join("a.txt")).unwrap();
-        let (full, _) = read_place(&dir);
+        place.replace_entry(&dir, &[], &models.join("a.txt")).unwrap();
+        let (full, _) = read_place(&dir, &[]);
         fs::remove_dir_all(&dir).unwrap();
 
         let weld = place.find("ReplicatedStorage/models/door/weld").unwrap();

@@ -1204,13 +1204,13 @@ mod tests {
         let door = r#"{ "className": "Model", "children": [{ "name": "hinge", "className": "Part" }] }"#;
         std::fs::write(models.join("door.model.json"), door).unwrap();
         std::fs::write(models.join("hull.model.json"), r#"{ "className": "Part" }"#).unwrap();
-        let (place, _) = place::read_place(&root.join("place"));
+        let (place, _) = place::read_place(&root.join("place"), &[]);
         let mut bytes = Vec::new();
         place::write_rbxm(&place, &[place.find("ReplicatedStorage/models/hull").unwrap()], &mut bytes).unwrap();
         assert_eq!(place::rbxm_class(&bytes).as_deref(), Ok("Part"));
         std::fs::remove_file(models.join("hull.model.json")).unwrap();
         std::fs::write(models.join("hull.rbxm"), &bytes).unwrap();
-        let (place, diags) = place::read_place(&root.join("place"));
+        let (place, diags) = place::read_place(&root.join("place"), &[]);
         let mut fresh = Tree::new();
         fresh.add_place(&place);
         let module = place::Source::new(Arc::from("return 1"));
