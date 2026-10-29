@@ -41,7 +41,7 @@ const ROBLOX: &str = "https://apis.roblox.com";
 #[global_allocator]
 static GLOBAL: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 
-const USAGE: &str = "usage: opossum [-C <dir>] <command>
+const USAGE: &str = "usage: opossum [-C <dir>] <command>                          flags go anywhere; -h prints this
   build [--profile <name>] [--environment <e>] [-o <file.rbxl>] [--emit <dir>]
                                                              build the place (.opossum/place.rbxl)
   check [--profile <name>] [--environment <e>] [--json]      diagnostics, no output
@@ -98,6 +98,7 @@ enum Command {
     Sourcemap,
     Plugin(Option<PathBuf>),
     Migrate,
+    Help,
 }
 
 /// What `adopt` settles: an asset file, or a resource by kind and key in an environment.
@@ -121,6 +122,7 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
     let (mut local, mut interpreted, mut cloud, mut place, mut environment) = (false, false, false, None, None);
     let (mut force, mut allow_focused, mut none, mut head, mut allow_spend) = (false, false, false, false, false);
     let mut saved = false;
+    let mut help = matches!(rest.first(), Some(&("-h" | "--help")));
     let mut positional: Vec<&str> = Vec::new();
     let mut it = rest.iter().copied().skip(1);
     while let Some(arg) = it.next() {
@@ -149,10 +151,14 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
             "--head" => head = true,
             "--allow-spend" => allow_spend = true,
             "--saved" => saved = true,
+            "-h" | "--help" => help = true,
             "-" => positional.push(arg),
             _ if arg.starts_with('-') => return Err(format!("unknown option {arg}")),
             _ => positional.push(arg),
         }
+    }
+    if help {
+        return Ok((dir, Command::Help));
     }
     let verb = rest.first().copied();
     let tests = matches!(verb, Some("test" | "bench"));
@@ -237,10 +243,11 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
         }
         (Some("status"), [], _) if !built => Command::Status(options()),
         (Some("attach"), [], _) if !built => Command::Attach(options(), force),
-        (Some("where"), [target], _) => Command::Where((*target).to_owned()),
-        (Some("sourcemap"), [], _) => Command::Sourcemap,
-        (Some("plugin"), ["install"], _) => Command::Plugin(None),
-        (Some("plugin"), ["install", path], _) => Command::Plugin(Some(PathBuf::from(path))),
+        (Some("where"), [target], _) if !built && !json => Command::Where((*target).to_owned()),
+        (Some("sourcemap"), [], _) if !built && !json => Command::Sourcemap,
+        (Some("plugin"), ["install", path @ ..], _) if path.len() <= 1 && !built && !json => {
+            Command::Plugin(path.first().map(PathBuf::from))
+        }
         (Some("migrate"), [], _) if !built && !json => Command::Migrate,
         _ => return Err(USAGE.to_owned()),
     };
@@ -250,6 +257,10 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, Command), String> {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = parse(&args).and_then(|(dir, command)| {
+        if let Command::Help = command {
+            println!("{USAGE}");
+            return Ok(true);
+        }
         // loading, checking and lowering recurse deeply
         std::thread::Builder::new()
             .stack_size(lower::STACK_SIZE)
@@ -360,6 +371,7 @@ fn run(dir: Option<PathBuf>, command: Command) -> Result<bool, String> {
         Command::Where(target) => where_(session(cfg, None, None)?, &cwd, &target),
         Command::Sourcemap => sourcemap(session(cfg, None, None)?),
         Command::Plugin(_)
+        | Command::Help
         | Command::Migrate
         | Command::Dev { .. }
         | Command::Plan { .. }
