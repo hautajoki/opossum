@@ -1,4 +1,4 @@
-//! opossum: one binary from a TypeScript + Luau Roblox project to a Studio session or a place. See DESIGN.md.
+//! opossum: one binary from a TypeScript + Luau Roblox project to a Studio session or a place.
 
 mod assets;
 mod build;

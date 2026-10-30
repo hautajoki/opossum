@@ -575,7 +575,7 @@ impl Execs {
         Ok(request)
     }
 
-    /// `{root, realm?, name, source, timeout?, report?, fresh?}` (DESIGN.md, Exec).
+    /// `{root, realm?, name, source, timeout?, report?, fresh?}`.
     fn exec(&self, request: &Value) -> Result<Value, (u16, String)> {
         let connected = self.server.realms();
         let realm = match request["realm"].as_str() {
@@ -643,7 +643,7 @@ impl Execs {
         }))
     }
 
-    /// `{root, run?, timeout?}` (DESIGN.md, Play): once edit holds every save made before the request, starts a Play
+    /// `{root, run?, timeout?}`: once edit holds every save made before the request, starts a Play
     /// Solo (or with `run`, Run) playtest from the edit plugin, and answers when its DataModels connected and the play
     /// server holds the newest build it will: `{ok, realms, gen, fresh, stale, ms}`, or `ok` false with an `error` when they
     /// did not come within the time limit. An error status when it never started.
@@ -707,7 +707,7 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
         Ok(json!({ "ok": false, "realms": realms, "error": error, "ms": ms() }))
     }
 
-    /// `{root, timeout?}` (DESIGN.md, Play): ends the running playtest from its server and answers once its DataModels
+    /// `{root, timeout?}`: ends the running playtest from its server and answers once its DataModels
     /// disconnected, with the tally of what they logged: `{ok, errors, warnings, first, ms}`, `first` the first error
     /// lines `{realm, text, file, line}`. An error status when nothing runs or it could not be asked to end.
     fn stop(&self, request: &Value) -> Result<Value, (u16, String)> {
@@ -746,7 +746,7 @@ task.defer(StudioTestService.{method}, StudioTestService, \"opossum\")"
         Ok(json!({ "ok": true, "errors": errors, "warnings": warnings, "first": first, "ms": ms }))
     }
 
-    /// `{root, path, file?, timeout?}` (DESIGN.md, Pull): the instance at `path` (`/`-separated) in edit, serialized by
+    /// `{root, path, file?, timeout?}`: the instance at `path` (`/`-separated) in edit, serialized by
     /// the plugin and written as an `.rbxm`: to `file`, or where `place/` reads it from ([`destination`]). Answers once
     /// the build reading it is published, `{ok, path, class, file, bytes, gen, ms, warning?}`; an error status when
     /// nothing was written.
@@ -877,7 +877,7 @@ return at.ClassName, buffer.tostring(game:GetService(\"EncodingService\"):Base64
         status
     }
 
-    /// `{port, force?}` (DESIGN.md, Attach): tells every DataModel connected here to connect to the dev on `port`
+    /// `{port, force?}`: tells every DataModel connected here to connect to the dev on `port`
     /// instead and answers once their sockets closed, `{ok, realms}`, or `ok` false with an `error` when they did not
     /// within [`RELEASE_WAIT`]. An error status when nothing was told: nothing is connected, or a playtest, an exec, a
     /// play, stop or pull runs and `force` is not set.

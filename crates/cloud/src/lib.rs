@@ -184,7 +184,7 @@ impl Client {
         self.clock.sleep(d)
     }
 
-    /// Sends `call` under the retry table (DESIGN.md, Cloud) and returns the 2xx body. Connection setup failures and
+    /// Sends `call` under the retry table and returns the 2xx body. Connection setup failures and
     /// 429s are retried for every request, since neither was applied; 408, 5xx and broken exchanges only when the
     /// request is not a create.
     pub(crate) fn send(&self, call: &Call) -> Result<Vec<u8>, Error> {
@@ -345,7 +345,7 @@ fn exchange<S: ureq::AsSendBody>(
     agent.run(request)
 }
 
-/// Which side of "was anything sent" a ureq error is on (DESIGN.md, Cloud: errors and retries).
+/// Which side of "was anything sent" a ureq error is on.
 fn kind(e: &ureq::Error) -> ErrorKind {
     use std::io::ErrorKind as Io;
     use ureq::{Error as E, Timeout as T};

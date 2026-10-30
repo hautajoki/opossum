@@ -110,8 +110,7 @@ sourcemap   write a sourcemap for luau-lsp
 migrate     convert a Rojo, tessera or hexagon project
 ```
 
-`opossum --help` lists every command and flag. [DESIGN.md](DESIGN.md) covers configuration, routing, the place format,
-assets, deploys and tests.
+`opossum --help` lists every command and flag.
 
 ## License
 

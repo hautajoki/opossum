@@ -1,13 +1,13 @@
 //! `opossum exec`, `test` and `bench`: Luau run where a [`Target`] says. In Studio it runs in a DataModel through the
-//! running `opossum dev`, one `POST /exec` on the port it wrote to `.opossum/port` (DESIGN.md, Exec); `--local` runs
-//! it in fresh in-process VMs, with no dev or Studio (DESIGN.md, Tests); `--cloud` runs it on Open Cloud, on the saved
-//! place version holding this build (DESIGN.md, Cloud runs). Every target runs the same spec runtime (`spec`) and
+//! running `opossum dev`, one `POST /exec` on the port it wrote to `.opossum/port`; `--local` runs
+//! it in fresh in-process VMs, with no dev or Studio; `--cloud` runs it on Open Cloud, on the saved
+//! place version holding this build. Every target runs the same spec runtime (`spec`) and
 //! prints its report the same way. The exit status is 0 when it ran clean, 1 for a script error, a failed or empty test run or an
 //! answer that never came, 2 when it never ran (dev or the DataModel cannot be reached, or holds older code than a
-//! test allows). `opossum play` and `stop` start and end a playtest the same way (`POST /play`, `/stop`; DESIGN.md,
-//! Play), and `opossum pull` writes an instance from Studio into the files (`POST /pull`; DESIGN.md, Pull).
+//! test allows). `opossum play` and `stop` start and end a playtest the same way (`POST /play`, `/stop`), and
+//! `opossum pull` writes an instance from Studio into the files (`POST /pull`).
 //! `opossum status` and `attach` ask every dev on the sync ports what it holds and move Studio between them
-//! (`POST /status`, `/release`; DESIGN.md, Attach).
+//! (`POST /status`, `/release`).
 
 use std::io::{IsTerminal, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -775,7 +775,7 @@ pub fn status(cfg: &Config, options: &Options) -> Result<bool, String> {
 }
 
 /// Moves Studio to this project's dev: the dev holding it tells its plugins to connect to this one's port, and this
-/// returns once edit connected here (DESIGN.md, Attach). With `force`, a running playtest moves too and a running
+/// returns once edit connected here. With `force`, a running playtest moves too and a running
 /// exec loses its answer.
 pub fn attach(cfg: &Config, options: &Options, force: bool) -> Result<bool, String> {
     let start = Instant::now();

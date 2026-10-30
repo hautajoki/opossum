@@ -1,4 +1,4 @@
-//! `opossum dev`'s texture pack capture (DESIGN.md, Texture packs). Studio bakes a pack for every SurfaceAppearance
+//! `opossum dev`'s texture pack capture. Studio bakes a pack for every SurfaceAppearance
 //! and MaterialVariant whose maps it sees, within ~20 s; a script cannot read one, but `SerializeInstancesAsync`
 //! carries it. So a thread of its own, woken by the edit DataModel's hello and acks and every [`TICK`] otherwise,
 //! finds the pack keys the place uses that opossum.lock has no `packs.` line for, has the edit plugin serialize one

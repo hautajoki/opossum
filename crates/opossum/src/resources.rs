@@ -1,4 +1,4 @@
-//! A universe's resources (DESIGN.md, Resources): passes, products, badges, the experience's name, description and
+//! A universe's resources: passes, products, badges, the experience's name, description and
 //! icon, and its thumbnails and their order. [`catalog`] is what opossum.toml declares for an environment, [`plan`]
 //! compares it with the lock's records for that universe offline, [`prepare`] reads and checks everything the plan
 //! sends before anything is sent, and [`apply`] sends it in phase order, saving the lock after every change. Records

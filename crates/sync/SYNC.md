@@ -144,7 +144,7 @@ place), the ack of the frame in flight (its failures one by one, then applied, w
 `verify` that ends the wait for one (and whether it is quiet), log lines and the server's own notices (realm `sync`),
 and the socket closing (disconnected). Each names the published generation the frame brings the DataModel to, never
 the frame's own number, which a repair takes past the last publish. A late ack reports only its failures.
-`opossum dev` shows each report as one event (DESIGN.md, Dev events).
+`opossum dev` shows each report as one event.
 
 ### Down
 
@@ -371,7 +371,7 @@ is server, which includes Run mode, and the rest is client). Ids are `u32`; `0xF
 - **client** only forwards logs: the play server's writes to replicated containers reach it by replication (Source,
   new instances, destroyed scripts, all measured), and client code lives in ReplicatedStorage.
 
-**Starting and stopping** (`opossum play`, `stop`; DESIGN.md, Play). Both are execs of a few lines dev writes itself,
+**Starting and stopping** (`opossum play`, `stop`). Both are execs of a few lines dev writes itself,
 so the plugin has no message for them. Play runs in edit once it holds the newest build: it refuses when
 `StudioTestService.EditModeActive` is false (a playtest runs), else defers
 `StudioTestService:ExecutePlayModeAsync("opossum")` (`ExecuteRunModeAsync` for `--run`), so the test starts after the
@@ -401,7 +401,7 @@ from the play-server plugin (measured). A ref held elsewhere to a swapped instan
 
 ## Exec
 
-`opossum exec` and `opossum test` run Luau in a connected DataModel (DESIGN.md, Exec): the CLI posts to `opossum dev`,
+`opossum exec` and `opossum test` run Luau in a connected DataModel: the CLI posts to `opossum dev`,
 which makes sure its build covers every file saved before the request (its fence) and hands the server the plugin's
 `exec` message for the newest DataModel of the asked realm, failing at once when none is connected.
 
@@ -464,7 +464,7 @@ later require of a module that failed rethrows its error, as Studio's does. A sy
 say only "Requested module experienced an error while loading" (measured): compiling the source again with
 `loadstring` says what (plugins have it; `debug.loadmodule` is not enabled).
 
-**Packs.** dev's texture pack capture (DESIGN.md, Texture packs) is an exec it writes, `packs`, sent to edit with `now`
+**Packs.** dev's texture pack capture is an exec it writes, `packs`, sent to edit with `now`
 and pull's `limit`, never fenced (a fence file every 10 s would wake the watcher each time). Its source starts with two
 tables spliced in, `WANTED` (the pack keys the lock lacks) and `NUDGE` (those of them missing for 60 s), then walks
 `game:GetDescendants()` for SurfaceAppearances and MaterialVariants, spells each one's key from its four `…MapContent`
@@ -487,7 +487,7 @@ over 15 runs in a row, 24 s in the play server; its 176 suites that also run loc
 
 ## Pull
 
-`opossum pull` (DESIGN.md, Pull) is an exec dev writes, run in edit: it finds the instance by name from `game`, clones
+`opossum pull` is an exec dev writes, run in edit: it finds the instance by name from `game`, clones
 it, clears the clone's `opossum` attribute, destroys in the clone what routes mount inside it (each by its names from
 the instance, which dev lists: the tree's own copy comes from `src/`, so the file must not hold another) and returns its
 class and `EncodingService:Base64Encode` of `SerializationService:SerializeInstancesAsync({clone})`, with a `limit` that
@@ -504,7 +504,7 @@ which never verifies, is not told.
 
 ## Attach
 
-Every dev listens on one of the 16 ports, so `opossum attach` (DESIGN.md, Attach) needs no registry: it asks each port
+Every dev listens on one of the 16 ports, so `opossum attach` needs no registry: it asks each port
 for `/status` (`Server::status`: the project, the place it serves, the build it published, each connected DataModel's
 realm, place and the build it holds, the execs waiting or running), then asks the dev holding Studio for `/release`.
 That dev (`Server::release`) refuses while a play DataModel is connected or an exec waits or runs, unless forced, and

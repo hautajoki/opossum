@@ -1,5 +1,5 @@
-//! What `opossum dev` tells its terminal: one [`Event`] per line, as text, or with `--json` as one JSON object (the
-//! schema is DESIGN.md's "Dev events"). Both renderings read the same value, so they cannot drift apart.
+//! What `opossum dev` tells its terminal: one [`Event`] per line, as text, or with `--json` as one JSON object.
+//! Both renderings read the same value, so they cannot drift apart.
 
 use std::path::{Path, PathBuf};
 

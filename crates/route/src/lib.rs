@@ -1,5 +1,5 @@
-//! Pure routing: a source path under `src/` to its instance path, realm and script class, by rogen v2's rules
-//! trimmed as DESIGN.md says. `route` decides one file from its path and the folders that are modules; `scan`
+//! Pure routing: a source path under `src/` to its instance path, realm and script class, by rogen v2's rules,
+//! trimmed. `route` decides one file from its path and the folders that are modules; `scan`
 //! walks a source root, routes every file and runs the tree checks that need all of them at once.
 
 use std::collections::HashSet;

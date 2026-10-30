@@ -1,4 +1,4 @@
-//! Exact-version execution on Open Cloud (DESIGN.md, Cloud runs). `exec --cloud` and `test --cloud` build the place
+//! Exact-version execution on Open Cloud. `exec --cloud` and `test --cloud` build the place
 //! here, save it once as a place version and run one Luau task on exactly that version, so what runs is the build that
 //! was checked and is mapped. A cache every worktree shares remembers which version holds which build's bytes, so an
 //! unchanged build saves nothing. `exec --head` runs on the current head instead, with no build and no save.
