@@ -75,7 +75,14 @@ fn is_literal_enum(state: &mut TransformState<'_>, declaration: P<Node>) -> bool
 pub fn inline_enum_member(state: &mut TransformState<'_>, access: P<Node>) -> Option<Expr> {
     let name = match access.kind() {
         Kind::PropertyAccessExpression => access.name()?,
-        Kind::ElementAccessExpression => skip_downwards(access.as_element_access_expression().argument_expression),
+        Kind::ElementAccessExpression => {
+            // only a member named by a literal key; `rec[E.A]` indexes another table with E.A's value
+            let key = skip_downwards(access.as_element_access_expression().argument_expression);
+            if !matches!(key.kind(), Kind::StringLiteral | Kind::NoSubstitutionTemplateLiteral) {
+                return None;
+            }
+            key
+        }
         _ => return None,
     };
     let symbol = state.checker.get_symbol_at_location_exported(name)?;
@@ -146,14 +153,16 @@ mod tests {
             import { COUNT, NAME, DOWN, live, computed, Shared } from "./a";
             enum Local { X = "x", Y = "y" }
             enum Dynamic { P, Q }
+            const names = { [Local.X]: 7, [Local.Y]: 8 };
             export function use(key: "P" | "Q") {
-                return [COUNT, NAME, DOWN, live, computed, Shared.B, Local.Y, Dynamic[key], Dynamic.Q];
+                return [COUNT, NAME, DOWN, live, computed, Shared.B, Local.Y, Dynamic[key], Dynamic.Q, names[Local.Y]];
             }
         "#;
         let lowered = lower(&[("a.ts", a), ("b.ts", b)], Options { native_types: false, ..Options::default() });
         let b = &lowered["b.ts"];
-        // `live` can change and `computed` is no literal; enum members are literals wherever they are read
-        assert!(b.contains(r#"{ 4, "crate", -1, live, computed, 5, "y", Dynamic[key], 1 }"#), "{b}");
+        // `live` can change and `computed` is no literal; enum members are literals wherever they are read, and an
+        // enum member used as a key indexes its own table
+        assert!(b.contains(r#"{ 4, "crate", -1, live, computed, 5, "y", Dynamic[key], 1, names.y }"#), "{b}");
         // `Local` is only read by member name; `Dynamic` is indexed by a value, `Shared` is exported
         assert!(!b.contains("Local") && b.contains("Dynamic = setmetatable"), "{b}");
         assert!(lowered["a.ts"].contains("Shared = setmetatable"), "{}", lowered["a.ts"]);
