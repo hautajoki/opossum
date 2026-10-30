@@ -9,7 +9,7 @@ use crate::classes::transform_state::TransformState;
 use crate::nodes::transform_property_name::transform_property_name;
 use crate::util::clean_module_name::clean_module_name;
 use crate::util::create_import_expression::create_import_expression;
-use crate::util::symbols::is_symbol_of_value;
+use crate::util::symbols::{is_symbol_of_value, skip_alias};
 
 fn is_export_specifier_value(state: &mut TransformState<'_>, element: P<Node>) -> bool {
     if element.as_export_specifier().is_type_only {
@@ -22,7 +22,7 @@ fn is_export_specifier_value(state: &mut TransformState<'_>, element: P<Node>) -
 
     let name = element.as_export_specifier().name;
     if let Some(alias_symbol) = state.checker.get_symbol_at_location_exported(name) {
-        let original = state.checker.skip_alias(alias_symbol);
+        let original = skip_alias(state.checker, alias_symbol);
         if is_symbol_of_value(original) {
             return true;
         }

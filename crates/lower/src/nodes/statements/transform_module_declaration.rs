@@ -12,7 +12,7 @@ use crate::nodes::expressions::transform_identifier::transform_identifier_define
 use crate::nodes::transform_statement_list::{ExportInfo, transform_statement_list_with_exports};
 use crate::shared::diagnostics::errors;
 use crate::util::has_multiple_definitions::has_multiple_definitions;
-use crate::util::symbols::{is_symbol_mutable, is_symbol_of_value, validate_identifier};
+use crate::util::symbols::{is_symbol_mutable, is_symbol_of_value, skip_alias, validate_identifier};
 use crate::util::traversal::{get_ancestor, has_declare_modifier};
 
 fn is_declaration_of_namespace(declaration: P<Node>) -> bool {
@@ -79,7 +79,7 @@ fn transform_namespace(state: &mut TransformState<'_>, name: P<Node>, body: P<No
     if body.kind() == Kind::ModuleBlock {
         let mut exports_map: FxHashMap<P<Node>, Vec<P<Symbol>>> = FxHashMap::default();
         for &export_symbol in module_exports.iter() {
-            let original_symbol = state.checker.skip_alias(export_symbol);
+            let original_symbol = skip_alias(state.checker, export_symbol);
             if is_symbol_of_value(original_symbol)
                 && !is_symbol_mutable(state, original_symbol)
                 && let Some(statement) = get_value_declaration_statement(export_symbol)

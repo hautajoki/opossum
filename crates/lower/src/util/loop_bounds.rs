@@ -8,6 +8,7 @@ use tsrs_core::P;
 
 use crate::classes::transform_state::TransformState;
 use crate::util::get_constant_integer::get_constant_integer;
+use crate::util::symbols::skip_alias;
 use crate::util::traversal::{get_ancestor, has_syntactic_modifier, is_ancestor_of, skip_downwards, skip_upwards};
 use crate::util::types::{get_first_defined_symbol, is_definitely_type, is_number_type};
 
@@ -32,7 +33,7 @@ fn variable_of(state: &mut TransformState<'_>, identifier: P<Node>) -> Option<Va
     let mut symbol = state.checker.get_symbol_at_location_exported(identifier)?;
     let imported = symbol.flags().intersects(SymbolFlags::Alias);
     if imported {
-        symbol = state.checker.skip_alias(symbol);
+        symbol = skip_alias(state.checker, symbol);
     }
     let declaration = symbol.value_declaration()?;
     let mut binding = declaration;

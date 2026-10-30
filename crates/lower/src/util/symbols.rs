@@ -32,10 +32,22 @@ pub fn is_symbol_of_value(symbol: P<Symbol>) -> bool {
     symbol.flags().intersects(SymbolFlags::Value) && !symbol.flags().intersects(SymbolFlags::ConstEnum)
 }
 
+/// `skipAlias`, followed to the end of the chain. tsgo promotes a module's type exports onto its `export =` and marks
+/// it a namespace, and alias resolution stops on that symbol while it is still an alias with no value meaning.
+pub fn skip_alias(checker: &mut Checker, mut symbol: P<Symbol>) -> P<Symbol> {
+    loop {
+        let target = checker.skip_alias(symbol);
+        if target == symbol {
+            return symbol;
+        }
+        symbol = target;
+    }
+}
+
 /// `getOriginalSymbolOfNode`: the node's symbol with aliases skipped.
 pub fn get_original_symbol_of_node(checker: &mut Checker, node: P<Node>) -> Option<P<Symbol>> {
     let symbol = checker.get_symbol_at_location_exported(node)?;
-    Some(checker.skip_alias(symbol))
+    Some(skip_alias(checker, symbol))
 }
 
 /// `validateIdentifier`: a name Luau cannot spell (`$x`, non-ASCII). Keywords and reserved globals are renamed

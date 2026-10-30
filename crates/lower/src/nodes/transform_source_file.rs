@@ -12,7 +12,7 @@ use crate::nodes::transform_property_name::property_name_key;
 use crate::nodes::transform_statement_list::transform_statement_list;
 use crate::shared::diagnostics::errors;
 use crate::util::native::is_native_file;
-use crate::util::symbols::{get_original_symbol_of_node, is_symbol_mutable, is_symbol_of_value};
+use crate::util::symbols::{get_original_symbol_of_node, is_symbol_mutable, is_symbol_of_value, skip_alias};
 use crate::util::traversal::{get_ancestor, has_declare_modifier};
 
 fn get_export_declarations(export_symbol: P<Symbol>) -> &'static [P<Node>] {
@@ -122,7 +122,7 @@ fn handle_exports(
                 continue;
             }
 
-            let original_symbol = state.checker.skip_alias(export_symbol);
+            let original_symbol = skip_alias(state.checker, export_symbol);
 
             // only export values
             if !is_symbol_of_value(original_symbol) {

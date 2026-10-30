@@ -8,7 +8,7 @@ use crate::classes::prereqs::Prereqs;
 use crate::classes::transform_state::TransformState;
 use crate::nodes::expressions::transform_expression::transform_expression;
 use crate::shared::diagnostics::errors;
-use crate::util::symbols::{is_symbol_mutable, is_symbol_of_value};
+use crate::util::symbols::{is_symbol_mutable, is_symbol_of_value, skip_alias};
 use crate::util::traversal::source_file_of;
 
 fn transform_export_equals(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
@@ -50,7 +50,7 @@ pub fn transform_export_assignment(state: &mut TransformState<'_>, node: P<Node>
     }
 
     if let Some(symbol) = symbol {
-        let original = state.checker.skip_alias(symbol);
+        let original = skip_alias(state.checker, symbol);
         let erased = !is_symbol_of_value(original)
             || (!state.compiler_options.verbatim_module_syntax.is_true()
                 && state.checker.get_type_only_alias_declaration(symbol).is_some());

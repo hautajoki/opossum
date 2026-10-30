@@ -19,6 +19,7 @@ use crate::classes::transform_state::TransformState;
 use crate::macros::types::{CallMacro, ConstructorMacro, IdentifierMacro, Macro, PropertyCallMacro};
 use crate::macros::{CALL_MACROS, CONSTRUCTOR_MACROS, IDENTIFIER_MACROS, PROPERTY_CALL_MACROS};
 use crate::shared::diagnostics::errors;
+use crate::util::symbols::skip_alias;
 use crate::util::types::get_first_defined_symbol;
 
 /// `SYMBOL_NAMES`
@@ -170,7 +171,7 @@ impl MacroManager {
         let mut symbols = FxHashMap::default();
         for &name in symbol_names::ALL {
             if let Some(symbol) = checker.resolve_name_exported(name, None, SymbolFlags::All, false) {
-                symbols.insert(name, checker.skip_alias(symbol));
+                symbols.insert(name, skip_alias(checker, symbol));
             }
         }
         let lua_tuple_alias = symbols
@@ -200,7 +201,7 @@ impl MacroManager {
         if let Some(&found) = self.globals.borrow().get(&(name, meaning)) {
             return found;
         }
-        let found = checker.resolve_name_exported(name, None, meaning, false).map(|s| checker.skip_alias(s));
+        let found = checker.resolve_name_exported(name, None, meaning, false).map(|s| skip_alias(checker, s));
         self.globals.borrow_mut().insert((name, meaning), found);
         found
     }
@@ -212,14 +213,14 @@ impl MacroManager {
 
     /// `getIdentifierMacro`
     pub fn get_identifier_macro(&self, checker: &mut Checker, symbol: P<Symbol>) -> Option<Macro<IdentifierMacro>> {
-        let symbol = checker.skip_alias(symbol);
+        let symbol = skip_alias(checker, symbol);
         let (name, transform) = find(IDENTIFIER_MACROS, symbol.name())?;
         (self.global(checker, name, SymbolFlags::Variable) == Some(symbol)).then_some(Macro { name, transform })
     }
 
     /// `getCallMacro`
     pub fn get_call_macro(&self, checker: &mut Checker, symbol: P<Symbol>) -> Option<Macro<CallMacro>> {
-        let symbol = checker.skip_alias(symbol);
+        let symbol = skip_alias(checker, symbol);
         let (name, transform) = find(CALL_MACROS, symbol.name())?;
         (self.global(checker, name, SymbolFlags::Function) == Some(symbol)).then_some(Macro { name, transform })
     }

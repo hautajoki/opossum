@@ -13,6 +13,7 @@ use crate::nodes::expressions::transform_no_substitution_template_literal::trans
 use crate::nodes::expressions::transform_numeric_literal::transform_numeric_literal;
 use crate::nodes::expressions::transform_string_literal::transform_string_literal;
 use crate::util::create_string_from_literal::create_string_from_value;
+use crate::util::symbols::skip_alias;
 use crate::util::traversal::{has_syntactic_modifier, skip_downwards, skip_upwards};
 
 /// Longer strings stay references: inlining copies them into every use.
@@ -30,7 +31,7 @@ pub fn inline_constant(state: &mut TransformState<'_>, identifier: P<Node>, symb
     if tsrs_ast::is_write_access(identifier) {
         return None;
     }
-    let symbol = if symbol.flags().intersects(SymbolFlags::Alias) { state.checker.skip_alias(symbol) } else { symbol };
+    let symbol = if symbol.flags().intersects(SymbolFlags::Alias) { skip_alias(state.checker, symbol) } else { symbol };
     let declaration = symbol.value_declaration()?;
     if declaration.kind() != Kind::VariableDeclaration
         || declaration.name()?.kind() != Kind::Identifier

@@ -5,7 +5,7 @@ use tsrs_ast::{Kind, Node, SymbolFlags};
 use tsrs_core::P;
 
 use crate::classes::transform_state::TransformState;
-use crate::util::symbols::is_symbol_mutable;
+use crate::util::symbols::{is_symbol_mutable, skip_alias};
 use crate::util::traversal::skip_downwards;
 
 /// Whether `node` reads a member of a (non-const) enum: `E.A`, `E["A"]`.
@@ -19,7 +19,7 @@ pub(crate) fn is_enum_member_access(state: &mut TransformState<'_>, node: P<Node
     let object = skip_downwards(node.expression().expect("an access has an expression"));
     let enum_symbol = state.checker.get_symbol_at_location_exported(object);
     member_symbol.is_some_and(|s| s.flags().intersects(SymbolFlags::EnumMember))
-        && enum_symbol.is_some_and(|s| state.checker.skip_alias(s).flags().intersects(SymbolFlags::Enum))
+        && enum_symbol.is_some_and(|s| skip_alias(state.checker, s).flags().intersects(SymbolFlags::Enum))
 }
 
 /// `expressionMightMutate`: whether the value of `expression` might change between its evaluation and a later use

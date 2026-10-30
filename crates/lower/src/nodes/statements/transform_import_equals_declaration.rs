@@ -9,7 +9,7 @@ use crate::classes::transform_state::TransformState;
 use crate::nodes::statements::transform_variable_statement::transform_variable;
 use crate::nodes::transform_entity_name::transform_entity_name;
 use crate::util::create_import_expression::create_import_expression;
-use crate::util::symbols::is_symbol_of_value;
+use crate::util::symbols::{is_symbol_of_value, skip_alias};
 
 /// `import x = require("y")` and `import x = A.B`.
 pub fn transform_import_equals_declaration(state: &mut TransformState<'_>, node: P<Node>) -> Vec<Stmt> {
@@ -23,7 +23,7 @@ pub fn transform_import_equals_declaration(state: &mut TransformState<'_>, node:
         let mut statements = Vec::new();
         let alias_symbol =
             state.checker.get_symbol_at_location_exported(declaration.name).expect("an import alias has a symbol");
-        let original = state.checker.skip_alias(alias_symbol);
+        let original = skip_alias(state.checker, alias_symbol);
         let is_value = is_symbol_of_value(original);
         let verbatim = state.compiler_options.verbatim_module_syntax.is_true();
         if !is_value && !verbatim {

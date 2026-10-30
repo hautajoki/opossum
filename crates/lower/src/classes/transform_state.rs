@@ -19,6 +19,7 @@ use crate::options::Options;
 use crate::program::Project;
 use crate::shared::diagnostics::{errors, internal_error};
 use crate::util::get_block_comment_text::get_block_comment_text;
+use crate::util::symbols::skip_alias;
 use crate::util::traversal::{get_module_ancestor, skip_upwards};
 
 /// `TryUses`
@@ -286,7 +287,7 @@ impl<'a> TransformState<'a> {
         }
         let mut alias_map = FxHashMap::default();
         for &export_symbol in self.get_module_exports(module_symbol).iter() {
-            let original_symbol = self.checker.skip_alias(export_symbol);
+            let original_symbol = skip_alias(self.checker, export_symbol);
             let declaration = export_symbol.declarations().first().copied();
             match declaration {
                 Some(declaration) if declaration.kind() == Kind::ExportSpecifier => {
