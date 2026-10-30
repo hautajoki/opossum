@@ -101,10 +101,7 @@ mod tests {
         let cases = [
             (model(&[("Cube.001", "Cube.001", 1)]), "rename `Cube.001`: a part is named with letters, digits"),
             (model(&[("Lens", "Lens", 1), ("Lens", "Lens", 1)]), "two parts are named `Lens`"),
-            (
-                model(&[("node_9", "mesh_9", 1)]),
-                "node `node_9` holds mesh `mesh_9`: name node and mesh alike",
-            ),
+            (model(&[("node_9", "mesh_9", 1)]), "node `node_9` holds mesh `mesh_9`: name node and mesh alike"),
             (model(&[("Hull", "Hull", 2)]), "Hull has 2 materials: split it per material"),
             (model(&[]), "no node holds a mesh"),
             (b"glTF\x01\0\0\0".to_vec(), "not glTF 2.0"),
