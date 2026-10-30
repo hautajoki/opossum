@@ -40,8 +40,11 @@ local M = {
 	structural = false,
 	-- Roots the plugin inserted, adopted, paired or moved in since the watcher last looked (edit only).
 	found = {} :: { Instance },
-	-- True while a frame writes synchronously: every ItemChanged then is the plugin's own (it fires synchronously).
+	-- True while a frame writes synchronously. ItemChanged is deferred (measured), so its events from those writes
+	-- run after: `echoes` counts the stretches whose events are still queued. While either holds, every ItemChanged
+	-- is the plugin's own.
 	writing = false,
+	echoes = 0,
 	-- Set when an edit generation applied without a recording and made a write an undo could leave inconsistent: a
 	-- content write (not Source, which Undo never reverts), or a root's stamp left other than it was before. Its
 	-- writes ride the next waypoint anyone makes, or the step an undo or redo takes, so undoing that one may revert
@@ -269,6 +272,16 @@ local function drain()
 	end)
 end
 
+-- Ends a stretch of synchronous writes. A defer queued now runs after the ItemChanged events they queued.
+local function stop_writing()
+	if not M.writing then return end
+	M.writing = false
+	M.echoes += 1
+	task.defer(function()
+		M.echoes -= 1
+	end)
+end
+
 local function commit()
 	if recording then
 		ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
@@ -279,7 +292,7 @@ end
 -- Forgets the generation in progress: its failures, pending stamps, strays, async writes and reloads. Writes it made
 -- without a recording that an undo could leave inconsistent set M.unrecorded, whether it finished or not.
 function M.abort()
-	M.writing = false
+	stop_writing()
 	commit()
 	in_gen = false
 	if norec and writes > 0 then M.unrecorded = true end
@@ -1237,10 +1250,10 @@ end
 local function finish(gen: number)
 	if next(running) == nil and #strays == 0 and #orphaned == 0 then
 		write_stamps()
-		M.writing = false
+		stop_writing()
 		commit()
 	else
-		M.writing = false
+		stop_writing()
 		commit()
 		join()
 		-- async writes that landed during the join ride this waypoint, unless someone made one meanwhile
@@ -1249,7 +1262,7 @@ local function finish(gen: number)
 		M.writing = true
 		settle_strays(recording ~= nil)
 		write_stamps()
-		M.writing = false
+		stop_writing()
 		commit()
 	end
 	for root in held do
@@ -1320,7 +1333,7 @@ function M.frame(data: string): "dropped" | "skipped" | "part" | "done"
 		if root.Parent == nil and not held[root] then root:Destroy() end
 	end
 	if not bit32.btest(flags, 1) then
-		M.writing = false
+		stop_writing()
 		commit()
 		return "part"
 	end

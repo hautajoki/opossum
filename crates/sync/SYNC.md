@@ -69,10 +69,11 @@ stamp the moment anything else changes the root, recognising its own writes by i
 deferred and run after the apply):
 - `DescendantAdded`/`DescendantRemoving` under the root, ignoring instances the plugin itself inserted or removed in
   the last frame (a weak set drained by a `task.defer` queued after the frame);
-- `game.ItemChanged` for a mapped instance, while the plugin is not writing synchronously and only for properties a
+- `game.ItemChanged` for a mapped instance, outside the plugin's synchronous writes and only for properties a
   plugin can write (cached per class from the reflection service), which leaves out derived ones (`Assembly*`, `Mass`,
-  `Extents*`). It fires synchronously for every property write (~0.33 µs per event) but not for attributes or tags,
-  so someone else's attribute or tag edit is caught only by a Resync;
+  `Extents*`). It fires for every property write but deferred, so a stretch of the plugin's writes stays its own until
+  a `task.defer` queued after it runs, behind the events it queued. It does not fire for attributes or tags, so
+  someone else's attribute or tag edit is caught only by a Resync;
 - `ScriptEditorService.TextDocumentDidChange` for a script under the root, ignoring the plugin's own updates;
 - `ChangeHistoryService.OnRecordingFinished` (not the plugin's own recording) when the selection is under a root.
   Studio's undo restores the selection, so it can leave synced roots selected for the next recording;

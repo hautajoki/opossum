@@ -2,7 +2,7 @@
 -- Notices what changes synced instances besides the plugin, in the edit DataModel only: it clears the stamp of the
 -- root that changed (marking it dirty until a verify), and unmaps mapped instances someone else removed and
 -- reports them as lost. The play server never does either: game code changes synced instances at runtime. The
--- plugin's own writes are recognised by identity (apply.writing, apply.owns), never by timing.
+-- plugin's own writes are recognised by identity (apply.writing, apply.echoes, apply.owns), never by timing.
 
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local ReflectionService = game:GetService("ReflectionService")
@@ -138,14 +138,16 @@ function M.start(role: apply.Role, sender: (message: string) -> ())
 	send = sender
 	edit = role == "edit"
 	if not edit then return end
-	-- Fires synchronously for every property write, the plugin's own and the command bar's included (measured,
-	-- ~0.3 µs an event), so apply.writing covers the plugin's synchronous writes and whatever they derive (ScaleTo,
-	-- welded parts). Attribute and tag changes do not fire it. (Missing from the type definitions.)
+	-- Fires for every property write, the plugin's own and the command bar's included, deferred to the next
+	-- resumption point (measured), so apply.writing and apply.echoes cover the plugin's synchronous writes and
+	-- whatever they derive (ScaleTo, welded parts) until the events they queued have run. Attribute and tag changes
+	-- do not fire it. (Missing from the type definitions.)
 	-- It fires for every part a drag moves, so it bails out early: once a frame mapped the place, an unmapped
 	-- instance under a root is new (DescendantAdded dirtied its root), a kept stray (its root stays unstamped) or
 	-- exempt, and a dirty root stays dirty (stepped() puts back a clear an undo reverted).
 	((game :: any).ItemChanged :: RBXScriptSignal<Instance, string>):Connect(function(inst, prop)
-		if apply.writing or (apply.applied ~= 0 and not apply.id_of[inst]) or not is_edit(inst, prop) then return end
+		if apply.writing or apply.echoes > 0 then return end
+		if (apply.applied ~= 0 and not apply.id_of[inst]) or not is_edit(inst, prop) then return end
 		local root = apply.root_of(inst)
 		if root and not apply.dirty[root] and not apply.owns_item(inst) then stir(root) end
 	end)
