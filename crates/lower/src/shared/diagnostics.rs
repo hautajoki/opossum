@@ -1,8 +1,8 @@
 //! roblox-ts's errors and warnings (`Shared/diagnostics.ts`), as tsrs diagnostics.
 //!
 //! Each `DiagnosticFactory` becomes a function from the node to a `P<Diagnostic>`, with the same text. The message is
-//! a `tsrs_ast::new_ad_hoc_message` (code -1), made once per factory; context-dependent ones make one per
-//! call. The location is the node's `getStart()` to its end, as `createDiagnosticWithLocation` reports it.
+//! an ad-hoc one (code -1), made once per factory on the heap; context-dependent ones make one per call, in the
+//! diagnostic's region. The location is the node's `getStart()` to its end, as `createDiagnosticWithLocation` reports it.
 //!
 //! Every message starts with its dotted code: `lower.<factory>` for roblox-ts's (`lower.noAny: …`), and opossum's
 //! own (`route.boundary: …`, `macro.unsupported: …`, `lower.internal: …`).
@@ -36,6 +36,18 @@ pub fn node_range(node: P<Node>) -> (Option<P<SourceFile>>, TextRange) {
     (file, TextRange::new(start, end.max(start)))
 }
 
+/// A message made once per process: on the heap, since an arena one dies with the program it was made under, and
+/// watch mode frees every program once the next one is made.
+fn static_message(text: String) -> &'static Message {
+    Box::leak(Box::new(Message::ad_hoc(Box::leak(text.into_boxed_str()))))
+}
+
+/// A message for one diagnostic, made where the diagnostic itself goes so the two live exactly as long.
+fn one_off(text: &str) -> &'static Message {
+    let _outer = tsrs_core::arena::escape_for_diagnostic();
+    new_ad_hoc_message(text)
+}
+
 fn at_node(node: P<Node>, message: &'static Message, category: Category) -> P<Diagnostic> {
     let (file, range) = node_range(node);
     let diagnostic = new_diagnostic(file, range, message, &[]);
@@ -47,7 +59,7 @@ fn at_node(node: P<Node>, message: &'static Message, category: Category) -> P<Di
 
 /// A text diagnostic without a location (`createTextDiagnostic`).
 pub fn text_diagnostic(message: &str, category: Category) -> P<Diagnostic> {
-    let diagnostic = new_diagnostic(None, None, new_ad_hoc_message(message), &[]);
+    let diagnostic = new_diagnostic(None, None, one_off(message), &[]);
     if category != Category::Error {
         diagnostic.set_category(category);
     }
@@ -80,7 +92,7 @@ macro_rules! factories {
                 static MESSAGE: OnceLock<&'static Message> = OnceLock::new();
                 let message = MESSAGE.get_or_init(|| {
                     let lines: Vec<String> = vec![$(String::from($line)),+];
-                    new_ad_hoc_message(&format!("{}: {}", code(stringify!($name)), lines.join("\n")))
+                    static_message(format!("{}: {}", code(stringify!($name)), lines.join("\n")))
                 });
                 at_node(node, message, Category::$category)
             }
@@ -215,14 +227,14 @@ pub mod errors {
     /// `route.boundary`: an import the importer's realm cannot reach at run time.
     pub fn route_boundary(node: P<Node>, from: &str, to: &str) -> P<Diagnostic> {
         let text = format!("route.boundary: {from} code cannot require a {to} module");
-        at_node(node, new_ad_hoc_message(&text), Category::Error)
+        at_node(node, one_off(&text), Category::Error)
     }
 
     /// `route.unrouted`: a file lowering needs an instance path for (the file itself, an import, the runtime
     /// library) has none.
     pub fn unrouted(node: P<Node>, file: &str) -> P<Diagnostic> {
         let text = format!("route.unrouted: {file} has no instance path");
-        at_node(node, new_ad_hoc_message(&text), Category::Error)
+        at_node(node, one_off(&text), Category::Error)
     }
 
     /// `lower.nullableLuaTuple`: a call whose signature returns a `LuaTuple` or undefined is used as a value, which
@@ -231,17 +243,17 @@ pub mod errors {
         let text = "lower.nullableLuaTuple: this call returns a LuaTuple or undefined, but used as a value a LuaTuple \
                     is a table of its values, never undefined\nSuggestion: return an array (`[A, B] | undefined`) \
                     instead";
-        at_node(node, new_ad_hoc_message(text), Category::Error)
+        at_node(node, one_off(text), Category::Error)
     }
 
     /// `macro.unsupported`: a compile-time macro opossum does not lower yet.
     pub fn unsupported_macro(node: P<Node>, name: &str) -> P<Diagnostic> {
-        at_node(node, new_ad_hoc_message(&format!("macro.unsupported: `{name}` is not supported yet")), Category::Error)
+        at_node(node, one_off(&format!("macro.unsupported: `{name}` is not supported yet")), Category::Error)
     }
 
     /// `macro.missing`: a method of a macro-only class with no lowering.
     pub fn missing_macro(node: P<Node>, name: &str) -> P<Diagnostic> {
-        at_node(node, new_ad_hoc_message(&format!("macro.missing: `{name}` has no lowering")), Category::Error)
+        at_node(node, one_off(&format!("macro.missing: `{name}` has no lowering")), Category::Error)
     }
 
     /// `metadata.untagged`: a call leaves out a parameter typed with Flamework metadata of a function not tagged
@@ -249,17 +261,17 @@ pub mod errors {
     pub fn untagged_metadata(node: P<Node>) -> P<Diagnostic> {
         let text = "metadata.untagged: a left-out parameter holds Flamework metadata, but the function is not tagged \
                     `@metadata macro`";
-        at_node(node, new_ad_hoc_message(text), Category::Error)
+        at_node(node, one_off(text), Category::Error)
     }
 
     /// `metadata.unsupported`: a `@metadata macro`'s parameter type holds `part`, which has no compile-time value.
     pub fn unsupported_metadata(node: P<Node>, part: &str) -> P<Diagnostic> {
         let text = format!("metadata.unsupported: {part} has no compile-time value");
-        at_node(node, new_ad_hoc_message(&text), Category::Error)
+        at_node(node, one_off(&text), Category::Error)
     }
 }
 
 /// rbxts-rs: a compiler bug caught while transforming a file (a failed assertion or a panic).
 pub fn internal_error(node: P<Node>, message: &str) -> P<Diagnostic> {
-    at_node(node, new_ad_hoc_message(&format!("lower.internal: {message}")), Category::Error)
+    at_node(node, one_off(&format!("lower.internal: {message}")), Category::Error)
 }
